@@ -1,0 +1,1 @@
+{"source":"academic","student_ref":"SYN-0005","observed_at":"2026-09-01T09:00:00Z","retrieved_at":"2026-09-02T10:00:00Z","data_state":"present","fields":{"attendance_pct":79,"gpa":7.0,"failed_courses":0},"provenance":{"fixture":"synthetic-cohort-v1-corrections/SYN-0005/academic.json","record_ids":["a-0005-corrected"]},"errors":[]}

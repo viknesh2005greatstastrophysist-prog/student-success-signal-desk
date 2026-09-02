@@ -1,0 +1,24 @@
+policy_version: prohibited-actions-v1
+phrases:
+  - contact the student directly
+  - message the student
+  - warn the student
+  - penalise
+  - penalize
+  - suspend
+  - expel
+  - block placement
+  - change the grade
+  - diagnose
+  - mental health condition
+  - disability inference
+  - socioeconomic
+  - disciplinary action
+  - similar student
+  - likely to fail
+categories:
+  - direct_contact
+  - punitive_or_exclusionary
+  - diagnosis_or_sensitive_inference
+  - record_mutation
+  - cross_student_comparison

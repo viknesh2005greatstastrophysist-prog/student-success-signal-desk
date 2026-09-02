@@ -1,0 +1,1 @@
+{"source":"placement","student_ref":"SYN-0003","observed_at":"2026-09-01T09:00:00Z","retrieved_at":"2026-09-02T09:00:00Z","data_state":"not_applicable","fields":{"reason":"not enrolled in placement cohort"},"provenance":{"fixture":"synthetic-cohort-v1/SYN-0003/placement.json","record_ids":["p-0003"]},"errors":[]}

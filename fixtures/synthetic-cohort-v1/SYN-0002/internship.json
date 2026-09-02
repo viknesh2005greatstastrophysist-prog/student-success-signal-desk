@@ -1,0 +1,1 @@
+{"source":"internship","student_ref":"SYN-0002","observed_at":"2026-08-20T09:00:00Z","retrieved_at":"2026-09-02T09:00:00Z","data_state":"present","fields":{"missed_milestones":1,"milestones_total":4},"provenance":{"fixture":"synthetic-cohort-v1/SYN-0002/internship.json","record_ids":["i-0002"]},"errors":[]}

@@ -1,0 +1,30 @@
+catalogue_version: intervention-catalogue-v1
+items:
+  - id: SUP-01
+    label: Schedule a mentor check-in
+    description: The assigned mentor may arrange a supportive conversation through an approved institutional channel.
+    eligible_reason_codes: [ACADEMIC_ATTENDANCE_LOW, ACADEMIC_GPA_LOW, LMS_INACTIVITY_HIGH, LMS_OVERDUE_HIGH, ACADEMIC_FAILED_COURSES_CRITICAL, LMS_MISSED_ASSESSMENTS_CRITICAL]
+  - id: SUP-02
+    label: Review study planning
+    description: The mentor may review workload and study-planning options with the student.
+    eligible_reason_codes: [ACADEMIC_ATTENDANCE_LOW, ACADEMIC_GPA_LOW, LMS_INACTIVITY_HIGH, LMS_OVERDUE_HIGH]
+  - id: SUP-03
+    label: Connect to an academic resource
+    description: The mentor may explain an existing, formally approved academic support resource.
+    eligible_reason_codes: [ACADEMIC_GPA_LOW, LMS_OVERDUE_HIGH, ACADEMIC_FAILED_COURSES_CRITICAL, LMS_MISSED_ASSESSMENTS_CRITICAL]
+  - id: SUP-04
+    label: Request record clarification
+    description: An authorised administrator may clarify a missing, stale, or contradictory source record.
+    eligible_reason_codes: [DATA_MISSING, DATA_STALE, DATA_CONTRADICTORY]
+  - id: SUP-05
+    label: Review internship milestones
+    description: The mentor may review an existing internship milestone plan.
+    eligible_reason_codes: [INTERNSHIP_MILESTONE_MISSED]
+  - id: SUP-06
+    label: Review placement participation
+    description: The mentor may review optional placement preparation activities without penalty.
+    eligible_reason_codes: [PLACEMENT_ACTIVITY_MISSED]
+  - id: SUP-07
+    label: No immediate action; retain for mentor judgement
+    description: The mentor may close the case without a support action when no concern is present.
+    eligible_reason_codes: [NO_CONCERNING_SIGNALS]

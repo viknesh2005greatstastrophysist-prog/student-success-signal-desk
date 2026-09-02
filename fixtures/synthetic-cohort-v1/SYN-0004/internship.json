@@ -1,0 +1,1 @@
+{"source":"internship","student_ref":"SYN-0004","observed_at":"2026-09-01T09:00:00Z","retrieved_at":"2026-09-02T09:00:00Z","data_state":"not_applicable","fields":{"reason":"not enrolled in internship cohort"},"provenance":{"fixture":"synthetic-cohort-v1/SYN-0004/internship.json","record_ids":["i-0004"]},"errors":[]}

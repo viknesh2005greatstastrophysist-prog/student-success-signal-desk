@@ -1,0 +1,29 @@
+policy_version: demo-policy-v1
+scope: synthetic_demo_only
+reference_date: 2026-09-02T00:00:00Z
+required_sources: [academic, lms]
+windows_days:
+  academic: 30
+  lms: 14
+  internship: 45
+  placement: 30
+thresholds:
+  academic:
+    attendance_pct_below: 75
+    gpa_below: 6.0
+    failed_courses_critical_at_least: 2
+  lms:
+    inactivity_days_at_least: 7
+    overdue_assignments_at_least: 2
+    missed_assessments_critical_at_least: 2
+  internship:
+    missed_milestones_at_least: 1
+  placement:
+    missed_required_activities_at_least: 2
+priority_rules:
+  high: two_or_more_concerning_signals_or_one_critical_signal
+  medium: one_concerning_signal
+  low: no_concerning_signals
+mentor_required: true
+direct_student_contact: false
+max_repair_attempts: 2

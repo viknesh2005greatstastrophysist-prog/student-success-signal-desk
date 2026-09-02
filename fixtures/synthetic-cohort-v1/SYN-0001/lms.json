@@ -1,0 +1,1 @@
+{"source":"lms","student_ref":"SYN-0001","observed_at":"2026-08-31T09:00:00Z","retrieved_at":"2026-09-02T09:00:00Z","data_state":"present","fields":{"inactivity_days":3,"overdue_assignments":1,"missed_assessments":0},"provenance":{"fixture":"synthetic-cohort-v1/SYN-0001/lms.json","record_ids":["l-0001"]},"errors":[]}

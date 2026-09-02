@@ -1,0 +1,1 @@
+{"source":"academic","student_ref":"SYN-0003","observed_at":null,"retrieved_at":"2026-09-02T09:00:00Z","data_state":"missing","fields":{},"provenance":{"fixture":"synthetic-cohort-v1/SYN-0003/academic.json","record_ids":[]},"errors":["fixture deliberately omits the required academic record"]}

@@ -1,0 +1,1 @@
+{"source":"academic","student_ref":"SYN-0004","observed_at":"2026-08-29T09:00:00Z","retrieved_at":"2026-09-02T09:00:00Z","data_state":"present","fields":{"attendance_pct":81,"gpa":7.8,"failed_courses":0},"provenance":{"fixture":"synthetic-cohort-v1/SYN-0004/academic.json","record_ids":["a-0004"]},"errors":[]}

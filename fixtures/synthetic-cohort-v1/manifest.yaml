@@ -1,0 +1,16 @@
+dataset_version: synthetic-cohort-v1
+fictional: true
+reference_date: 2026-09-02
+students:
+  - student_ref: SYN-0001
+    scenario: one academic concern; expected medium priority
+  - student_ref: SYN-0002
+    scenario: multiple and critical concerns; expected high priority
+  - student_ref: SYN-0003
+    scenario: missing academic source; expected data block
+  - student_ref: SYN-0004
+    scenario: stale LMS source; bundled correction available
+  - student_ref: SYN-0005
+    scenario: contradictory academic source; bundled correction available
+  - student_ref: SYN-0006
+    scenario: no concerning signals; expected low priority
