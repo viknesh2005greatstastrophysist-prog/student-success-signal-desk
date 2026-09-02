@@ -37,10 +37,21 @@ test("J01 crosses independent role sessions through the authoritative Core", asy
   await enterPortal(student, "student");
   await expect(student.getByText("published", { exact: true }).first()).toBeVisible();
   await expect(student.getByText(/HOD has published this offering/i)).toBeVisible();
+  await student.getByRole("button", { name: "Registration", exact: true }).click();
+  const registrationRow = student.locator('[data-course="CS401"]');
+  await registrationRow.getByRole("button", { name: "Register", exact: true }).click();
+  await registrationRow.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(student.getByText(/Registered\. Receipt/i)).toBeVisible();
+  await expect(registrationRow.getByText("Active registration", { exact: true })).toBeVisible();
 
   await enterPortal(faculty, "faculty");
   await expect(faculty.getByText(/CS401 Agentic AI Systems/i)).toBeVisible();
   await expect(faculty.getByText("ready", { exact: true })).toBeVisible();
+  await faculty.getByRole("button", { name: "Classrooms", exact: true }).click();
+  await expect(faculty.getByText("Ananya Rao", { exact: true })).toBeVisible();
+
+  await hod.getByRole("button", { name: "Refresh portal data" }).click();
+  await expect(hod.getByText(/1 enrolled/i)).toBeVisible();
 
   await enterPortal(parent, "parent");
   await expect(parent.getByText("Ananya Rao", { exact: true })).toBeVisible();
@@ -48,6 +59,7 @@ test("J01 crosses independent role sessions through the authoritative Core", asy
 
   await enterPortal(governance, "governance");
   await expect(governance.getByText(/Offering published and faculty assigned/i)).toBeVisible();
+  await expect(governance.getByText(/Student registered and roster updated/i)).toBeVisible();
   await expect(governance.getByText("NONE", { exact: true })).toBeVisible();
 
   await parent.getByTitle("Sign out").click();

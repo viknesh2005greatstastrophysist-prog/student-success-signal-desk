@@ -88,6 +88,16 @@ export const actionManifest: readonly ActionContract[] = [
   ]),
   { id: "hod-select-faculty", portal: "hod", type: "form", destination: "publish-and-assign form" },
   { id: "hod-publish-and-assign", portal: "hod", type: "command", destination: "/api/bff/offerings/:id/publish-and-assign" },
+  { id: "student-open-today", portal: "student", type: "navigate", destination: "Today surface" },
+  { id: "student-open-registration", portal: "student", type: "navigate", destination: "Registration surface" },
+  { id: "student-start-registration", portal: "student", type: "form", destination: "Registration confirmation" },
+  { id: "student-cancel-registration", portal: "student", type: "form", destination: "Registration sheet" },
+  { id: "student-confirm-registration", portal: "student", type: "command", destination: "/api/bff/registrations" },
+  { id: "student-withdraw-registration", portal: "student", type: "command", destination: "/api/bff/registrations/:id/withdraw" },
+  { id: "faculty-open-today", portal: "faculty", type: "navigate", destination: "Today surface" },
+  { id: "faculty-open-classrooms", portal: "faculty", type: "navigate", destination: "Classroom roster" },
+  { id: "hod-open-department", portal: "hod", type: "navigate", destination: "Department surface" },
+  { id: "hod-open-offerings", portal: "hod", type: "navigate", destination: "Offering command" },
 ];
 
 export type PortalDefinition = {

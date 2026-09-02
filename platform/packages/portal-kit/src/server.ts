@@ -195,6 +195,31 @@ export async function portalPublishAndAssign(request: Request, portal: PortalId,
   return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 }
 
+async function portalCoreCommand(request: Request, portal: PortalId, path: string) {
+  if (!sameOrigin(request, portal)) return Response.json({ ok: false, error: { code: "CSRF_REJECTED", message: "Request origin rejected" } }, { status: 403 });
+  const session = await readSession(request, portal);
+  if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  const response = await fetch(`${settings(portal).coreUrl}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.accessToken}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": request.headers.get("idempotency-key") ?? randomUUID(),
+    },
+    body: await request.text(),
+    cache: "no-store",
+  });
+  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+}
+
+export function portalRegister(request: Request, portal: PortalId) {
+  return portalCoreCommand(request, portal, "/api/v1/registrations");
+}
+
+export function portalWithdrawRegistration(request: Request, portal: PortalId, registrationId: string) {
+  return portalCoreCommand(request, portal, `/api/v1/registrations/${encodeURIComponent(registrationId)}/withdraw`);
+}
+
 export async function endPortalSession(request: Request, portal: PortalId) {
   const config = settings(portal);
   if (!sameOrigin(request, portal)) return new Response("Request origin rejected", { status: 403 });

@@ -4,7 +4,9 @@ import test from "node:test";
 import type { ActorContext } from "@aura/contracts";
 import { publishAndAssignOffering } from "../lib/commands";
 import { closePool, getPool } from "../lib/db";
+import { ConflictError } from "../lib/http";
 import { migrateCoreDatabase } from "../lib/migrations";
+import { registerForOffering, withdrawRegistration } from "../lib/registration-commands";
 import { readCurrentSeedStats, resetSyntheticSeed } from "../lib/reset";
 import { AuthorizationError } from "../lib/security";
 
@@ -54,11 +56,18 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
 
   const fixtures = await pool.query<{
     generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;
+    student_person_id: string; student_profile_id: string; student2_person_id: string; student2_profile_id: string; student10_person_id: string; student10_profile_id: string;
   }>(
     `SELECT ir.current_generation_id AS generation_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'hod.cse@aura.invalid') AS hod_person_id,
       (SELECT d.id FROM "${schema}".departments d WHERE d.generation_id = ir.current_generation_id AND d.code = 'CSE') AS cse_department_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'faculty1@aura.invalid') AS faculty_person_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student1@aura.invalid') AS student_person_id,
+      (SELECT sp.id FROM "${schema}".student_profiles sp WHERE sp.generation_id = ir.current_generation_id AND sp.register_number = 'SYN-CSE-001') AS student_profile_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student2@aura.invalid') AS student2_person_id,
+      (SELECT sp.id FROM "${schema}".student_profiles sp WHERE sp.generation_id = ir.current_generation_id AND sp.register_number = 'SYN-CSE-002') AS student2_profile_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student10@aura.invalid') AS student10_person_id,
+      (SELECT sp.id FROM "${schema}".student_profiles sp WHERE sp.generation_id = ir.current_generation_id AND sp.register_number = 'SYN-CSE-010') AS student10_profile_id,
       (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'CS401') AS cse_offering_id,
       (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'EC401') AS ece_offering_id
      FROM "${schema}".institution_revisions ir WHERE ir.singleton = true`,
@@ -86,6 +95,41 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
     publishAndAssignOffering(hod, fixture.ece_offering_id, randomUUID(), { facultyPersonId: fixture.faculty_person_id, expectedRevision: 0 }),
     AuthorizationError,
   );
+
+  const student: ActorContext = { subject: "database-test-student", role: "student", personId: fixture.student_person_id, studentId: fixture.student_profile_id };
+  const student2: ActorContext = { subject: "database-test-student-2", role: "student", personId: fixture.student2_person_id, studentId: fixture.student2_profile_id };
+  const student10: ActorContext = { subject: "database-test-student-10", role: "student", personId: fixture.student10_person_id, studentId: fixture.student10_profile_id };
+  await assert.rejects(
+    registerForOffering(student2, randomUUID(), { offeringId: fixture.cse_offering_id }),
+    (error: unknown) => error instanceof ConflictError && error.code === "PREREQUISITE_MISSING",
+  );
+
+  const registrationCommand = randomUUID();
+  const registered = await registerForOffering(student, registrationCommand, { offeringId: fixture.cse_offering_id });
+  const registeredDuplicate = await registerForOffering(student, registrationCommand, { offeringId: fixture.cse_offering_id });
+  assert.equal(registered.duplicate, false);
+  assert.equal(registeredDuplicate.duplicate, true);
+  assert.deepEqual(registeredDuplicate.receipt, registered.receipt);
+  const registrationId = (registered.registration as { id: string }).id;
+  await assert.rejects(withdrawRegistration(student2, registrationId, randomUUID()), AuthorizationError);
+
+  await pool.query(`UPDATE "${schema}".student_profiles SET completed_course_codes = '["CS301"]'::jsonb WHERE id IN ($1, $2)`, [fixture.student2_profile_id, fixture.student10_profile_id]);
+  await assert.rejects(
+    registerForOffering(student10, randomUUID(), { offeringId: fixture.cse_offering_id }),
+    (error: unknown) => error instanceof ConflictError && error.code === "TIMETABLE_CLASH",
+  );
+  await pool.query(`UPDATE "${schema}".course_offerings SET capacity = 1 WHERE id = $1`, [fixture.cse_offering_id]);
+  await assert.rejects(
+    registerForOffering(student2, randomUUID(), { offeringId: fixture.cse_offering_id }),
+    (error: unknown) => error instanceof ConflictError && error.code === "OFFERING_FULL",
+  );
+
+  const withdrawCommand = randomUUID();
+  const withdrawn = await withdrawRegistration(student, registrationId, withdrawCommand);
+  const withdrawnDuplicate = await withdrawRegistration(student, registrationId, withdrawCommand);
+  assert.equal(withdrawn.duplicate, false);
+  assert.equal(withdrawnDuplicate.duplicate, true);
+  assert.deepEqual(withdrawnDuplicate.receipt, withdrawn.receipt);
 });
 
 test.after(async () => {

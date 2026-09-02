@@ -9,6 +9,23 @@ type Offering = {
   id: string; code: string; title: string; status: string; revision: number; capacity: number; enrolment: number;
   department_code: string; faculty_person_id: string | null; faculty_name: string | null;
 };
+type CatalogueOffering = {
+  id: string;
+  code: string;
+  title: string;
+  status: string;
+  capacity: number;
+  enrolment: number;
+  credits: number;
+  faculty_name: string | null;
+  registration_id: string | null;
+  registration_status: string | null;
+  prerequisites: string[];
+  schedule: Array<{ weekday: number; startsAt: string; endsAt: string; room: string }>;
+  eligible: boolean;
+  reasons: string[];
+};
+type RosterStudent = { id: string; register_number: string; display_name: string; registered_at: string };
 type Snapshot = {
   actor: { role: PortalId; displayName: string; email: string };
   institutionRevision: number;
@@ -19,6 +36,8 @@ type Snapshot = {
   availableFaculty?: Person[];
   departmentPeople?: Person[];
   assignableOffering?: Offering | null;
+  registrationCatalogue?: CatalogueOffering[];
+  roster?: RosterStudent[];
 };
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } };
 
@@ -35,13 +54,18 @@ function money(paise: string | undefined) {
 }
 
 function ActivityRail({ activity }: { activity: Activity[] }) {
+  const eventLabel: Record<string, string> = {
+    "offering.published": "Offering published and faculty assigned",
+    "registration.created": "Student registered and roster updated",
+    "registration.withdrawn": "Student withdrew and seat was released",
+  };
   return (
     <aside className="activity-rail" aria-label="Causal activity">
       <div className="section-heading"><span>Live ledger</span><b>{activity.length}</b></div>
       {activity.length ? activity.map((event) => (
         <article className="activity-item" key={event.id}>
           <span className="event-node" aria-hidden="true" />
-          <p>{event.type === "offering.published" ? "Offering published and faculty assigned" : event.type.replaceAll(".", " ")}</p>
+          <p>{eventLabel[event.type] ?? event.type.replaceAll(".", " ")}</p>
           <small>revision {event.revision} · {new Date(event.occurredAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</small>
           <code>{event.id.slice(0, 8)}</code>
         </article>
@@ -50,14 +74,21 @@ function ActivityRail({ activity }: { activity: Activity[] }) {
   );
 }
 
-function PortalMasthead({ portal, snapshot, refresh, signOut, refreshing }: {
-  portal: PortalDefinition; snapshot: Snapshot; refresh: () => void; signOut: () => void; refreshing: boolean;
+function PortalMasthead({ portal, snapshot, refresh, signOut, refreshing, activeView, navigate }: {
+  portal: PortalDefinition; snapshot: Snapshot; refresh: () => void; signOut: () => void; refreshing: boolean; activeView: string; navigate: (view: string) => void;
 }) {
+  const enabledViews: Partial<Record<PortalId, string[]>> = {
+    student: ["Today", "Registration"],
+    faculty: ["Today", "Classrooms"],
+    hod: ["Department", "Offerings"],
+  };
   return (
     <>
       <header className="portal-masthead">
         <div className="brand-lockup"><span className="brand-mark">A</span><span><b>AURA</b><small>{portal.name}</small></span></div>
-        <nav aria-label="Portal sections"><span className="active-nav">{navByPortal[portal.id][0]}</span>{navByPortal[portal.id].slice(1).map((item) => <span key={item}>{item}</span>)}</nav>
+        <nav aria-label="Portal sections">{navByPortal[portal.id].map((item) => enabledViews[portal.id]?.includes(item)
+          ? <button type="button" className={activeView === item ? "active-nav" : ""} onClick={() => navigate(item)} key={item} data-action-id={`${portal.id}-open-${item.toLowerCase()}`}>{item}</button>
+          : <span key={item}>{item}</span>)}</nav>
         <div className="session-tools">
           <button className="icon-button" type="button" onClick={refresh} disabled={refreshing} data-action-id={`${portal.id}-refresh`} aria-label="Refresh portal data">↻</button>
           <button className="profile-button" type="button" onClick={signOut} data-action-id={`${portal.id}-sign-out`} title="Sign out">
@@ -89,6 +120,55 @@ function StudentSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
+function StudentRegistrationSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => Promise<void> | void }) {
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const catalogue = snapshot.registrationCatalogue ?? [];
+  const weekday = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  async function mutate(item: CatalogueOffering, action: "register" | "withdraw") {
+    setPendingId(item.id); setMessage("");
+    const endpoint = action === "register" ? "/api/bff/registrations" : `/api/bff/registrations/${item.registration_id}/withdraw`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: action === "register" ? JSON.stringify({ offeringId: item.id }) : "{}",
+    });
+    const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
+    if (result.ok) {
+      setMessage(`${action === "register" ? "Registered" : "Withdrawn"}. Receipt ${result.data.receipt.eventId.slice(0, 8)} committed to the institutional ledger.`);
+      setConfirmId(null);
+      await refresh();
+    } else setMessage(result.error.message);
+    setPendingId(null);
+  }
+
+  return (
+    <section className="role-surface registration-surface">
+      <div className="registration-heading"><div><p className="kicker">Semester 7 / registration sheet</p><h1>Build your term.</h1></div><p>Eligibility is calculated by the Core. Published status, registration window, prerequisites, capacity, and timetable are checked again when you commit.</p></div>
+      {message ? <p className="command-message" role="status">{message}</p> : null}
+      <div className="course-register" role="list">
+        {catalogue.map((item) => {
+          const registered = item.registration_status === "registered";
+          const slot = item.schedule[0];
+          return <article className="register-row" role="listitem" key={item.id} data-course={item.code}>
+            <div className="register-code"><b>{item.code}</b><span>{item.credits} credits</span></div>
+            <div className="register-course"><h2>{item.title}</h2><p>{item.faculty_name ?? "Faculty assignment pending"}</p><small>{slot ? `${weekday[slot.weekday]} ${slot.startsAt.slice(0, 5)} · ${slot.room}` : "Schedule pending"}</small></div>
+            <div className="register-capacity"><span>{item.enrolment}/{item.capacity}</span><small>seats</small></div>
+            <div className="register-decision">
+              {registered ? <button type="button" onClick={() => void mutate(item, "withdraw")} disabled={pendingId === item.id} data-action-id="student-withdraw-registration">{pendingId === item.id ? "Withdrawing…" : "Withdraw"}</button>
+                : confirmId === item.id ? <div className="confirm-actions"><button type="button" onClick={() => setConfirmId(null)} data-action-id="student-cancel-registration">Cancel</button><button type="button" onClick={() => void mutate(item, "register")} disabled={pendingId === item.id} data-action-id="student-confirm-registration">{pendingId === item.id ? "Registering…" : "Confirm"}</button></div>
+                  : <button type="button" onClick={() => setConfirmId(item.id)} disabled={!item.eligible} data-action-id="student-start-registration">Register</button>}
+              {!registered && item.reasons.length ? <small>{item.reasons.join(" · ")}</small> : <small className="eligible-copy">{registered ? "Active registration" : "Eligible to register"}</small>}
+            </div>
+          </article>;
+        })}
+      </div>
+    </section>
+  );
+}
+
 function ParentSurface({ snapshot }: { snapshot: Snapshot }) {
   const child = snapshot.children?.[0];
   return (
@@ -100,15 +180,17 @@ function ParentSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function FacultySurface({ snapshot }: { snapshot: Snapshot }) {
+function FacultySurface({ snapshot, showRoster }: { snapshot: Snapshot; showRoster: boolean }) {
   const offering = snapshot.assignableOffering;
+  const roster = snapshot.roster ?? [];
   return (
     <section className="role-surface faculty-surface">
       <div className="hero-copy"><p className="kicker">Faculty operations / 03 Sep</p><h1>Teaching desk.</h1><p>Assigned work only. Everything else stays behind the Core boundary.</p></div>
       <div className="faculty-board">
         <article><small>09:00 · assigned section</small><h2>{offering ? `${offering.code} ${offering.title}` : "Awaiting HOD assignment"}</h2><p>{offering ? `${offering.enrolment} students · CSE-401` : "The CS401 publication event will place the section here."}</p><span className={offering ? "signal-live" : "signal-waiting"}>{offering ? "ready" : "waiting"}</span></article>
-        <article className="queue-card"><small>Register queue</small><strong>{offering ? "01" : "00"}</strong><p>{offering ? "Section assigned. Roster will populate as students register." : "Nothing can be marked before assignment."}</p></article>
+        <article className="queue-card"><small>Registered students</small><strong>{String(roster.length).padStart(2, "0")}</strong><p>{offering ? "Live from the authoritative registration ledger." : "Nothing can be marked before assignment."}</p></article>
       </div>
+      {showRoster && offering ? <section className="roster-register"><div className="section-heading"><span>{offering.code} / section roster</span><b>{roster.length}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{student.display_name}</b><code>{student.register_number}</code><small>registered</small></article>) : <p>No students have registered yet.</p>}</section> : null}
     </section>
   );
 }
@@ -174,6 +256,7 @@ export function PortalHome({ portal }: { portal: PortalDefinition }) {
   const [status, setStatus] = useState<"loading" | "guest" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [activeView, setActiveView] = useState(navByPortal[portal.id][0]);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -217,11 +300,12 @@ export function PortalHome({ portal }: { portal: PortalDefinition }) {
       {status === "error" ? <section className="error-state"><p className="kicker">Boundary response</p><h1>Access stopped.</h1><p>{error}</p><button type="button" onClick={() => void load()} data-action-id={`${portal.id}-retry`}>Retry</button></section> : null}
       {status === "ready" && snapshot ? (
         <>
-          <PortalMasthead portal={portal} snapshot={snapshot} refresh={() => void load()} signOut={() => void signOut()} refreshing={refreshing} />
+          <PortalMasthead portal={portal} snapshot={snapshot} refresh={() => void load()} signOut={() => void signOut()} refreshing={refreshing} activeView={activeView} navigate={setActiveView} />
           <div className="portal-workspace">
-            {portal.id === "student" ? <StudentSurface snapshot={snapshot} /> : null}
+            {portal.id === "student" && activeView === "Today" ? <StudentSurface snapshot={snapshot} /> : null}
+            {portal.id === "student" && activeView === "Registration" ? <StudentRegistrationSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "parent" ? <ParentSurface snapshot={snapshot} /> : null}
-            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} /> : null}
+            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} showRoster={activeView === "Classrooms"} /> : null}
             {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} /> : null}
             <ActivityRail activity={snapshot.activity} />
