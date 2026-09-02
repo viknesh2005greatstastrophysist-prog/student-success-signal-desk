@@ -1,68 +1,123 @@
-# Deployment runbook
+# AURA multi-portal deployment runbook
 
-> **Legacy single-portal runbook:** this Clerk deployment procedure is retained
-> as historical evidence. It is not the release procedure for the independent
-> Better Auth multi-portal platform on `multi-portal-architecture`.
+This runbook covers the seven-project Vercel release for the independent AURA
+ecosystem. It supersedes the legacy Clerk single-portal procedure.
 
-## Target
+## Release unit
 
-Vercel hosts the responsive Next.js application and authenticated API routes.
-Clerk provides signup/login and Neon Postgres holds the shared, versioned
-synthetic ledger. Both services are connected through Vercel Marketplace.
-Vercel AI Gateway supplies the bounded composer through deployment OIDC.
+One application commit is deployed to seven projects:
 
-The Python/Streamlit implementation remains a local reference runtime. It is not
-the public web target because Streamlit relies on a long-lived WebSocket server,
-which is not the execution model of Vercel Functions.
+| Project | Production domain |
+| --- | --- |
+| `aura-student-portal` | <https://aura-student-portal.vercel.app> |
+| `aura-parent-portal` | <https://aura-parent-portal.vercel.app> |
+| `aura-faculty-portal` | <https://aura-faculty-portal.vercel.app> |
+| `aura-hod-portal` | <https://aura-hod-portal.vercel.app> |
+| `aura-ai-governance` | <https://aura-ai-governance.vercel.app> |
+| `aura-identity-service` | <https://aura-identity-service.vercel.app> |
+| `aura-core-api` | <https://aura-core-api.vercel.app> |
 
-## Release
+All seven must report the same full application commit. A successful deployment
+of an older commit is not a successful release.
 
-1. Pull the linked development variables with `vercel env pull .env.local`.
-2. Apply schema migrations with `npm run db:migrate` using the unpooled Neon URL.
-3. Run `npm test`, `npm run test:db-invariants`, `npm run lint`, `npm run build`, `npm audit`, and `uv run pytest -q`.
-4. Deploy a preview with `vercel deploy` and complete the smoke checks below.
-5. Attach a domain owned by the project operator to Vercel. Clerk production
-   instances cannot use a `*.vercel.app` domain.
-6. Configure Clerk's production instance and required DNS records. Verify that
-   `pk_live_` and `sk_live_` keys, not development keys, are attached only to
-   Vercel's production environment. Never copy the secret into source control.
-7. Confirm AI Gateway has an explicit budget and no automatic top-up. A card may
-   be required by Vercel to unlock included free credits; this is an operator action.
-8. Promote with `vercel deploy --prod`.
-9. Create at least two prototype accounts, assign one Operations and one Mentor,
-   and repeat all smoke checks at laptop and 390 × 844 mobile viewports.
+## Preconditions
 
-## Smoke checks
+- The candidate commit is pushed to `multi-portal-architecture` and the worktree
+  is clean.
+- Node, package, static, Core, action-contract, and security tests pass.
+- The database integration test passes against a disposable schema.
+- `npm audit --omit=dev --audit-level=high` reports no high-severity production
+  vulnerability.
+- Production environment values exist in Vercel. Do not print or copy secrets
+  into logs or evidence files.
+- Migrations are forward-compatible and applied once with the unpooled database
+  connection before application promotion.
 
-- The landing, signup, login, and protected dashboard render without horizontal
-  overflow at laptop and phone widths.
-- An unauthenticated `/api/ecosystem` request is denied before application data is returned.
-- The Ecosystem Map loads a six-student synthetic cohort from Postgres.
-- AURA Operations can open Command Centre, Agent Operations, Governance, and read-only previews.
-- Faculty Mentor 01 can open assigned cases and the intervention ledger.
-- Synthetic Student 0001 sees only its approved support and source status.
-- HoD/Dean receives aggregate metrics without student or case identifiers.
-- `SYN-0005` remains visibly data-blocked for the correction demonstration.
-- The labelled `SYN-0004` red-team fixture injects predictive language, which the critic rejects before one bounded repair.
-- A mentor approval creates an intervention atomically and the decision is audited.
-- Running a synthetic cycle adds collector, data-quality, policy, bounded LLM composer,
-  validator/repair, human-interrupt, and completion events.
-- The run reports `governed-llm`, not fallback, and the audit contains model-run and artifact IDs.
-- Replay verifies stored artifact hashes and explicitly does not rerun the model.
-- Refreshing or opening another browser preserves the shared state.
+## Candidate verification
 
-## Persistence and identity boundary
+From `platform/`:
 
-Neon Postgres persists the synthetic demonstration state across deployments.
-Each Clerk user ID has one server-owned prototype role. Operations preview is
-read-only and does not change the authenticated actor's permissions. These are
-still synthetic assignments, not institutional identities. A real pilot requires
-university SSO, authoritative student/parent/faculty relationships, reviewed
-provisioning, revocation, retention rules, and approved institutional source APIs.
+```bash
+npm ci
+npm run check
+npm audit --omit=dev --audit-level=high
+RUN_DB_TESTS=1 CORE_DATABASE_SCHEMA=aura_core_test_release npm run test:db --workspace=@aura/core-api
+```
+
+Start all seven local services, reset the synthetic dataset, then run both
+Playwright suites. The walking-skeleton suite must finish its reset, so a green
+run also leaves the shared synthetic database in a known clean generation.
+
+```bash
+npx turbo run dev --parallel
+npx playwright test e2e/walking-skeleton.spec.ts
+npx playwright test e2e/quality-gates.spec.ts
+```
+
+## Production deployment
+
+Run deployments from the repository root. Explicit project names prevent the
+local `.vercel` link from silently sending code to the wrong project.
+
+```bash
+npx vercel deploy . --project aura-core-api --prod --yes --force
+npx vercel deploy . --project aura-identity-service --prod --yes --force
+npx vercel deploy . --project aura-student-portal --prod --yes --force
+npx vercel deploy . --project aura-parent-portal --prod --yes --force
+npx vercel deploy . --project aura-faculty-portal --prod --yes --force
+npx vercel deploy . --project aura-hod-portal --prod --yes --force
+npx vercel deploy . --project aura-ai-governance --prod --yes --force
+```
+
+Deploy Core and Identity first, then the five portals. If the provider quota or
+another external limit interrupts the sequence, stop. Do not describe a partial
+set as released and do not spend quota redeploying projects already proven to
+serve the candidate commit.
+
+## Exact-version verification
+
+For every production URL:
+
+1. Confirm HTTP success.
+2. Confirm the expected Content Security Policy, HSTS, frame denial,
+   `nosniff`, referrer, permissions, opener, and resource policies.
+3. Confirm the portal footer contains the candidate commit prefix.
+4. Confirm Core health reports the full candidate commit.
+5. Confirm Identity discovery advertises the production issuer.
+
+Then run the complete production journey three consecutive times using the
+private demo PIN from the environment and `RELEASE_SHA` set to the full
+candidate commit. Each pass begins from a deterministic generation and must
+complete J01 through J10 without retrying failed assertions.
+
+Run the production quality suite with a dedicated evidence directory. Inspect
+the five desktop and five mobile portal screenshots manually. Inspect tablet
+captures when any responsive boundary looks suspicious.
+
+## Release evidence
+
+Create `docs/RELEASE_EVIDENCE.md` only after the checks above are green. Record:
+
+- full application commit and evidence commit;
+- all seven stable domains and immutable deployment URLs;
+- migration and seed version;
+- static, database, security, three-journey, and quality results;
+- screenshot inventory;
+- deterministic agent mode exercised;
+- optional live-model mode status;
+- synthetic-only and sandbox-payment limitations;
+- any accepted limitation and its owner.
+
+Evidence must not contain session cookies, database URLs, PINs, OIDC secrets,
+authorization headers, or raw environment output.
 
 ## Rollback
 
-Use Vercel's deployment history to promote the previous known-good deployment.
-Application rollback does not roll back Neon automatically. For schema changes,
-apply a tested forward migration or restore from Neon's retained history. The
-single-row demo ledger can be reset from the authenticated coordinator surface.
+Promote the previous known-good deployment independently for each affected
+project. Verify that all seven again report one coherent release before reopening
+the demo. Application rollback does not roll back PostgreSQL. Use a reviewed
+forward migration or Neon point-in-time recovery for schema or data incidents.
+
+The Governance reset creates a new deterministic synthetic generation and keeps
+prior audit history. It is not a database rollback and must never be described as
+one.

@@ -213,6 +213,10 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   const paymentReceipt = await loadPaymentReceipt(parent, paid.transaction.receiptId!);
   assert.equal(paymentReceipt.invoiceNumber, "INV-AURA-2026-001");
   assert.equal(paymentReceipt.amountPaise, 4500000);
+  const studentPaymentReceipt = await loadPaymentReceipt(student, paid.transaction.receiptId!);
+  assert.equal(studentPaymentReceipt.invoiceNumber, "INV-AURA-2026-001");
+  assert.equal(studentPaymentReceipt.registerNumber, "SYN-CSE-001");
+  await assert.rejects(loadPaymentReceipt(student2, paid.transaction.receiptId!), (error: unknown) => error instanceof Error && "status" in error && error.status === 404);
 
   const unsupportedCandidate = {
     summary: "Contact the family automatically and alter the student's course record.",

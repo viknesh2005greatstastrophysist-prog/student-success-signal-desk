@@ -66,7 +66,11 @@ type Snapshot = {
   institutionRevision: number;
   offering: Offering | null;
   activity: Activity[];
-  student?: { register_number: string; semester: number; department: string; fee_status: string; amount_paise: string; paid_paise: string; remaining_paise: string; due_on: string };
+  student?: {
+    register_number: string; semester: number; department: string; fee_invoice_id: string | null; invoice_number: string | null;
+    fee_description: string | null; fee_status: string; amount_paise: string; paid_paise: string; remaining_paise: string;
+    due_on: string; receipt_id: string | null;
+  };
   children?: Array<{ id: string; display_name: string; register_number: string; grants: string[] }>;
   selectedChildId?: string | null;
   availableFaculty?: Person[];
@@ -213,8 +217,18 @@ function StudentRegistrationSurface({ snapshot, refresh, csrfToken }: { snapshot
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "eligible" | "registered" | "blocked">("all");
+  const [inspectedId, setInspectedId] = useState<string | null>(null);
   const catalogue = snapshot.registrationCatalogue ?? [];
   const weekday = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleCatalogue = catalogue.filter((item) => {
+    const matchesQuery = !normalizedQuery || `${item.code} ${item.title} ${item.faculty_name ?? ""}`.toLowerCase().includes(normalizedQuery);
+    const registered = item.registration_status === "registered";
+    const matchesFilter = filter === "all" || (filter === "registered" && registered) || (filter === "eligible" && item.eligible && !registered) || (filter === "blocked" && !item.eligible && !registered);
+    return matchesQuery && matchesFilter;
+  });
 
   async function mutate(item: CatalogueOffering, action: "register" | "withdraw") {
     setPendingId(item.id); setMessage("");
@@ -237,13 +251,18 @@ function StudentRegistrationSurface({ snapshot, refresh, csrfToken }: { snapshot
     <section className="role-surface registration-surface">
       <div className="registration-heading"><div><p className="kicker">Semester 7 / registration sheet</p><h1>Build your term.</h1></div><p>Eligibility is calculated by the Core. Published status, registration window, prerequisites, capacity, and timetable are checked again when you commit.</p></div>
       {message ? <p className="command-message" role="status">{message}</p> : null}
+      <div className="surface-toolbar" aria-label="Registration catalogue controls">
+        <label><span>Find course</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Code, title, or faculty" data-action-id="student-search-registration" /></label>
+        <label><span>Eligibility</span><select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} data-action-id="student-filter-registration"><option value="all">All offerings</option><option value="eligible">Eligible</option><option value="registered">Registered</option><option value="blocked">Unavailable</option></select></label>
+        <p><b>{visibleCatalogue.length}</b> of {catalogue.length} offerings</p>
+      </div>
       <div className="course-register" role="list">
-        {catalogue.map((item) => {
+        {visibleCatalogue.map((item) => {
           const registered = item.registration_status === "registered";
           const slot = item.schedule[0];
           return <article className="register-row" role="listitem" key={item.id} data-course={item.code}>
             <div className="register-code"><b>{item.code}</b><span>{item.credits} credits</span></div>
-            <div className="register-course"><h2>{item.title}</h2><p>{item.faculty_name ?? "Faculty assignment pending"}</p><small>{slot ? `${weekday[slot.weekday]} ${slot.startsAt.slice(0, 5)} · ${slot.room}` : "Schedule pending"}</small></div>
+            <div className="register-course"><h2>{item.title}</h2><p>{item.faculty_name ?? "Faculty assignment pending"}</p><small>{slot ? `${weekday[slot.weekday]} ${slot.startsAt.slice(0, 5)} · ${slot.room}` : "Schedule pending"}</small><button type="button" className="inline-inspect" onClick={() => setInspectedId((current) => current === item.id ? null : item.id)} data-action-id="student-inspect-course">{inspectedId === item.id ? "Close details" : "Inspect course"}</button></div>
             <div className="register-capacity"><span>{item.enrolment}/{item.capacity}</span><small>seats</small></div>
             <div className="register-decision">
               {registered ? <button type="button" onClick={() => void mutate(item, "withdraw")} disabled={pendingId === item.id} data-action-id="student-withdraw-registration">{pendingId === item.id ? "Withdrawing…" : "Withdraw"}</button>
@@ -251,8 +270,10 @@ function StudentRegistrationSurface({ snapshot, refresh, csrfToken }: { snapshot
                   : <button type="button" onClick={() => setConfirmId(item.id)} disabled={!item.eligible} data-action-id="student-start-registration">Register</button>}
               {!registered && item.reasons.length ? <small>{item.reasons.join(" · ")}</small> : <small className="eligible-copy">{registered ? "Active registration" : "Eligible to register"}</small>}
             </div>
+            {inspectedId === item.id ? <div className="inline-detail course-detail"><span><small>Status</small><b>{item.status}</b></span><span><small>Prerequisites</small><b>{item.prerequisites.length ? item.prerequisites.join(", ") : "None"}</b></span><span><small>Schedule</small><b>{item.schedule.length ? item.schedule.map((entry) => `${weekday[entry.weekday]} ${entry.startsAt.slice(0, 5)}–${entry.endsAt.slice(0, 5)} · ${entry.room}`).join(" / ") : "Pending"}</b></span></div> : null}
           </article>;
         })}
+        {!visibleCatalogue.length ? <p className="filter-empty">No offering matches these filters.</p> : null}
       </div>
     </section>
   );
@@ -260,12 +281,18 @@ function StudentRegistrationSurface({ snapshot, refresh, csrfToken }: { snapshot
 
 function StudentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
   const academics = snapshot.academics ?? { attendance: [], marks: [] };
+  const [course, setCourse] = useState("all");
+  const [inspected, setInspected] = useState("");
+  const courses = [...new Set([...academics.attendance, ...academics.marks].map((item) => item.code))];
+  const attendance = course === "all" ? academics.attendance : academics.attendance.filter((item) => item.code === course);
+  const marks = course === "all" ? academics.marks : academics.marks.filter((item) => item.code === course);
   return (
     <section className="role-surface academic-surface">
       <div className="registration-heading"><div><p className="kicker">Published academic record</p><h1>Your work, in view.</h1></div><p>Attendance appears after faculty submission. Marks appear only after publication. Drafts and internal notes remain outside this portal.</p></div>
+      <div className="surface-toolbar compact-toolbar"><label><span>Course</span><select value={course} onChange={(event) => setCourse(event.target.value)} data-action-id="student-filter-academics"><option value="all">All published courses</option>{courses.map((code) => <option value={code} key={code}>{code}</option>)}</select></label><p><b>{attendance.length + marks.length}</b> published records</p></div>
       <div className="academic-columns">
-        <section><div className="section-heading"><span>Attendance record</span><b>{academics.attendance.length}</b></div>{academics.attendance.length ? academics.attendance.map((item) => <article key={`${item.code}-${item.session_date}`}><div><b>{item.code}</b><small>{item.topic}</small></div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>) : <p>No submitted attendance yet.</p>}</section>
-        <section><div className="section-heading"><span>Published marks</span><b>{academics.marks.length}</b></div>{academics.marks.length ? academics.marks.map((item) => <article key={`${item.code}-${item.assessment}`}><div><b>{item.code}</b><small>{item.assessment}</small></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}</p></article>) : <p>No marks have been published yet.</p>}</section>
+        <section><div className="section-heading"><span>Attendance record</span><b>{attendance.length}</b></div>{attendance.length ? attendance.map((item) => { const key = `attendance-${item.code}-${item.session_date}`; return <article key={key}><div><b>{item.code}</b><small>{item.topic}</small><button type="button" className="inline-inspect" onClick={() => setInspected((current) => current === key ? "" : key)} data-action-id="student-inspect-academic-record">{inspected === key ? "Close" : "Inspect"}</button>{inspected === key ? <em>Submitted record · revision {item.revision ?? "current"}</em> : null}</div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>; }) : <p>No submitted attendance yet.</p>}</section>
+        <section><div className="section-heading"><span>Published marks</span><b>{marks.length}</b></div>{marks.length ? marks.map((item) => { const key = `mark-${item.code}-${item.assessment}`; return <article key={key}><div><b>{item.code}</b><small>{item.assessment}</small><button type="button" className="inline-inspect" onClick={() => setInspected((current) => current === key ? "" : key)} data-action-id="student-inspect-academic-record">{inspected === key ? "Close" : "Inspect"}</button></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}{inspected === key ? ` Published at revision ${item.revision ?? "current"}.` : ""}</p></article>; }) : <p>No marks have been published yet.</p>}</section>
       </div>
     </section>
   );
@@ -274,6 +301,7 @@ function StudentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
 function StudentFeesSurface({ snapshot }: { snapshot: Snapshot }) {
   const fee = snapshot.student;
   const settled = fee?.fee_status === "paid";
+  const [showInvoice, setShowInvoice] = useState(false);
   return (
     <section className="role-surface student-fees-surface">
       <div className="registration-heading"><div><p className="kicker">Semester account</p><h1>{settled ? "All settled." : "Fees, clearly."}</h1></div><p>This is a read-only student view. Payments can be completed only by an actively linked parent with a current fees grant.</p></div>
@@ -283,6 +311,11 @@ function StudentFeesSurface({ snapshot }: { snapshot: Snapshot }) {
         <article><small>Balance</small><strong>{money(fee?.remaining_paise)}</strong></article>
         <article><small>Status</small><strong className={`fee-state fee-${fee?.fee_status}`}>{fee?.fee_status ?? "clear"}</strong></article>
       </div>
+      <div className="surface-actions">
+        <button type="button" onClick={() => setShowInvoice((visible) => !visible)} data-action-id="student-inspect-invoice">{showInvoice ? "Close invoice details" : "Inspect invoice"}</button>
+        {fee?.receipt_id ? <a href={`/api/bff/receipts/${fee.receipt_id}`} download data-action-id="student-download-receipt">Download existing receipt</a> : <span>Receipt becomes available after a captured sandbox payment.</span>}
+      </div>
+      {showInvoice ? <article className="inline-detail invoice-detail"><span><small>Invoice</small><b>{fee?.invoice_number ?? "No current invoice"}</b></span><span><small>Description</small><b>{fee?.fee_description ?? "Not applicable"}</b></span><span><small>Due</small><b>{fee?.due_on ? new Date(fee.due_on).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" }) : "Not applicable"}</b></span></article> : null}
       <p className="sandbox-notice">Synthetic account. No real charges, money movement, or payment credentials exist in this simulation.</p>
     </section>
   );
@@ -293,6 +326,7 @@ function StudentAccountSurface({ snapshot, refresh, csrfToken }: { snapshot: Sna
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [inspectedId, setInspectedId] = useState<string | null>(null);
 
   async function revoke(grant: NonNullable<Snapshot["parentAccess"]>[number]) {
     setPendingId(grant.id); setMessage("");
@@ -314,13 +348,15 @@ function StudentAccountSurface({ snapshot, refresh, csrfToken }: { snapshot: Sna
     <section className="role-surface student-account-surface">
       <div className="registration-heading"><div><p className="kicker">Account / parent access</p><h1>Your record. Your boundary.</h1></div><p>Revocation is enforced at Core on the parent&apos;s next request. It does not rewrite historical audit events.</p></div>
       {message ? <p className="command-message" role="status">{message}</p> : null}
-      <div className="student-grant-ledger">{grants.length ? grants.map((grant) => <article key={grant.id} data-grant={grant.field_group}><div><small>{grant.parent_name} · {grant.relationship}</small><h2>{grant.field_group}</h2></div><span className={`fee-state ${grant.granted ? "fee-paid" : ""}`}>{grant.granted ? "granted" : "revoked"}</span>{grant.granted ? confirmId === grant.id ? <div className="grant-confirm"><p>Remove {grant.field_group} from the parent&apos;s next authorized response?</p><button type="button" onClick={() => setConfirmId(null)} data-action-id="student-cancel-grant-revocation">Cancel</button><button type="button" onClick={() => void revoke(grant)} disabled={pendingId === grant.id} data-action-id="student-confirm-grant-revocation">{pendingId === grant.id ? "Revoking…" : "Confirm revoke"}</button></div> : <button type="button" onClick={() => setConfirmId(grant.id)} data-action-id="student-start-grant-revocation">Revoke access</button> : <small className="revoked-copy">No data returned to parent</small>}</article>) : <p>No active parent relationship exists.</p>}</div>
+      <div className="student-grant-ledger">{grants.length ? grants.map((grant) => <article key={grant.id} data-grant={grant.field_group}><div><small>{grant.parent_name} · {grant.relationship}</small><h2>{grant.field_group}</h2><button type="button" className="inline-inspect" onClick={() => setInspectedId((current) => current === grant.id ? null : grant.id)} data-action-id="student-inspect-parent-grant">{inspectedId === grant.id ? "Close boundary" : "Inspect boundary"}</button></div><span className={`fee-state ${grant.granted ? "fee-paid" : ""}`}>{grant.granted ? "granted" : "revoked"}</span>{grant.granted ? confirmId === grant.id ? <div className="grant-confirm"><p>Remove {grant.field_group} from the parent&apos;s next authorized response?</p><button type="button" onClick={() => setConfirmId(null)} data-action-id="student-cancel-grant-revocation">Cancel</button><button type="button" onClick={() => void revoke(grant)} disabled={pendingId === grant.id} data-action-id="student-confirm-grant-revocation">{pendingId === grant.id ? "Revoking…" : "Confirm revoke"}</button></div> : <button type="button" onClick={() => setConfirmId(grant.id)} data-action-id="student-start-grant-revocation">Revoke access</button> : <small className="revoked-copy">No data returned to parent</small>}{inspectedId === grant.id ? <div className="inline-detail grant-detail"><span><small>Field</small><b>{grant.field_group}</b></span><span><small>Relationship</small><b>{grant.relationship}</b></span><span><small>Enforcement</small><b>{grant.granted ? "Core returns this field after every request-time check" : "Core omits this field"}</b></span></div> : null}</article>) : <p>No active parent relationship exists.</p>}</div>
     </section>
   );
 }
 
 function SupportPlanSurface({ plans, audience }: { plans: SupportPlanView[] | undefined; audience: "student" | "parent" }) {
   const plan = plans?.[0];
+  const [showProvenance, setShowProvenance] = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
   return (
     <section className={`role-surface support-plan-surface support-plan-${audience}`}>
       <div className="registration-heading"><div><p className="kicker">Approved support</p><h1>{plan ? "A plan, not a label." : "No active plan."}</h1></div><p>Only a faculty-approved artifact appears here. Governance can propose; it cannot approve or alter the academic record.</p></div>
@@ -329,6 +365,11 @@ function SupportPlanSurface({ plans, audience }: { plans: SupportPlanView[] | un
         <h2>{plan.plan.summary}</h2>
         <ol>{plan.plan.actions.map((action) => <li key={action.code}><span>{action.owner.replaceAll("_", " ")}</span><b>{action.label}</b><small>within {action.dueInDays} days</small></li>)}</ol>
         <p>{plan.reason}</p>
+        <div className="surface-actions support-actions">
+          {audience === "student" ? <button type="button" onClick={() => setShowProvenance((visible) => !visible)} data-action-id="student-inspect-support-plan">{showProvenance ? "Hide plan provenance" : "Inspect plan provenance"}</button> : <button type="button" onClick={() => setShowProvenance((visible) => !visible)} data-action-id="parent-inspect-support-plan">{showProvenance ? "Hide plan provenance" : "Inspect plan provenance"}</button>}
+          {audience === "student" ? <button type="button" onClick={() => setAcknowledged(true)} disabled={acknowledged} data-action-id="student-acknowledge-support">{acknowledged ? "Update acknowledged" : "Acknowledge update"}</button> : null}
+        </div>
+        {showProvenance ? <div className="inline-detail"><span><small>Case</small><b>{plan.case_id.slice(0, 8)}</b></span><span><small>Decision</small><b>{plan.status.replaceAll("_", " ")}</b></span><span><small>Visibility</small><b>{audience === "student" ? "Student approved" : "Parent grant checked"}</b></span></div> : null}
       </article> : <div className="empty-support"><span>0</span><p>There is no approved support plan in the current synthetic generation.</p></div>}
     </section>
   );
@@ -336,12 +377,14 @@ function SupportPlanSurface({ plans, audience }: { plans: SupportPlanView[] | un
 
 function ParentSurface({ snapshot, chooseChild }: { snapshot: Snapshot; chooseChild: (childId: string) => void }) {
   const child = snapshot.children?.find((item) => item.id === snapshot.selectedChildId) ?? snapshot.children?.[0];
+  const [selectedGrant, setSelectedGrant] = useState("");
   return (
     <section className="role-surface parent-surface">
-      <div className="hero-copy"><p className="kicker">Family academic view</p><h1>What needs<br />your attention.</h1><p>Only the fields Ananya has permitted. No surveillance theatre.</p></div>
-      {snapshot.children && snapshot.children.length > 1 ? <label className="child-switcher">Linked student<select aria-label="Linked student" value={child?.id} onChange={(event) => chooseChild(event.target.value)} data-action-id="parent-switch-child">{snapshot.children.map((item) => <option value={item.id} key={item.id}>{item.display_name} · {item.register_number}</option>)}</select></label> : null}
+      <div className="hero-copy"><p className="kicker">Family academic view</p><h1>What needs<br />your attention.</h1><p>Only the fields {child?.display_name ?? "the linked student"} has permitted. No surveillance theatre.</p></div>
+      {snapshot.children && snapshot.children.length > 1 ? <label className="child-switcher">Linked student<select aria-label="Linked student" value={child?.id} onChange={(event) => { setSelectedGrant(""); chooseChild(event.target.value); }} data-action-id="parent-switch-child">{snapshot.children.map((item) => <option value={item.id} key={item.id}>{item.display_name} · {item.register_number}</option>)}</select></label> : null}
       <article className="child-card"><span className="portrait-token">{child?.display_name.split(" ").map((part) => part[0]).slice(0, 2).join("") ?? "--"}</span><div><small>Linked student</small><h2>{child?.display_name ?? "No active link"}</h2><p>{child?.register_number}</p></div><span className="grant-count">{child?.grants.length ?? 0}<small>active grants</small></span></article>
-      <div className="grant-grid">{child?.grants.map((grant) => <span key={grant}><i aria-hidden="true">✓</i>{grant}</span>)}</div>
+      <div className="grant-grid interactive-grants">{child?.grants.map((grant) => <button type="button" key={grant} onClick={() => setSelectedGrant((current) => current === grant ? "" : grant)} data-action-id="parent-inspect-grant"><i aria-hidden="true">✓</i>{grant}</button>)}</div>
+      {selectedGrant ? <p className="grant-explainer" role="status"><b>{selectedGrant}</b> is granted for {child?.display_name}. Core rechecks this field on every request; it is not a browser-only permission.</p> : null}
     </section>
   );
 }
@@ -349,13 +392,19 @@ function ParentSurface({ snapshot, chooseChild }: { snapshot: Snapshot; chooseCh
 function ParentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
   const child = snapshot.children?.find((item) => item.id === snapshot.selectedChildId) ?? snapshot.children?.[0];
   const academics = snapshot.childAcademics;
+  const [course, setCourse] = useState("all");
+  const [inspected, setInspected] = useState("");
+  const courses = [...new Set([...(academics?.attendance ?? []), ...(academics?.marks ?? [])].map((item) => item.code))];
+  const attendance = course === "all" ? academics?.attendance : academics?.attendance?.filter((item) => item.code === course);
+  const marks = course === "all" ? academics?.marks : academics?.marks?.filter((item) => item.code === course);
   return (
     <section className="role-surface parent-record-surface">
       <div className="registration-heading"><div><p className="kicker">Granted child record</p><h1>{child?.display_name ?? "No active link"}</h1></div><p>This view is assembled from the active parent link on every request. Revoking a field removes it on the next refresh.</p></div>
       <div className="grant-grid parent-record-grants">{academics?.grantedFields.map((grant) => <span key={grant}><i aria-hidden="true">✓</i>{grant}</span>)}</div>
+      <div className="surface-toolbar compact-toolbar"><label><span>Course</span><select value={course} onChange={(event) => setCourse(event.target.value)} data-action-id="parent-filter-academics"><option value="all">All granted courses</option>{courses.map((code) => <option value={code} key={code}>{code}</option>)}</select></label><p>Filtering never expands the active field grants.</p></div>
       <div className="academic-columns">
-        {academics?.attendance ? <section><div className="section-heading"><span>Granted attendance</span><b>{academics.attendance.length}</b></div>{academics.attendance.map((item) => <article key={`${item.code}-${item.session_date}`}><div><b>{item.code}</b><small>{item.topic}</small></div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>)}</section> : <section className="revoked-panel"><p>Attendance access is not granted.</p></section>}
-        {academics?.marks ? <section><div className="section-heading"><span>Granted marks</span><b>{academics.marks.length}</b></div>{academics.marks.map((item) => <article key={`${item.code}-${item.assessment}`}><div><b>{item.code}</b><small>{item.assessment}</small></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}</p></article>)}</section> : <section className="revoked-panel"><p>Marks access is not granted.</p></section>}
+        {attendance ? <section><div className="section-heading"><span>Granted attendance</span><b>{attendance.length}</b></div>{attendance.map((item) => { const key = `attendance-${item.code}-${item.session_date}`; return <article key={key}><div><b>{item.code}</b><small>{item.topic}</small><button type="button" className="inline-inspect" onClick={() => setInspected((current) => current === key ? "" : key)} data-action-id="parent-inspect-academic-record">{inspected === key ? "Close" : "Inspect"}</button>{inspected === key ? <em>Granted attendance event. Internal faculty notes are excluded.</em> : null}</div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>; })}</section> : <section className="revoked-panel"><p>Attendance access is not granted.</p></section>}
+        {marks ? <section><div className="section-heading"><span>Granted marks</span><b>{marks.length}</b></div>{marks.map((item) => { const key = `mark-${item.code}-${item.assessment}`; return <article key={key}><div><b>{item.code}</b><small>{item.assessment}</small><button type="button" className="inline-inspect" onClick={() => setInspected((current) => current === key ? "" : key)} data-action-id="parent-inspect-academic-record">{inspected === key ? "Close" : "Inspect"}</button></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}{inspected === key ? " Published result; drafts are excluded." : ""}</p></article>; })}</section> : <section className="revoked-panel"><p>Marks access is not granted.</p></section>}
       </div>
       {snapshot.childSupportPlans ? <div className="embedded-support"><SupportPlanSurface plans={snapshot.childSupportPlans} audience="parent" /></div> : <div className="embedded-support revoked-panel"><p>Support access is not granted.</p></div>}
     </section>
@@ -424,7 +473,7 @@ function ParentAccessSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function FacultySurface({ snapshot, activeView, refresh, csrfToken }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void; csrfToken: string }) {
+function FacultySurface({ snapshot, activeView, refresh, csrfToken, navigate }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void; csrfToken: string; navigate: (view: string) => void }) {
   const offering = snapshot.assignableOffering;
   const roster = snapshot.roster ?? [];
   const attendanceSession = snapshot.classroom?.attendanceSession;
@@ -435,6 +484,10 @@ function FacultySurface({ snapshot, activeView, refresh, csrfToken }: { snapshot
   const [pending, setPending] = useState<"attendance" | "marks" | "decision" | null>(null);
   const [message, setMessage] = useState("");
   const [rationale, setRationale] = useState("The proposed steps are proportionate, student-visible, and grounded in the cited academic evidence.");
+  const [rosterQuery, setRosterQuery] = useState("");
+  const [inspectedStudentId, setInspectedStudentId] = useState("");
+  const normalizedRosterQuery = rosterQuery.trim().toLowerCase();
+  const visibleRoster = roster.filter((student) => !normalizedRosterQuery || `${student.display_name} ${student.register_number}`.toLowerCase().includes(normalizedRosterQuery));
 
   async function submitRegister() {
     if (!attendanceSession || !roster.length) return;
@@ -488,12 +541,13 @@ function FacultySurface({ snapshot, activeView, refresh, csrfToken }: { snapshot
     <section className="role-surface faculty-surface">
       <div className="hero-copy"><p className="kicker">Faculty operations / 03 Sep</p><h1>Teaching desk.</h1><p>Assigned work only. Everything else stays behind the Core boundary.</p></div>
       <div className="faculty-board">
-        <article><small>09:00 · assigned section</small><h2>{offering ? `${offering.code} ${offering.title}` : "Awaiting HOD assignment"}</h2><p>{offering ? `${offering.enrolment} students · CSE-401` : "The CS401 publication event will place the section here."}</p><span className={offering ? "signal-live" : "signal-waiting"}>{offering ? "ready" : "waiting"}</span></article>
-        <article className="queue-card"><small>Registered students</small><strong>{String(roster.length).padStart(2, "0")}</strong><p>{offering ? "Live from the authoritative registration ledger." : "Nothing can be marked before assignment."}</p></article>
+        <article><small>09:00 · assigned section</small><h2>{offering ? `${offering.code} ${offering.title}` : "Awaiting HOD assignment"}</h2><p>{offering ? `${offering.enrolment} students · CSE-401` : "The CS401 publication event will place the section here."}</p><span className={offering ? "signal-live" : "signal-waiting"}>{offering ? "ready" : "waiting"}</span>{activeView === "Today" ? <button type="button" className="board-action" onClick={() => navigate("Classrooms")} disabled={!offering} data-action-id="faculty-open-classroom-task">Open classroom</button> : null}</article>
+        <article className="queue-card"><small>Registered students</small><strong>{String(roster.length).padStart(2, "0")}</strong><p>{offering ? "Live from the authoritative registration ledger." : "Nothing can be marked before assignment."}</p>{activeView === "Today" ? <button type="button" className="board-action" onClick={() => navigate("Cases")} data-action-id="faculty-open-case-task">Open case queue</button> : null}</article>
       </div>
       {message ? <p className="command-message" role="status">{message}</p> : null}
-      {activeView === "Classrooms" && offering ? <section className="roster-register attendance-register"><div className="section-heading"><span>{offering.code} / {attendanceSession?.topic ?? "attendance sheet"}</span><b>v{attendanceSession?.revision ?? 0}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code></div><label><span className="sr-only">Attendance for {student.display_name}</span><select value={attendance[student.id] ?? "present"} onChange={(event) => setAttendance((current) => ({ ...current, [student.id]: event.target.value as "present" | "absent" | "late" | "excused" }))} data-action-id="faculty-set-attendance"><option value="present">Present</option><option value="absent">Absent</option><option value="late">Late</option><option value="excused">Excused</option></select></label><small>{attendanceSession?.status ?? "open"}</small></article>) : <p>No students have registered yet.</p>}<div className="register-toolbar"><p>Submitting increments the sheet version and publishes the result to authorized views.</p><button type="button" onClick={() => void submitRegister()} disabled={!roster.length || !attendanceSession || pending === "attendance"} data-action-id="faculty-submit-attendance">{pending === "attendance" ? "Submitting…" : attendanceSession?.status === "submitted" ? "Submit correction" : "Submit attendance"}</button></div></section> : null}
-      {activeView === "Gradebook" && offering ? <section className="roster-register gradebook-register"><div className="section-heading"><span>{assessment?.title ?? "gradebook"} / maximum {assessment?.maximum_score ?? 0}</span><b>v{assessment?.revision ?? 0}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code></div><label><span className="sr-only">Score for {student.display_name}</span><input type="number" min="0" max={assessment?.maximum_score} value={scores[student.id] ?? "82"} onChange={(event) => setScores((current) => ({ ...current, [student.id]: event.target.value }))} data-action-id="faculty-enter-mark" /></label><small>{assessment?.published ? "published" : "draft"}</small></article>) : <p>No students have registered yet.</p>}<div className="register-toolbar"><p>Publishing makes these marks visible to the student and to parents with an active marks grant.</p><button type="button" onClick={() => void submitMarks()} disabled={!roster.length || !assessment || pending === "marks"} data-action-id="faculty-publish-marks">{pending === "marks" ? "Publishing…" : assessment?.published ? "Publish correction" : "Publish marks"}</button></div></section> : null}
+      {(activeView === "Classrooms" || activeView === "Gradebook") && offering ? <div className="surface-toolbar compact-toolbar faculty-roster-toolbar"><label><span>Find student</span><input type="search" value={rosterQuery} onChange={(event) => setRosterQuery(event.target.value)} placeholder="Name or register number" data-action-id="faculty-search-roster" /></label><p><b>{visibleRoster.length}</b> of {roster.length} assigned students</p></div> : null}
+      {activeView === "Classrooms" && offering ? <section className="roster-register attendance-register"><div className="section-heading"><span>{offering.code} / {attendanceSession?.topic ?? "attendance sheet"}</span><b>v{attendanceSession?.revision ?? 0}</b></div>{visibleRoster.length ? visibleRoster.map((student) => { const index = roster.findIndex((entry) => entry.id === student.id); return <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code><button type="button" className="inline-inspect" onClick={() => setInspectedStudentId((current) => current === student.id ? "" : student.id)} data-action-id="faculty-inspect-student">{inspectedStudentId === student.id ? "Close" : "Inspect"}</button>{inspectedStudentId === student.id ? <em>Registered {new Date(student.registered_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}. Visible because this faculty member is assigned to the section.</em> : null}</div><label><span className="sr-only">Attendance for {student.display_name}</span><select value={attendance[student.id] ?? "present"} onChange={(event) => setAttendance((current) => ({ ...current, [student.id]: event.target.value as "present" | "absent" | "late" | "excused" }))} data-action-id="faculty-set-attendance"><option value="present">Present</option><option value="absent">Absent</option><option value="late">Late</option><option value="excused">Excused</option></select></label><small>{attendanceSession?.status ?? "open"}</small></article>; }) : <p>No assigned student matches this search.</p>}<div className="register-toolbar"><p>Submitting increments the sheet version and publishes the result to authorized views.</p><button type="button" onClick={() => void submitRegister()} disabled={!roster.length || !attendanceSession || pending === "attendance"} data-action-id="faculty-submit-attendance">{pending === "attendance" ? "Submitting…" : attendanceSession?.status === "submitted" ? "Submit correction" : "Submit attendance"}</button></div></section> : null}
+      {activeView === "Gradebook" && offering ? <section className="roster-register gradebook-register"><div className="section-heading"><span>{assessment?.title ?? "gradebook"} / maximum {assessment?.maximum_score ?? 0}</span><b>v{assessment?.revision ?? 0}</b></div>{visibleRoster.length ? visibleRoster.map((student) => { const index = roster.findIndex((entry) => entry.id === student.id); return <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code><button type="button" className="inline-inspect" onClick={() => setInspectedStudentId((current) => current === student.id ? "" : student.id)} data-action-id="faculty-inspect-student">{inspectedStudentId === student.id ? "Close" : "Inspect"}</button>{inspectedStudentId === student.id ? <em>Assigned-section student. No parent, fee, or unrelated-course fields are returned.</em> : null}</div><label><span className="sr-only">Score for {student.display_name}</span><input type="number" min="0" max={assessment?.maximum_score} value={scores[student.id] ?? "82"} onChange={(event) => setScores((current) => ({ ...current, [student.id]: event.target.value }))} data-action-id="faculty-enter-mark" /></label><small>{assessment?.published ? "published" : "draft"}</small></article>; }) : <p>No assigned student matches this search.</p>}<div className="register-toolbar"><p>Publishing makes these marks visible to the student and to parents with an active marks grant.</p><button type="button" onClick={() => void submitMarks()} disabled={!roster.length || !assessment || pending === "marks"} data-action-id="faculty-publish-marks">{pending === "marks" ? "Publishing…" : assessment?.published ? "Publish correction" : "Publish marks"}</button></div></section> : null}
       {activeView === "Cases" ? <section className="faculty-case-desk">
         <div className="section-heading"><span>Assigned support case</span><b>{snapshot.supportCases?.length ?? 0}</b></div>
         {supportCase ? <article className="artifact-review">
@@ -527,6 +581,7 @@ function HodDepartmentSurface({ snapshot }: { snapshot: Snapshot }) {
   return (
     <section className="role-surface hod-department-surface">
       <div className="hero-copy"><p className="kicker">CSE / operating picture</p><h1>One department.<br />One ledger.</h1><p>Academic, staffing, support, and fee signals. Department-scoped and current to revision {snapshot.institutionRevision}.</p></div>
+      <div className="surface-toolbar compact-toolbar term-toolbar"><label><span>Academic term</span><select value="2026-ODD" disabled data-action-id="hod-change-term" aria-describedby="term-constraint"><option value="2026-ODD">2026 odd semester</option></select></label><p id="term-constraint">This deterministic simulation seeds one active term. The control is intentionally locked because no second valid term exists.</p></div>
       <div className="department-scoreboard">
         <article><small>Active students</small><strong>{students.length}</strong><span>{activeRegistrations} current registrations</span></article>
         <article><small>Faculty</small><strong>{faculty.length}</strong><span>{faculty.reduce((total, item) => total + Number(item.assigned_offerings), 0)} assigned offerings</span></article>
@@ -541,11 +596,18 @@ function HodDepartmentSurface({ snapshot }: { snapshot: Snapshot }) {
 function HodPeopleSurface({ snapshot }: { snapshot: Snapshot }) {
   const students = snapshot.departmentStudents ?? [];
   const faculty = snapshot.departmentFaculty ?? [];
+  const [query, setQuery] = useState("");
+  const [cohort, setCohort] = useState<"all" | "students" | "faculty">("all");
+  const [inspectedId, setInspectedId] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleStudents = cohort === "faculty" ? [] : students.filter((student) => !normalizedQuery || `${student.display_name} ${student.register_number}`.toLowerCase().includes(normalizedQuery));
+  const visibleFaculty = cohort === "students" ? [] : faculty.filter((person) => !normalizedQuery || person.display_name.toLowerCase().includes(normalizedQuery));
   return (
     <section className="role-surface hod-people-surface">
       <div className="registration-heading"><div><p className="kicker">CSE / authorized directory</p><h1>People, in context.</h1></div><p>Operational records for this department only. Parent identities, credentials, and other departments remain outside the HOD boundary.</p></div>
-      <section className="people-ledger"><div className="section-heading"><span>Students</span><b>{students.length}</b></div>{students.map((student) => <article key={student.id}><div><b>{student.display_name}</b><code>{student.register_number} · semester {student.semester}</code></div><span><b>{student.active_registrations}</b><small>courses</small></span><span><b>{student.submitted_attendance_records}</b><small>attendance</small></span><span><b>{student.published_marks}</b><small>marks</small></span><span className="money-cell"><b>{money(student.outstanding_paise)}</b><small>outstanding</small></span></article>)}</section>
-      <section className="people-ledger faculty-directory"><div className="section-heading"><span>Faculty</span><b>{faculty.length}</b></div>{faculty.map((person) => <article key={person.id}><div><b>{person.display_name}</b><code>CSE faculty</code></div><span><b>{person.assigned_offerings}</b><small>offerings</small></span><span><b>{person.submitted_attendance_sheets}</b><small>sheets</small></span><span><b>{person.published_assessments}</b><small>assessments</small></span></article>)}</section>
+      <div className="surface-toolbar people-toolbar"><label><span>Find person</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name or register number" data-action-id="hod-search-people" /></label><label><span>Cohort</span><select value={cohort} onChange={(event) => setCohort(event.target.value as typeof cohort)} data-action-id="hod-filter-people"><option value="all">Students and faculty</option><option value="students">Students</option><option value="faculty">Faculty</option></select></label><p><b>{visibleStudents.length + visibleFaculty.length}</b> scoped records</p></div>
+      {cohort !== "faculty" ? <section className="people-ledger"><div className="section-heading"><span>Students</span><b>{visibleStudents.length}</b></div>{visibleStudents.map((student) => <article key={student.id}><div><b>{student.display_name}</b><code>{student.register_number} · semester {student.semester}</code><button type="button" className="inline-inspect" onClick={() => setInspectedId((current) => current === student.id ? "" : student.id)} data-action-id="hod-inspect-profile">{inspectedId === student.id ? "Close profile" : "Inspect profile"}</button>{inspectedId === student.id ? <em>Department-scoped academic summary. Parent details and credentials are excluded.</em> : null}</div><span><b>{student.active_registrations}</b><small>courses</small></span><span><b>{student.submitted_attendance_records}</b><small>attendance</small></span><span><b>{student.published_marks}</b><small>marks</small></span><span className="money-cell"><b>{money(student.outstanding_paise)}</b><small>outstanding</small></span></article>)}{!visibleStudents.length ? <p className="filter-empty">No student matches this directory filter.</p> : null}</section> : null}
+      {cohort !== "students" ? <section className="people-ledger faculty-directory"><div className="section-heading"><span>Faculty</span><b>{visibleFaculty.length}</b></div>{visibleFaculty.map((person) => <article key={person.id}><div><b>{person.display_name}</b><code>CSE faculty</code><button type="button" className="inline-inspect" onClick={() => setInspectedId((current) => current === person.id ? "" : person.id)} data-action-id="hod-inspect-profile">{inspectedId === person.id ? "Close profile" : "Inspect profile"}</button>{inspectedId === person.id ? <em>Teaching workload for this department only.</em> : null}</div><span><b>{person.assigned_offerings}</b><small>offerings</small></span><span><b>{person.submitted_attendance_sheets}</b><small>sheets</small></span><span><b>{person.published_assessments}</b><small>assessments</small></span></article>)}{!visibleFaculty.length ? <p className="filter-empty">No faculty member matches this directory filter.</p> : null}</section> : null}
     </section>
   );
 }
@@ -556,6 +618,7 @@ function HodSurface({ snapshot, refresh, activeView, csrfToken }: { snapshot: Sn
   const [facultyId, setFacultyId] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
+  const [showEnrolment, setShowEnrolment] = useState(false);
   const selected = facultyId || faculty[0]?.id || "";
 
   async function publish() {
@@ -592,18 +655,28 @@ function HodSurface({ snapshot, refresh, activeView, csrfToken }: { snapshot: Sn
           </button>
         </div>
       </article>
+      <div className="surface-actions offering-actions"><button type="button" onClick={() => setShowEnrolment((visible) => !visible)} data-action-id="hod-inspect-enrolment">{showEnrolment ? "Close enrolment detail" : "Inspect enrolment"}</button><span>{offering ? `${offering.enrolment} of ${offering.capacity} seats currently occupied` : "No offering is available"}</span></div>
+      {showEnrolment && offering ? <div className="inline-detail"><span><small>Current enrolment</small><b>{offering.enrolment}</b></span><span><small>Capacity</small><b>{offering.capacity}</b></span><span><small>Available</small><b>{Math.max(0, offering.capacity - offering.enrolment)}</b></span></div> : null}
       <div className="hod-academic-strip"><article><small>Submitted attendance sheets</small><strong>{snapshot.academicSummary?.submitted_attendance ?? 0}</strong></article><article><small>Published assessments</small><strong>{snapshot.academicSummary?.published_assessments ?? 0}</strong></article><article><small>Current enrolment</small><strong>{offering?.enrolment ?? 0}</strong></article><article><small>Outstanding fees</small><strong>{money(snapshot.financeSummary?.outstanding_paise)}</strong></article></div>
       {message ? <p className="command-message" role="status">{message}</p> : null}
     </section>
   );
 }
 
-function GovernanceSurface({ snapshot, activeView, refresh, csrfToken }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void; csrfToken: string }) {
+function GovernanceSurface({ snapshot, activeView, refresh, csrfToken, navigate }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void; csrfToken: string; navigate: (view: string) => void }) {
   const event = snapshot.processableEvents?.[0];
   const run = snapshot.governanceRuns?.[0];
+  const previousRun = snapshot.governanceRuns?.[1];
   const [pending, setPending] = useState<"process" | "replay" | "reset" | null>(null);
   const [message, setMessage] = useState("");
   const [resetConfirmation, setResetConfirmation] = useState("");
+  const [showStages, setShowStages] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  const [evidenceQuery, setEvidenceQuery] = useState("");
+  const [showResetPreview, setShowResetPreview] = useState(false);
+  const normalizedEvidenceQuery = evidenceQuery.trim().toLowerCase();
+  const visibleCitations = run?.recommendation.citations.filter((citation) => !normalizedEvidenceQuery || `${citation.evidencePath} ${citation.statement}`.toLowerCase().includes(normalizedEvidenceQuery)) ?? [];
 
   async function processEvent() {
     if (!event) return;
@@ -658,10 +731,11 @@ function GovernanceSurface({ snapshot, activeView, refresh, csrfToken }: { snaps
           <pre>{event ? `event ${event.id}\ntype ${event.event_type}\nstate awaiting evidence freeze` : "> academic event queue clear_"}</pre>
         </div>
         <div className="governance-queue"><div className="section-heading"><span>Academic event queue</span><b>{snapshot.processableEvents?.length ?? 0}</b></div>{event ? <article><div><small>revision {event.institution_revision}</small><h2>{event.event_type.replaceAll(".", " / ")}</h2><code>{event.id}</code></div><button type="button" onClick={() => void processEvent()} disabled={pending === "process"} data-action-id="governance-process-academic-event">{pending === "process" ? "Processing…" : "Freeze evidence + process"}</button></article> : <p>No attendance or marks event is waiting.</p>}</div>
+        {run ? <div className="surface-actions governance-dashboard-action"><button type="button" onClick={() => navigate("Runs")} data-action-id="governance-open-run">Open latest governed run</button><span>{run.id.slice(0, 8)} · {run.status}</span></div> : null}
       </> : null}
-      {activeView === "Runs" ? <div className="run-workbench"><div className="section-heading"><span>Validated deterministic runs</span><b>{snapshot.governanceRuns?.length ?? 0}</b></div>{run ? <article><header><div><small>{run.student_name} · {run.risk_band} context</small><h2>{run.recommendation.summary}</h2></div><span className={`case-state case-${run.case_status}`}>{run.case_status.replaceAll("_", " ")}</span></header><div className="run-metrics"><span>mode <b>{run.mode}</b></span><span>validation <b>{String(run.validation.valid ?? false).toUpperCase()}</b></span><span>replays <b>{run.replay_count}</b></span></div><ol>{run.recommendation.actions.map((action) => <li key={action.code}>{action.label}</li>)}</ol><div className="run-actions"><button type="button" onClick={() => void replay()} disabled={pending === "replay"} data-action-id="governance-replay-run">{pending === "replay" ? "Replaying…" : "Replay + verify hashes"}</button><a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Download evidence JSON <span aria-hidden="true">↓</span></a></div></article> : <div className="empty-support"><span>0</span><p>Process one academic event to create a governed run.</p></div>}</div> : null}
-      {activeView === "Evidence" ? <div className="evidence-workbench"><div className="section-heading"><span>Frozen lineage</span><b>{run ? 1 : 0}</b></div>{run ? <article><div><small>Input SHA-256</small><code>{run.input_hash}</code></div><div><small>Artifact SHA-256</small><code>{run.content_hash}</code></div><div><small>Policy result</small><b>{String(run.validation.valid ?? false).toUpperCase()} · deterministic</b></div><h2>Cited evidence</h2>{run.recommendation.citations.map((citation) => <p key={citation.evidencePath}><code>{citation.evidencePath}</code>{citation.statement}</p>)}<a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Export immutable evidence package <span aria-hidden="true">↓</span></a></article> : <div className="empty-support"><span>0</span><p>No frozen evidence exists in this generation.</p></div>}</div> : null}
-      {activeView === "Simulation" ? <div className="simulation-workbench"><div className="section-heading"><span>Synthetic generation control</span><b>destructive</b></div><article><p className="kicker">Explicit operator boundary</p><h2>Start a clean institutional generation.</h2><p>This switches every portal to a deterministic fresh seed. The current generation becomes inactive but remains in the audit database. This cannot affect a real student because the ecosystem contains synthetic records only.</p><label htmlFor="simulation-confirmation">Type <code>AURA-SYNTHETIC-SEED-V1</code> to confirm</label><input id="simulation-confirmation" value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} autoComplete="off" spellCheck={false} data-action-id="governance-enter-reset-confirmation" /><button type="button" onClick={() => void resetSimulation()} disabled={pending === "reset" || resetConfirmation !== "AURA-SYNTHETIC-SEED-V1"} data-action-id="governance-reset-simulation">{pending === "reset" ? "Creating generation…" : "Reset synthetic ecosystem"}</button><small>Authentication, governance role, exact confirmation, and database transaction are all required.</small></article></div> : null}
+      {activeView === "Runs" ? <div className="run-workbench"><div className="section-heading"><span>Validated deterministic runs</span><b>{snapshot.governanceRuns?.length ?? 0}</b></div>{run ? <article><header><div><small>{run.student_name} · {run.risk_band} context</small><h2>{run.recommendation.summary}</h2></div><span className={`case-state case-${run.case_status}`}>{run.case_status.replaceAll("_", " ")}</span></header><div className="run-metrics"><span>mode <b>{run.mode}</b></span><span>validation <b>{String(run.validation.valid ?? false).toUpperCase()}</b></span><span>replays <b>{run.replay_count}</b></span></div><div className="run-inspection-actions"><button type="button" onClick={() => setShowStages((visible) => !visible)} data-action-id="governance-inspect-stage">{showStages ? "Hide run stages" : "Inspect run stages"}</button><button type="button" onClick={() => setShowValidation((visible) => !visible)} data-action-id="governance-inspect-validation">{showValidation ? "Hide validation" : "Inspect validation"}</button><button type="button" onClick={() => setShowComparison((visible) => !visible)} disabled={!previousRun} aria-describedby={!previousRun ? "comparison-constraint" : undefined} data-action-id="governance-compare-runs">{showComparison ? "Close comparison" : "Compare latest runs"}</button></div>{!previousRun ? <small id="comparison-constraint" className="control-constraint">A second completed run is required before version comparison becomes valid.</small> : null}{showStages ? <div className="run-stage-grid"><span><b>01</b> Event authorized</span><span><b>02</b> Evidence frozen</span><span><b>03</b> Policy evaluated</span><span><b>04</b> Artifact validated</span><span><b>05</b> Faculty interrupt created</span></div> : null}{showValidation ? <div className="validation-detail"><code>{JSON.stringify(run.validation, null, 2)}</code></div> : null}{showComparison && previousRun ? <div className="run-comparison"><article><small>Latest</small><b>{run.id.slice(0, 8)}</b><span>{run.content_hash.slice(0, 12)}</span></article><article><small>Previous</small><b>{previousRun.id.slice(0, 8)}</b><span>{previousRun.content_hash.slice(0, 12)}</span></article></div> : null}<ol>{run.recommendation.actions.map((action) => <li key={action.code}>{action.label}</li>)}</ol><div className="run-actions"><button type="button" onClick={() => void replay()} disabled={pending === "replay"} data-action-id="governance-replay-run">{pending === "replay" ? "Replaying…" : "Replay + verify hashes"}</button><a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Download evidence JSON <span aria-hidden="true">↓</span></a></div></article> : <div className="empty-support"><span>0</span><p>Process one academic event to create a governed run.</p></div>}</div> : null}
+      {activeView === "Evidence" ? <div className="evidence-workbench"><div className="section-heading"><span>Frozen lineage</span><b>{run ? 1 : 0}</b></div>{run ? <article><div><small>Input SHA-256</small><code>{run.input_hash}</code></div><div><small>Artifact SHA-256</small><code>{run.content_hash}</code></div><div><small>Policy result</small><b>{String(run.validation.valid ?? false).toUpperCase()} · deterministic</b></div><div className="surface-toolbar compact-toolbar evidence-filter"><label><span>Filter cited evidence</span><input type="search" value={evidenceQuery} onChange={(event) => setEvidenceQuery(event.target.value)} placeholder="Path or statement" data-action-id="governance-filter-evidence" /></label><p><b>{visibleCitations.length}</b> of {run.recommendation.citations.length} citations</p></div><h2>Cited evidence</h2>{visibleCitations.map((citation) => <p key={citation.evidencePath}><code>{citation.evidencePath}</code>{citation.statement}</p>)}{!visibleCitations.length ? <p className="filter-empty">No citation matches this evidence filter.</p> : null}<a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Export immutable evidence package <span aria-hidden="true">↓</span></a></article> : <div className="empty-support"><span>0</span><p>No frozen evidence exists in this generation.</p></div>}</div> : null}
+      {activeView === "Simulation" ? <div className="simulation-workbench"><div className="section-heading"><span>Synthetic generation control</span><b>destructive</b></div><article><p className="kicker">Explicit operator boundary</p><h2>Start a clean institutional generation.</h2><p>This switches every portal to a deterministic fresh seed. The current generation becomes inactive but remains in the audit database. This cannot affect a real student because the ecosystem contains synthetic records only.</p><button type="button" className="reset-preview-trigger" onClick={() => setShowResetPreview((visible) => !visible)} data-action-id="governance-preview-reset">{showResetPreview ? "Close reset preview" : "Preview reset effects"}</button>{showResetPreview ? <div className="reset-preview"><b>Reset will</b><ul><li>deactivate the current synthetic generation</li><li>seed 12 students, 9 parents, 4 faculty, 2 HODs, and 6 offerings</li><li>preserve prior audit and evidence rows</li><li>change no real institution or person data</li></ul></div> : null}<label htmlFor="simulation-confirmation">Type <code>AURA-SYNTHETIC-SEED-V1</code> to confirm</label><input id="simulation-confirmation" value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} autoComplete="off" spellCheck={false} data-action-id="governance-enter-reset-confirmation" /><button type="button" onClick={() => void resetSimulation()} disabled={pending === "reset" || resetConfirmation !== "AURA-SYNTHETIC-SEED-V1"} data-action-id="governance-reset-simulation">{pending === "reset" ? "Creating generation…" : "Reset synthetic ecosystem"}</button><small>Authentication, governance role, exact confirmation, and database transaction are all required.</small></article></div> : null}
     </section>
   );
 }
@@ -750,9 +824,9 @@ export function PortalHome({ portal, release, initialPath = "/dashboard" }: { po
             {portal.id === "parent" && activeView === "Children" ? <ParentAcademicsSurface snapshot={snapshot} /> : null}
             {portal.id === "parent" && activeView === "Fees" ? <ParentFeesSurface snapshot={snapshot} refresh={load} csrfToken={csrfToken} /> : null}
             {portal.id === "parent" && activeView === "Access" ? <ParentAccessSurface snapshot={snapshot} /> : null}
-            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} activeView={activeView} refresh={load} csrfToken={csrfToken} /> : null}
+            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} activeView={activeView} refresh={load} csrfToken={csrfToken} navigate={navigate} /> : null}
             {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} activeView={activeView} csrfToken={csrfToken} /> : null}
-            {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} activeView={activeView} refresh={load} csrfToken={csrfToken} /> : null}
+            {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} activeView={activeView} refresh={load} csrfToken={csrfToken} navigate={navigate} /> : null}
             <ActivityRail activity={snapshot.activity} portal={portal.id} navigate={navigate} />
           </div>
           <footer className="portal-footer"><span>AURA Institute of Technology</span><span>Synthetic ecosystem / {portal.id} / build {(release ?? "local").slice(0, 8)}</span></footer>

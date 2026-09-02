@@ -28,6 +28,7 @@ platform/test-results/
 platform/playwright-report/
 platform/blob-report/
 docs/release-evidence/local/
+docs/release-evidence/local-*/
 .vercel
 .env*
 !.env.example

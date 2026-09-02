@@ -17,6 +17,7 @@ const views = {
   governance: ["Operations", "Runs", "Evidence", "Simulation"],
 } as const;
 const identityUrl = process.env.IDENTITY_URL ?? "https://aura-identity-service.vercel.app";
+const viewports = [{ width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1440, height: 1000 }] as const;
 function regexEscape(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 async function enterPortal(page: Page, portal: keyof typeof sites) {
@@ -53,13 +54,14 @@ test("all portal surfaces pass serious accessibility, overflow, and runtime-erro
       const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
       const blocking = accessibility.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious");
       expect(blocking, `${portal}/${view} serious accessibility violations`).toEqual([]);
-    }
-
-    for (const viewport of [{ width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1440, height: 1000 }]) {
-      await page.setViewportSize(viewport);
-      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      if (process.env.EVIDENCE_DIR) {
-        await page.screenshot({ path: `${process.env.EVIDENCE_DIR}/${portal}-${viewport.width}.png`, fullPage: true });
+      for (const viewport of viewports) {
+        await page.setViewportSize(viewport);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), {
+          message: `${portal}/${view} must not overflow at ${viewport.width}px`,
+        }).toBe(true);
+        if (process.env.EVIDENCE_DIR && view === views[portal].at(-1)) {
+          await page.screenshot({ path: `${process.env.EVIDENCE_DIR}/${portal}-${viewport.width}.png`, fullPage: true });
+        }
       }
     }
     await page.close();

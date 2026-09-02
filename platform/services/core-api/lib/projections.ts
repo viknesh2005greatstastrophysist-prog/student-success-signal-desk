@@ -98,15 +98,23 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChil
         department: string;
         department_id: string;
         completed_course_codes: string[];
+        fee_invoice_id: string | null;
+        invoice_number: string | null;
+        fee_description: string | null;
         fee_status: string | null;
         amount_paise: string | null;
         paid_paise: string | null;
         remaining_paise: string | null;
         due_on: string | null;
+        receipt_id: string | null;
       }>(
         `SELECT sp.register_number, sp.semester, sp.department_id, sp.completed_course_codes, d.name AS department,
+                fi.id AS fee_invoice_id, fi.invoice_number, fi.description AS fee_description,
                 fi.status AS fee_status, fi.amount_paise::text, fi.paid_paise::text,
-                (fi.amount_paise - fi.paid_paise)::text AS remaining_paise, fi.due_on
+                (fi.amount_paise - fi.paid_paise)::text AS remaining_paise, fi.due_on,
+                (SELECT transaction.id FROM payment_transactions transaction
+                 WHERE transaction.generation_id = sp.generation_id AND transaction.invoice_id = fi.id AND transaction.status = 'captured'
+                 ORDER BY transaction.created_at DESC LIMIT 1) AS receipt_id
          FROM student_profiles sp JOIN departments d ON d.id = sp.department_id
          LEFT JOIN fee_invoices fi ON fi.generation_id = sp.generation_id AND fi.student_id = sp.id
          WHERE sp.generation_id = $1 AND sp.id = $2`,

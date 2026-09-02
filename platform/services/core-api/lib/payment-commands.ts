@@ -5,7 +5,7 @@ import { z } from "zod";
 import { assertCommandId, findDuplicateCommand, getCurrentGeneration, writeCommandLedger } from "./command-ledger";
 import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
-import { requireRole } from "./security";
+import { AuthorizationError, requireRole } from "./security";
 
 export const paymentAttemptInput = z.object({
   expectedRevision: z.number().int().nonnegative(),
@@ -170,9 +170,18 @@ export async function createPaymentAttempt(
 
 export async function loadPaymentReceipt(actor: ActorContext, transactionId: string) {
   z.string().uuid().parse(transactionId);
-  requireRole(actor, "parent");
+  requireRole(actor, "parent", "student");
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
+    const scopeJoin = actor.role === "parent"
+      ? `JOIN parent_links link ON link.generation_id = transaction.generation_id AND link.student_id = invoice.student_id
+           AND link.parent_person_id = $3 AND link.active
+         JOIN parent_field_grants grant_row ON grant_row.generation_id = link.generation_id
+           AND grant_row.parent_link_id = link.id AND grant_row.field_group = 'fees' AND grant_row.granted`
+      : "";
+    const scopePredicate = actor.role === "student" ? "AND invoice.student_id = $3" : "";
+    const scopeId = actor.role === "student" ? actor.studentId : actor.personId;
+    if (!scopeId) throw new AuthorizationError("A student receipt request requires a student scope");
     const result = await client.query<{
       id: string;
       provider_reference: string;
@@ -191,12 +200,9 @@ export async function loadPaymentReceipt(actor: ActorContext, transactionId: str
        JOIN terms term ON term.id = invoice.term_id
        JOIN student_profiles student ON student.id = invoice.student_id
        JOIN people person ON person.id = student.person_id
-       JOIN parent_links link ON link.generation_id = transaction.generation_id AND link.student_id = invoice.student_id
-         AND link.parent_person_id = $3 AND link.active
-       JOIN parent_field_grants grant_row ON grant_row.generation_id = link.generation_id
-         AND grant_row.parent_link_id = link.id AND grant_row.field_group = 'fees' AND grant_row.granted
-       WHERE transaction.generation_id = $1 AND transaction.id = $2 AND transaction.status = 'captured'`,
-      [generationId, transactionId, actor.personId],
+       ${scopeJoin}
+       WHERE transaction.generation_id = $1 AND transaction.id = $2 AND transaction.status = 'captured' ${scopePredicate}`,
+      [generationId, transactionId, scopeId],
     );
     if (!result.rowCount) throw new NotFoundError("Receipt not found");
     const row = result.rows[0]!;
