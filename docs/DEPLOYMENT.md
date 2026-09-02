@@ -82,7 +82,10 @@ For every production URL:
 2. Confirm the expected Content Security Policy, HSTS, frame denial,
    `nosniff`, referrer, permissions, opener, and resource policies.
 3. Confirm the portal footer contains the candidate commit prefix.
-4. Confirm Core health reports the full candidate commit.
+4. Confirm Core and each portal health endpoint report the full candidate commit:
+
+   - Core: `/api/v1/health`
+   - Student, Parent, Faculty, HOD, Governance: `/api/health`
 5. Confirm Identity discovery advertises the production issuer.
 
 Then run the complete production journey three consecutive times using the
