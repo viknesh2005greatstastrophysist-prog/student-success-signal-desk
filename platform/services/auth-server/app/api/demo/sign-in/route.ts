@@ -54,13 +54,17 @@ export async function POST(request: Request) {
   if (!signedIn.ok) return redirectWithError(request, "session_failed");
 
   attempts.delete(ip);
-  const authorization = new URL("/api/auth/oauth2/authorize", request.url);
-  const source = new URL(request.url);
-  source.searchParams.forEach((value, key) => {
-    if (key !== "error") authorization.searchParams.append(key, value);
+  const sessionCookies = signedIn.headers.getSetCookie();
+  const continuationHeaders = new Headers(request.headers);
+  const cookiePairs = sessionCookies.map((cookie) => cookie.split(";", 1)[0]);
+  continuationHeaders.set("cookie", [request.headers.get("cookie"), ...cookiePairs].filter(Boolean).join("; "));
+  const continued = await auth.api.oauth2Continue({
+    asResponse: true,
+    headers: continuationHeaders,
+    body: { postLogin: true },
   });
-  const response = NextResponse.redirect(authorization, 303);
-  response.headers.set("Cache-Control", "no-store");
-  for (const cookie of signedIn.headers.getSetCookie()) response.headers.append("Set-Cookie", cookie);
-  return response;
+  const headers = new Headers(continued.headers);
+  headers.set("Cache-Control", "no-store");
+  for (const cookie of sessionCookies) headers.append("Set-Cookie", cookie);
+  return new Response(continued.body, { status: continued.status, headers });
 }
