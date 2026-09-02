@@ -37,6 +37,23 @@ type FeeInvoice = {
   id: string; invoice_number: string; description: string; amount_paise: string; paid_paise: string;
   remaining_paise: string; due_on: string; status: string; revision: number; transactions: FeeTransaction[];
 };
+type SupportRecommendation = {
+  summary: string;
+  actions: Array<{ code: string; label: string; owner: string; dueInDays: number }>;
+  citations: Array<{ evidencePath: string; statement: string }>;
+};
+type SupportPlanView = { id: string; case_id: string; reason: string; risk_band: string; status: string; plan: SupportRecommendation; created_at: string };
+type SupportCaseView = {
+  id: string; student_id: string; status: string; risk_band: string; reason: string; revision: number;
+  register_number: string; display_name: string; artifact_id: string; content_hash: string;
+  recommendation: SupportRecommendation; validation: { valid: boolean; repairAttempted: boolean; fallbackUsed: boolean; policyVersion: string }; created_at: string;
+};
+type ProcessableEvent = { id: string; event_type: string; institution_revision: string; occurred_at: string; payload: Record<string, unknown>; attempts: number };
+type GovernanceRun = {
+  id: string; mode: string; status: string; started_at: string; completed_at: string; support_case_id: string;
+  case_status: string; risk_band: string; student_name: string; input_hash: string; artifact_id: string;
+  content_hash: string; recommendation: SupportRecommendation; validation: Record<string, unknown>; replay_count: number;
+};
 type Snapshot = {
   actor: { role: PortalId; displayName: string; email: string };
   institutionRevision: number;
@@ -56,6 +73,12 @@ type Snapshot = {
   parentAccess?: Array<{ id: string; field_group: string; granted: boolean; revision: number; parent_name: string; relationship: string; linked_at: string }>;
   academicSummary?: { submitted_attendance: number; published_assessments: number };
   financeSummary?: { due_invoices: number; outstanding_paise: string; captured_payments: number };
+  supportSummary?: Record<string, number>;
+  supportPlans?: SupportPlanView[];
+  childSupportPlans?: SupportPlanView[];
+  supportCases?: SupportCaseView[];
+  processableEvents?: ProcessableEvent[];
+  governanceRuns?: GovernanceRun[];
 };
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } };
 
@@ -81,6 +104,9 @@ function ActivityRail({ activity }: { activity: Activity[] }) {
     "payment.captured": "Parent completed a sandbox payment",
     "payment.failed": "Sandbox payment attempt was declined",
     "parent_grant.revoked": "Student revoked a parent field grant",
+    "support.proposed": "Governance produced a bounded support proposal",
+    "support.approved": "Assigned faculty approved the exact support artifact",
+    "support.rejected": "Assigned faculty rejected the support artifact",
   };
   return (
     <aside className="activity-rail" aria-label="Causal activity">
@@ -101,10 +127,11 @@ function PortalMasthead({ portal, snapshot, refresh, signOut, refreshing, active
   portal: PortalDefinition; snapshot: Snapshot; refresh: () => void; signOut: () => void; refreshing: boolean; activeView: string; navigate: (view: string) => void;
 }) {
   const enabledViews: Partial<Record<PortalId, string[]>> = {
-    student: ["Today", "Registration", "Academics", "Fees", "Account"],
+    student: ["Today", "Registration", "Academics", "Fees", "Support", "Account"],
     parent: ["Overview", "Children", "Fees", "Access"],
-    faculty: ["Today", "Classrooms", "Gradebook"],
-    hod: ["Department", "Offerings"],
+    faculty: ["Today", "Classrooms", "Gradebook", "Cases"],
+    hod: ["Department", "Offerings", "Cases"],
+    governance: ["Operations", "Runs", "Evidence"],
   };
   return (
     <>
@@ -254,6 +281,21 @@ function StudentAccountSurface({ snapshot, refresh }: { snapshot: Snapshot; refr
   );
 }
 
+function SupportPlanSurface({ plans, audience }: { plans: SupportPlanView[] | undefined; audience: "student" | "parent" }) {
+  const plan = plans?.[0];
+  return (
+    <section className={`role-surface support-plan-surface support-plan-${audience}`}>
+      <div className="registration-heading"><div><p className="kicker">Approved support</p><h1>{plan ? "A plan, not a label." : "No active plan."}</h1></div><p>Only a faculty-approved artifact appears here. Governance can propose; it cannot approve or alter the academic record.</p></div>
+      {plan ? <article className="support-plan-card">
+        <header><span className={`risk-chip risk-${plan.risk_band}`}>{plan.risk_band} context</span><time>{new Date(plan.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</time></header>
+        <h2>{plan.plan.summary}</h2>
+        <ol>{plan.plan.actions.map((action) => <li key={action.code}><span>{action.owner.replaceAll("_", " ")}</span><b>{action.label}</b><small>within {action.dueInDays} days</small></li>)}</ol>
+        <p>{plan.reason}</p>
+      </article> : <div className="empty-support"><span>0</span><p>There is no approved support plan in the current synthetic generation.</p></div>}
+    </section>
+  );
+}
+
 function ParentSurface({ snapshot }: { snapshot: Snapshot }) {
   const child = snapshot.children?.[0];
   return (
@@ -276,6 +318,7 @@ function ParentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
         {academics?.attendance ? <section><div className="section-heading"><span>Granted attendance</span><b>{academics.attendance.length}</b></div>{academics.attendance.map((item) => <article key={`${item.code}-${item.session_date}`}><div><b>{item.code}</b><small>{item.topic}</small></div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>)}</section> : <section className="revoked-panel"><p>Attendance access is not granted.</p></section>}
         {academics?.marks ? <section><div className="section-heading"><span>Granted marks</span><b>{academics.marks.length}</b></div>{academics.marks.map((item) => <article key={`${item.code}-${item.assessment}`}><div><b>{item.code}</b><small>{item.assessment}</small></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}</p></article>)}</section> : <section className="revoked-panel"><p>Marks access is not granted.</p></section>}
       </div>
+      {snapshot.childSupportPlans ? <div className="embedded-support"><SupportPlanSurface plans={snapshot.childSupportPlans} audience="parent" /></div> : <div className="embedded-support revoked-panel"><p>Support access is not granted.</p></div>}
     </section>
   );
 }
@@ -349,8 +392,10 @@ function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot;
   const assessment = snapshot.classroom?.assessment;
   const [attendance, setAttendance] = useState<Record<string, "present" | "absent" | "late" | "excused">>({});
   const [scores, setScores] = useState<Record<string, string>>({});
-  const [pending, setPending] = useState<"attendance" | "marks" | null>(null);
+  const supportCase = snapshot.supportCases?.[0];
+  const [pending, setPending] = useState<"attendance" | "marks" | "decision" | null>(null);
   const [message, setMessage] = useState("");
+  const [rationale, setRationale] = useState("The proposed steps are proportionate, student-visible, and grounded in the cited academic evidence.");
 
   async function submitRegister() {
     if (!attendanceSession || !roster.length) return;
@@ -380,6 +425,26 @@ function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot;
     setPending(null);
   }
 
+  async function decide(decision: "approved" | "rejected") {
+    if (!supportCase) return;
+    setPending("decision"); setMessage("");
+    const response = await fetch(`/api/bff/support/cases/${supportCase.id}/decisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({
+        artifactId: supportCase.artifact_id,
+        contentHash: supportCase.content_hash,
+        expectedRevision: supportCase.revision,
+        decision,
+        rationale,
+      }),
+    });
+    const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
+    if (result.ok) { setMessage(`Support artifact ${decision}. Receipt ${result.data.receipt.eventId.slice(0, 8)}.`); await refresh(); }
+    else setMessage(result.error.message);
+    setPending(null);
+  }
+
   return (
     <section className="role-surface faculty-surface">
       <div className="hero-copy"><p className="kicker">Faculty operations / 03 Sep</p><h1>Teaching desk.</h1><p>Assigned work only. Everything else stays behind the Core boundary.</p></div>
@@ -390,17 +455,41 @@ function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot;
       {message ? <p className="command-message" role="status">{message}</p> : null}
       {activeView === "Classrooms" && offering ? <section className="roster-register attendance-register"><div className="section-heading"><span>{offering.code} / {attendanceSession?.topic ?? "attendance sheet"}</span><b>v{attendanceSession?.revision ?? 0}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code></div><label><span className="sr-only">Attendance for {student.display_name}</span><select value={attendance[student.id] ?? "present"} onChange={(event) => setAttendance((current) => ({ ...current, [student.id]: event.target.value as "present" | "absent" | "late" | "excused" }))} data-action-id="faculty-set-attendance"><option value="present">Present</option><option value="absent">Absent</option><option value="late">Late</option><option value="excused">Excused</option></select></label><small>{attendanceSession?.status ?? "open"}</small></article>) : <p>No students have registered yet.</p>}<div className="register-toolbar"><p>Submitting increments the sheet version and publishes the result to authorized views.</p><button type="button" onClick={() => void submitRegister()} disabled={!roster.length || !attendanceSession || pending === "attendance"} data-action-id="faculty-submit-attendance">{pending === "attendance" ? "Submitting…" : attendanceSession?.status === "submitted" ? "Submit correction" : "Submit attendance"}</button></div></section> : null}
       {activeView === "Gradebook" && offering ? <section className="roster-register gradebook-register"><div className="section-heading"><span>{assessment?.title ?? "gradebook"} / maximum {assessment?.maximum_score ?? 0}</span><b>v{assessment?.revision ?? 0}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code></div><label><span className="sr-only">Score for {student.display_name}</span><input type="number" min="0" max={assessment?.maximum_score} value={scores[student.id] ?? "82"} onChange={(event) => setScores((current) => ({ ...current, [student.id]: event.target.value }))} data-action-id="faculty-enter-mark" /></label><small>{assessment?.published ? "published" : "draft"}</small></article>) : <p>No students have registered yet.</p>}<div className="register-toolbar"><p>Publishing makes these marks visible to the student and to parents with an active marks grant.</p><button type="button" onClick={() => void submitMarks()} disabled={!roster.length || !assessment || pending === "marks"} data-action-id="faculty-publish-marks">{pending === "marks" ? "Publishing…" : assessment?.published ? "Publish correction" : "Publish marks"}</button></div></section> : null}
+      {activeView === "Cases" ? <section className="faculty-case-desk">
+        <div className="section-heading"><span>Assigned support case</span><b>{snapshot.supportCases?.length ?? 0}</b></div>
+        {supportCase ? <article className="artifact-review">
+          <header><div><small>{supportCase.register_number} · {supportCase.risk_band} context</small><h2>{supportCase.display_name}</h2></div><span className={`case-state case-${supportCase.status}`}>{supportCase.status.replaceAll("_", " ")}</span></header>
+          <p>{supportCase.reason}</p>
+          <blockquote>{supportCase.recommendation.summary}</blockquote>
+          <ol>{supportCase.recommendation.actions.map((action) => <li key={action.code}><b>{action.label}</b><small>{action.owner.replaceAll("_", " ")} · {action.dueInDays} days</small></li>)}</ol>
+          <div className="artifact-integrity"><span>Artifact</span><code>{supportCase.content_hash}</code><span>Validation</span><b>{supportCase.validation.valid ? "VALID" : "BLOCKED"} · {supportCase.validation.policyVersion}</b></div>
+          {supportCase.status === "awaiting_faculty" ? <div className="decision-panel"><label htmlFor="faculty-rationale">Decision rationale</label><textarea id="faculty-rationale" value={rationale} onChange={(event) => setRationale(event.target.value)} data-action-id="faculty-enter-support-rationale" /><div><button type="button" onClick={() => void decide("rejected")} disabled={pending === "decision"} data-action-id="faculty-reject-support-artifact">Reject artifact</button><button type="button" onClick={() => void decide("approved")} disabled={pending === "decision"} data-action-id="faculty-approve-support-artifact">{pending === "decision" ? "Committing…" : "Approve exact artifact"}</button></div></div> : <p className="decision-complete">Decision committed. This artifact is immutable.</p>}
+        </article> : <div className="empty-support"><span>0</span><p>No governance artifact is assigned to this faculty identity.</p></div>}
+      </section> : null}
     </section>
   );
 }
 
-function HodSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => Promise<void> | void }) {
+function HodCasesSurface({ snapshot }: { snapshot: Snapshot }) {
+  const cases = snapshot.supportCases ?? [];
+  return (
+    <section className="role-surface hod-cases-surface">
+      <div className="registration-heading"><div><p className="kicker">Department / support disposition</p><h1>Decisions in view.</h1></div><p>This is departmental oversight, not approval authority. Exact-artifact decisions remain with the assigned faculty member.</p></div>
+      <div className="hod-case-summary"><article><small>Awaiting faculty</small><strong>{snapshot.supportSummary?.awaiting_faculty ?? 0}</strong></article><article><small>Approved</small><strong>{snapshot.supportSummary?.approved ?? 0}</strong></article><article><small>Rejected</small><strong>{snapshot.supportSummary?.rejected ?? 0}</strong></article></div>
+      <div className="hod-case-ledger">{cases.length ? cases.map((item) => <article key={item.id}><div><b>{item.display_name}</b><small>{item.register_number}</small></div><p>{item.reason}</p><span className={`case-state case-${item.status}`}>{item.status.replaceAll("_", " ")}</span></article>) : <p>No support cases have entered the department ledger.</p>}</div>
+    </section>
+  );
+}
+
+function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; refresh: () => Promise<void> | void; activeView: string }) {
   const offering = snapshot.offering;
   const faculty = snapshot.availableFaculty ?? [];
   const [facultyId, setFacultyId] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const selected = facultyId || faculty[0]?.id || "";
+
+  if (activeView === "Cases") return <HodCasesSurface snapshot={snapshot} />;
 
   async function publish() {
     if (!offering || !selected) return;
@@ -438,15 +527,52 @@ function HodSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => 
   );
 }
 
-function GovernanceSurface({ snapshot }: { snapshot: Snapshot }) {
+function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void }) {
+  const event = snapshot.processableEvents?.[0];
+  const run = snapshot.governanceRuns?.[0];
+  const [pending, setPending] = useState<"process" | "replay" | null>(null);
+  const [message, setMessage] = useState("");
+
+  async function processEvent() {
+    if (!event) return;
+    setPending("process"); setMessage("");
+    const response = await fetch("/api/bff/governance/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ eventId: event.id }),
+    });
+    const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
+    if (result.ok) { setMessage(`Evidence frozen and artifact validated. Receipt ${result.data.receipt.eventId.slice(0, 8)}.`); await refresh(); }
+    else setMessage(result.error.message);
+    setPending(null);
+  }
+
+  async function replay() {
+    if (!run) return;
+    setPending("replay"); setMessage("");
+    const response = await fetch(`/api/bff/governance/runs/${run.id}/replay`, {
+      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: "{}",
+    });
+    const result = await response.json() as ApiResult<{ replay: { matched: boolean; id: string } }>;
+    if (result.ok) { setMessage(result.data.replay.matched ? `Replay verified. Receipt ${result.data.replay.id.slice(0, 8)}; zero domain mutations.` : "Replay hash mismatch. Release is blocked."); await refresh(); }
+    else setMessage(result.error.message);
+    setPending(null);
+  }
+
   return (
     <section className="role-surface governance-surface">
       <div className="hero-copy"><p className="kicker">AURA control plane</p><h1>Evidence,<br />not theatre.</h1><p>Observe lineage and replay. Academic authority lives elsewhere.</p></div>
-      <div className="governance-console">
-        <div className="console-head"><span>system / integrity</span><i>connected</i></div>
-        <div className="console-grid"><article><small>Institution revision</small><strong>{String(snapshot.institutionRevision).padStart(3, "0")}</strong></article><article><small>Observed events</small><strong>{String(snapshot.activity.length).padStart(2, "0")}</strong></article><article><small>Mutation authority</small><strong>NONE</strong></article></div>
-        <pre>{snapshot.activity[0] ? `event ${snapshot.activity[0].id}\nstatus observed\nhash pending-agent-slice` : "> waiting for first academic event_"}</pre>
-      </div>
+      {message ? <p className="governance-message" role="status">{message}</p> : null}
+      {activeView === "Operations" ? <>
+        <div className="governance-console">
+          <div className="console-head"><span>system / integrity</span><i>connected</i></div>
+          <div className="console-grid"><article><small>Institution revision</small><strong>{String(snapshot.institutionRevision).padStart(3, "0")}</strong></article><article><small>Processable events</small><strong>{String(snapshot.processableEvents?.length ?? 0).padStart(2, "0")}</strong></article><article><small>Academic mutation</small><strong>NONE</strong></article></div>
+          <pre>{event ? `event ${event.id}\ntype ${event.event_type}\nstate awaiting evidence freeze` : "> academic event queue clear_"}</pre>
+        </div>
+        <div className="governance-queue"><div className="section-heading"><span>Academic event queue</span><b>{snapshot.processableEvents?.length ?? 0}</b></div>{event ? <article><div><small>revision {event.institution_revision}</small><h2>{event.event_type.replaceAll(".", " / ")}</h2><code>{event.id}</code></div><button type="button" onClick={() => void processEvent()} disabled={pending === "process"} data-action-id="governance-process-academic-event">{pending === "process" ? "Processing…" : "Freeze evidence + process"}</button></article> : <p>No attendance or marks event is waiting.</p>}</div>
+      </> : null}
+      {activeView === "Runs" ? <div className="run-workbench"><div className="section-heading"><span>Validated deterministic runs</span><b>{snapshot.governanceRuns?.length ?? 0}</b></div>{run ? <article><header><div><small>{run.student_name} · {run.risk_band} context</small><h2>{run.recommendation.summary}</h2></div><span className={`case-state case-${run.case_status}`}>{run.case_status.replaceAll("_", " ")}</span></header><div className="run-metrics"><span>mode <b>{run.mode}</b></span><span>validation <b>{String(run.validation.valid ?? false).toUpperCase()}</b></span><span>replays <b>{run.replay_count}</b></span></div><ol>{run.recommendation.actions.map((action) => <li key={action.code}>{action.label}</li>)}</ol><div className="run-actions"><button type="button" onClick={() => void replay()} disabled={pending === "replay"} data-action-id="governance-replay-run">{pending === "replay" ? "Replaying…" : "Replay + verify hashes"}</button><a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Download evidence JSON <span aria-hidden="true">↓</span></a></div></article> : <div className="empty-support"><span>0</span><p>Process one academic event to create a governed run.</p></div>}</div> : null}
+      {activeView === "Evidence" ? <div className="evidence-workbench"><div className="section-heading"><span>Frozen lineage</span><b>{run ? 1 : 0}</b></div>{run ? <article><div><small>Input SHA-256</small><code>{run.input_hash}</code></div><div><small>Artifact SHA-256</small><code>{run.content_hash}</code></div><div><small>Policy result</small><b>{String(run.validation.valid ?? false).toUpperCase()} · deterministic</b></div><h2>Cited evidence</h2>{run.recommendation.citations.map((citation) => <p key={citation.evidencePath}><code>{citation.evidencePath}</code>{citation.statement}</p>)}<a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Export immutable evidence package <span aria-hidden="true">↓</span></a></article> : <div className="empty-support"><span>0</span><p>No frozen evidence exists in this generation.</p></div>}</div> : null}
     </section>
   );
 }
@@ -506,14 +632,15 @@ export function PortalHome({ portal }: { portal: PortalDefinition }) {
             {portal.id === "student" && activeView === "Registration" ? <StudentRegistrationSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "student" && activeView === "Academics" ? <StudentAcademicsSurface snapshot={snapshot} /> : null}
             {portal.id === "student" && activeView === "Fees" ? <StudentFeesSurface snapshot={snapshot} /> : null}
+            {portal.id === "student" && activeView === "Support" ? <SupportPlanSurface plans={snapshot.supportPlans} audience="student" /> : null}
             {portal.id === "student" && activeView === "Account" ? <StudentAccountSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "parent" && activeView === "Overview" ? <ParentSurface snapshot={snapshot} /> : null}
             {portal.id === "parent" && activeView === "Children" ? <ParentAcademicsSurface snapshot={snapshot} /> : null}
             {portal.id === "parent" && activeView === "Fees" ? <ParentFeesSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "parent" && activeView === "Access" ? <ParentAccessSurface snapshot={snapshot} /> : null}
             {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} activeView={activeView} refresh={load} /> : null}
-            {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} /> : null}
-            {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} /> : null}
+            {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} activeView={activeView} /> : null}
+            {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} activeView={activeView} refresh={load} /> : null}
             <ActivityRail activity={snapshot.activity} />
           </div>
           <footer className="portal-footer"><span>AURA Institute of Technology</span><span>Synthetic ecosystem / {portal.id}</span></footer>

@@ -14,6 +14,7 @@ import { createPaymentAttempt, loadPaymentReceipt } from "../lib/payment-command
 import { registerForOffering, withdrawRegistration } from "../lib/registration-commands";
 import { readCurrentSeedStats, resetSyntheticSeed } from "../lib/reset";
 import { AuthorizationError } from "../lib/security";
+import { composeValidatedRecommendation, decideSupportCase, loadGovernanceRun, processAcademicEvent, replayAgentRun, validateRecommendation } from "../lib/support-commands";
 
 const runDatabaseTests = process.env.RUN_DB_TESTS === "1";
 
@@ -62,7 +63,7 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   const fixtures = await pool.query<{
     generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;
     student_person_id: string; student_profile_id: string; student2_person_id: string; student2_profile_id: string; student10_person_id: string; student10_profile_id: string;
-    faculty2_person_id: string; parent_person_id: string; attendance_session_id: string; assessment_id: string; invoice_id: string; marks_grant_id: string;
+    faculty2_person_id: string; parent_person_id: string; governance_person_id: string; attendance_session_id: string; assessment_id: string; invoice_id: string; marks_grant_id: string;
   }>(
     `SELECT ir.current_generation_id AS generation_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'hod.cse@aura.invalid') AS hod_person_id,
@@ -70,6 +71,7 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'faculty1@aura.invalid') AS faculty_person_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'faculty2@aura.invalid') AS faculty2_person_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'parent1@aura.invalid') AS parent_person_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'governance@aura.invalid') AS governance_person_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student1@aura.invalid') AS student_person_id,
       (SELECT sp.id FROM "${schema}".student_profiles sp WHERE sp.generation_id = ir.current_generation_id AND sp.register_number = 'SYN-CSE-001') AS student_profile_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student2@aura.invalid') AS student2_person_id,
@@ -184,6 +186,100 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   const paymentReceipt = await loadPaymentReceipt(parent, paid.transaction.receiptId!);
   assert.equal(paymentReceipt.invoiceNumber, "INV-AURA-2026-001");
   assert.equal(paymentReceipt.amountPaise, 4500000);
+
+  const unsupportedCandidate = {
+    summary: "Contact the family automatically and alter the student's course record.",
+    actions: [{ code: "email-parent", label: "Email the parent without approval", owner: "assigned_faculty", dueInDays: 1 }],
+    citations: [{ evidencePath: "evidence.sourceEvent", statement: "A source event exists for this test." }],
+    prohibited: [],
+  };
+  const unsupportedValidation = validateRecommendation(unsupportedCandidate);
+  assert.equal(unsupportedValidation.valid, false);
+  assert.ok(unsupportedValidation.reasons.includes("UNSUPPORTED_ACTION"));
+  const repairedComposition = composeValidatedRecommendation({ eventType: "marks.published" }, unsupportedCandidate);
+  assert.equal(repairedComposition.validation.valid, true);
+  assert.equal(repairedComposition.validation.repairAttempted, true);
+
+  const governance: ActorContext = { subject: "database-test-governance", role: "governance", personId: fixture.governance_person_id };
+  const processCommand = randomUUID();
+  const processed = await processAcademicEvent(governance, processCommand, { eventId: marks.receipt.eventId });
+  const processedDuplicate = await processAcademicEvent(governance, processCommand, { eventId: marks.receipt.eventId });
+  assert.equal(processed.supportCase.status, "awaiting_faculty");
+  assert.equal(processed.run.mode, "deterministic");
+  assert.equal(processed.artifact.validation.valid, true);
+  assert.equal(processedDuplicate.duplicate, true);
+  assert.deepEqual(processedDuplicate.receipt, processed.receipt);
+  await assert.rejects(
+    processAcademicEvent(governance, randomUUID(), { eventId: marks.receipt.eventId }),
+    (error: unknown) => error instanceof ConflictError && error.code === "EVENT_ALREADY_PROCESSED",
+  );
+
+  const blockedEventId = randomUUID();
+  await pool.query(
+    `INSERT INTO "${schema}".domain_events
+     (id, generation_id, aggregate_type, aggregate_id, event_type, command_id, actor_person_id, institution_revision, payload)
+     VALUES ($1, $2, 'assessment', $3, 'marks.published', $4, $5, 999, '{}'::jsonb)`,
+    [blockedEventId, fixture.generation_id, fixture.assessment_id, randomUUID(), fixture.governance_person_id],
+  );
+  await pool.query(
+    `INSERT INTO "${schema}".outbox_items (id, generation_id, domain_event_id, topic, payload)
+     VALUES ($1, $2, $3, 'academic.marks.published', '{}'::jsonb)`,
+    [randomUUID(), fixture.generation_id, blockedEventId],
+  );
+  await assert.rejects(
+    processAcademicEvent(governance, randomUUID(), { eventId: blockedEventId }),
+    (error: unknown) => error instanceof ConflictError && error.code === "DATA_BLOCKED",
+  );
+
+  await assert.rejects(
+    decideSupportCase(unassignedFaculty, processed.supportCase.id, randomUUID(), {
+      artifactId: processed.artifact.id, contentHash: processed.artifact.contentHash,
+      expectedRevision: processed.supportCase.revision, decision: "approved", rationale: "Wrong faculty must fail closed.",
+    }),
+    (error: unknown) => error instanceof Error && "status" in error && error.status === 404,
+  );
+  await assert.rejects(
+    decideSupportCase(faculty, processed.supportCase.id, randomUUID(), {
+      artifactId: processed.artifact.id, contentHash: "0".repeat(64),
+      expectedRevision: processed.supportCase.revision, decision: "approved", rationale: "A stale hash must not be accepted.",
+    }),
+    (error: unknown) => error instanceof ConflictError && error.code === "STALE_ARTIFACT",
+  );
+  const decisionCommand = randomUUID();
+  const decided = await decideSupportCase(faculty, processed.supportCase.id, decisionCommand, {
+    artifactId: processed.artifact.id, contentHash: processed.artifact.contentHash,
+    expectedRevision: processed.supportCase.revision, decision: "approved",
+    rationale: "The cited steps are proportionate and preserve faculty authority.",
+  });
+  const decidedDuplicate = await decideSupportCase(faculty, processed.supportCase.id, decisionCommand, {
+    artifactId: processed.artifact.id, contentHash: processed.artifact.contentHash,
+    expectedRevision: processed.supportCase.revision, decision: "approved",
+    rationale: "The cited steps are proportionate and preserve faculty authority.",
+  });
+  assert.equal(decided.supportCase.status, "approved");
+  assert.ok(decided.plan);
+  assert.equal(decidedDuplicate.duplicate, true);
+  assert.deepEqual(decidedDuplicate.receipt, decided.receipt);
+
+  const studentWithPlan = await loadPortalSnapshot({ ...student, displayName: "Ananya Rao", email: "student1@aura.invalid", clientId: portalOidcClients.student } as AuthenticatedActor) as { supportPlans?: unknown[] };
+  assert.equal(studentWithPlan.supportPlans?.length, 1);
+  const parentWithPlan = await loadPortalSnapshot(parent) as { childSupportPlans?: unknown[] };
+  assert.equal(parentWithPlan.childSupportPlans?.length, 1);
+
+  const protectedTables = ["registrations", "attendance_records", "marks", "fee_invoices", "payment_transactions", "support_cases", "evidence_snapshots", "agent_runs", "agent_artifacts", "faculty_decisions", "support_plans", "domain_events", "outbox_items", "audit_events", "command_receipts"];
+  const countsBeforeReplay = await Promise.all(protectedTables.map(async (table) => Number((await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM "${schema}".${table} WHERE generation_id = $1`, [fixture.generation_id])).rows[0]!.count)));
+  const replayCommand = randomUUID();
+  const replayed = await replayAgentRun(governance, processed.run.id, replayCommand);
+  const replayedDuplicate = await replayAgentRun(governance, processed.run.id, replayCommand);
+  assert.equal(replayed.replay.matched, true);
+  assert.equal(replayedDuplicate.duplicate, true);
+  assert.deepEqual(replayedDuplicate.replay, replayed.replay);
+  const countsAfterReplay = await Promise.all(protectedTables.map(async (table) => Number((await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM "${schema}".${table} WHERE generation_id = $1`, [fixture.generation_id])).rows[0]!.count)));
+  assert.deepEqual(countsAfterReplay, countsBeforeReplay);
+  const runEvidence = await loadGovernanceRun(governance, processed.run.id) as { replays: unknown[]; input_hash: string; content_hash: string };
+  assert.equal(runEvidence.replays.length, 1);
+  assert.equal(runEvidence.input_hash, processed.run.inputHash);
+  assert.equal(runEvidence.content_hash, processed.artifact.contentHash);
 
   await pool.query(`UPDATE "${schema}".student_profiles SET completed_course_codes = '["CS301"]'::jsonb WHERE id IN ($1, $2)`, [fixture.student2_profile_id, fixture.student10_profile_id]);
   await assert.rejects(

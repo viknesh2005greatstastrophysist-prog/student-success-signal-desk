@@ -236,6 +236,36 @@ export function portalRevokeParentGrant(request: Request, portal: PortalId, gran
   return portalCoreCommand(request, portal, `/api/v1/parent-grants/${encodeURIComponent(grantId)}/revoke`);
 }
 
+export function portalProcessAcademicEvent(request: Request, portal: PortalId) {
+  return portalCoreCommand(request, portal, "/api/v1/governance/runs");
+}
+
+export function portalReplayAgentRun(request: Request, portal: PortalId, runId: string) {
+  return portalCoreCommand(request, portal, `/api/v1/governance/runs/${encodeURIComponent(runId)}/replay`);
+}
+
+export function portalDecideSupportCase(request: Request, portal: PortalId, caseId: string) {
+  return portalCoreCommand(request, portal, `/api/v1/support/cases/${encodeURIComponent(caseId)}/decisions`);
+}
+
+export async function portalDownloadRunEvidence(request: Request, portal: PortalId, runId: string) {
+  const session = await readSession(request, portal);
+  if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  const response = await fetch(`${settings(portal).coreUrl}/api/v1/governance/runs/${encodeURIComponent(runId)}`, {
+    headers: { Authorization: `Bearer ${session.accessToken}`, "X-Request-Id": randomUUID() }, cache: "no-store",
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) return Response.json(result, { status: response.status });
+  return new Response(`${JSON.stringify(result, null, 2)}\n`, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="AURA-run-${runId}-evidence.json"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",

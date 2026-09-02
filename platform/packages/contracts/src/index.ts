@@ -92,6 +92,7 @@ export const actionManifest: readonly ActionContract[] = [
   { id: "student-open-registration", portal: "student", type: "navigate", destination: "Registration surface" },
   { id: "student-open-academics", portal: "student", type: "navigate", destination: "Published academics surface" },
   { id: "student-open-fees", portal: "student", type: "navigate", destination: "Read-only fee statement" },
+  { id: "student-open-support", portal: "student", type: "navigate", destination: "Approved support plan" },
   { id: "student-open-account", portal: "student", type: "navigate", destination: "Parent field grants" },
   { id: "student-start-grant-revocation", portal: "student", type: "form", destination: "Grant revocation confirmation" },
   { id: "student-cancel-grant-revocation", portal: "student", type: "form", destination: "Parent field grants" },
@@ -107,6 +108,10 @@ export const actionManifest: readonly ActionContract[] = [
   { id: "faculty-submit-attendance", portal: "faculty", type: "command", destination: "/api/bff/attendance-sessions/:id/submit" },
   { id: "faculty-enter-mark", portal: "faculty", type: "form", destination: "Gradebook" },
   { id: "faculty-publish-marks", portal: "faculty", type: "command", destination: "/api/bff/assessments/:id/marks" },
+  { id: "faculty-open-cases", portal: "faculty", type: "navigate", destination: "Assigned support case" },
+  { id: "faculty-enter-support-rationale", portal: "faculty", type: "form", destination: "Support decision" },
+  { id: "faculty-reject-support-artifact", portal: "faculty", type: "command", destination: "/api/bff/support/cases/:id/decisions" },
+  { id: "faculty-approve-support-artifact", portal: "faculty", type: "command", destination: "/api/bff/support/cases/:id/decisions" },
   { id: "parent-open-overview", portal: "parent", type: "navigate", destination: "Parent overview" },
   { id: "parent-open-children", portal: "parent", type: "navigate", destination: "Granted child academics" },
   { id: "parent-open-fees", portal: "parent", type: "navigate", destination: "Sandbox fee checkout" },
@@ -118,6 +123,13 @@ export const actionManifest: readonly ActionContract[] = [
   { id: "parent-download-receipt", portal: "parent", type: "query", destination: "/api/bff/receipts/:id" },
   { id: "hod-open-department", portal: "hod", type: "navigate", destination: "Department surface" },
   { id: "hod-open-offerings", portal: "hod", type: "navigate", destination: "Offering command" },
+  { id: "hod-open-cases", portal: "hod", type: "navigate", destination: "Department support disposition" },
+  { id: "governance-open-operations", portal: "governance", type: "navigate", destination: "Academic event queue" },
+  { id: "governance-open-runs", portal: "governance", type: "navigate", destination: "Governed runs" },
+  { id: "governance-open-evidence", portal: "governance", type: "navigate", destination: "Frozen evidence" },
+  { id: "governance-process-academic-event", portal: "governance", type: "command", destination: "/api/bff/governance/runs" },
+  { id: "governance-replay-run", portal: "governance", type: "command", destination: "/api/bff/governance/runs/:id/replay" },
+  { id: "governance-download-evidence", portal: "governance", type: "query", destination: "/api/bff/governance/runs/:id" },
 ];
 
 export type PortalDefinition = {

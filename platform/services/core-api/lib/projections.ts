@@ -55,6 +55,19 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
       [generationId],
     );
 
+    const parentGrantRows = actor.role === "parent" ? await client.query<{ student_id: string; field_group: string }>(
+      `SELECT link.student_id, grant_row.field_group
+       FROM parent_links link JOIN parent_field_grants grant_row ON grant_row.parent_link_id = link.id AND grant_row.generation_id = link.generation_id
+       WHERE link.generation_id = $1 AND link.parent_person_id = $2 AND link.active AND grant_row.granted`,
+      [generationId, actor.personId],
+    ) : undefined;
+    const parentGrants = new Map<string, Set<string>>();
+    parentGrantRows?.rows.forEach((row) => {
+      const fields = parentGrants.get(row.student_id) ?? new Set<string>();
+      fields.add(row.field_group);
+      parentGrants.set(row.student_id, fields);
+    });
+
     const visibleEvents = events.rows.filter((event) => {
       if (actor.role === "governance") return true;
       if (actor.role === "hod") return event.payload.departmentId === actor.departmentId;
@@ -63,7 +76,16 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         const studentIds = Array.isArray(event.payload.studentIds) ? event.payload.studentIds : [];
         return event.event_type === "offering.published" || event.payload.studentId === actor.studentId || studentIds.includes(actor.studentId);
       }
-      if (actor.role === "parent") return event.payload.parentPersonId === actor.personId;
+      if (actor.role === "parent") {
+        if (event.payload.parentPersonId === actor.personId) return true;
+        const studentId = typeof event.payload.studentId === "string" ? event.payload.studentId : undefined;
+        if (!studentId) return false;
+        const grants = parentGrants.get(studentId);
+        if (event.event_type.startsWith("support.")) return grants?.has("support") ?? false;
+        if (event.event_type.startsWith("attendance.")) return grants?.has("attendance") ?? false;
+        if (event.event_type.startsWith("marks.")) return grants?.has("marks") ?? false;
+        return false;
+      }
       return false;
     });
 
@@ -186,6 +208,15 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         [generationId, actor.studentId],
       );
       roleData.parentAccess = parentAccess.rows;
+      const supportPlans = await client.query(
+        `SELECT plan.id, support_case.id AS case_id, support_case.reason, support_case.risk_band,
+                support_case.status, plan.plan, plan.created_at
+         FROM support_plans plan JOIN support_cases support_case ON support_case.id = plan.support_case_id
+         WHERE plan.generation_id = $1 AND plan.student_id = $2 AND plan.visible_to_student
+         ORDER BY plan.created_at DESC`,
+        [generationId, actor.studentId],
+      );
+      roleData.supportPlans = supportPlans.rows;
     }
     if (actor.role === "parent") {
       const children = await client.query<{ id: string; display_name: string; register_number: string; grants: string[] | null }>(
@@ -251,6 +282,17 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
           );
           roleData.childFinance = { studentId: child.id, granted: true, invoices: invoices.rows };
         }
+        if (grants.includes("support")) {
+          const supportPlans = await client.query(
+            `SELECT plan.id, support_case.id AS case_id, support_case.reason, support_case.risk_band,
+                    support_case.status, plan.plan, plan.created_at
+             FROM support_plans plan JOIN support_cases support_case ON support_case.id = plan.support_case_id
+             WHERE plan.generation_id = $1 AND plan.student_id = $2 AND plan.visible_to_student
+             ORDER BY plan.created_at DESC`,
+            [generationId, child.id],
+          );
+          roleData.childSupportPlans = supportPlans.rows;
+        }
       }
     }
     if (actor.role === "faculty") {
@@ -280,6 +322,22 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         );
         roleData.classroom = { attendanceSession: attendanceSession.rows[0] ?? null, assessment: assessment.rows[0] ?? null };
       } else roleData.roster = [];
+      const supportCases = await client.query(
+        `SELECT support_case.id, support_case.student_id, support_case.status, support_case.risk_band,
+                support_case.reason, support_case.revision, student.register_number, person.display_name,
+                artifact.id AS artifact_id, artifact.content_hash, artifact.recommendation, artifact.validation,
+                artifact.created_at
+         FROM support_cases support_case
+         JOIN student_profiles student ON student.id = support_case.student_id
+         JOIN people person ON person.id = student.person_id
+         JOIN evidence_snapshots evidence ON evidence.support_case_id = support_case.id AND evidence.generation_id = support_case.generation_id
+         JOIN agent_runs run ON run.evidence_snapshot_id = evidence.id AND run.generation_id = support_case.generation_id
+         JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id AND artifact.generation_id = support_case.generation_id
+         WHERE support_case.generation_id = $1 AND evidence.evidence->>'assignedFacultyPersonId' = $2
+         ORDER BY support_case.opened_at DESC, artifact.artifact_version DESC`,
+        [generationId, actor.personId],
+      );
+      roleData.supportCases = supportCases.rows;
     }
     if (actor.role === "hod") {
       roleData.departmentPeople = people.rows.filter((person) => person.department_id === actor.departmentId);
@@ -310,6 +368,48 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         [generationId, actor.departmentId],
       );
       roleData.financeSummary = financeSummary.rows[0];
+      const departmentSupport = await client.query(
+        `SELECT support_case.id, support_case.status, support_case.risk_band, support_case.reason,
+                student.register_number, person.display_name, support_case.opened_at
+         FROM support_cases support_case JOIN student_profiles student ON student.id = support_case.student_id
+         JOIN people person ON person.id = student.person_id
+         WHERE support_case.generation_id = $1 AND student.department_id = $2
+         ORDER BY support_case.opened_at DESC`,
+        [generationId, actor.departmentId],
+      );
+      roleData.supportCases = departmentSupport.rows;
+      roleData.supportSummary = departmentSupport.rows.reduce<Record<string, number>>((summary, item) => {
+        summary[item.status] = (summary[item.status] ?? 0) + 1;
+        return summary;
+      }, {});
+    }
+    if (actor.role === "governance") {
+      const processableEvents = await client.query(
+        `SELECT event.id, event.event_type, event.institution_revision::text, event.occurred_at,
+                event.payload, outbox.attempts
+         FROM domain_events event JOIN outbox_items outbox ON outbox.domain_event_id = event.id AND outbox.generation_id = event.generation_id
+         WHERE event.generation_id = $1 AND event.event_type IN ('attendance.submitted', 'marks.published') AND outbox.delivered_at IS NULL
+         ORDER BY event.institution_revision DESC`,
+        [generationId],
+      );
+      const governanceRuns = await client.query(
+        `SELECT run.id, run.mode, run.status, run.started_at, run.completed_at,
+                support_case.id AS support_case_id, support_case.status AS case_status,
+                support_case.risk_band, person.display_name AS student_name,
+                evidence.input_hash, artifact.id AS artifact_id, artifact.content_hash,
+                artifact.recommendation, artifact.validation,
+                (SELECT count(*)::int FROM replay_receipts replay WHERE replay.generation_id = run.generation_id AND replay.original_agent_run_id = run.id) AS replay_count
+         FROM agent_runs run JOIN support_cases support_case ON support_case.id = run.support_case_id
+         JOIN student_profiles student ON student.id = support_case.student_id
+         JOIN people person ON person.id = student.person_id
+         JOIN evidence_snapshots evidence ON evidence.id = run.evidence_snapshot_id
+         JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id
+         WHERE run.generation_id = $1
+         ORDER BY run.started_at DESC, artifact.artifact_version DESC`,
+        [generationId],
+      );
+      roleData.processableEvents = processableEvents.rows;
+      roleData.governanceRuns = governanceRuns.rows;
     }
 
     return {

@@ -18,7 +18,7 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
 }
 
-test("J01-J06 cross independent role sessions through the authoritative Core", async ({ browser }) => {
+test("J01-J10 cross independent role sessions through the authoritative Core", async ({ browser }) => {
   test.skip(!process.env.DEMO_ACCESS_PIN, "DEMO_ACCESS_PIN is required");
   const context = await browser.newContext();
   const hod = await context.newPage();
@@ -116,11 +116,44 @@ test("J01-J06 cross independent role sessions through the authoritative Core", a
   await expect(governance.getByText(/Sandbox payment attempt was declined/i)).toBeVisible();
   await expect(governance.getByText(/Student revoked a parent field grant/i)).toBeVisible();
   await expect(governance.getByText("NONE", { exact: true })).toBeVisible();
+  await governance.getByRole("button", { name: "Freeze evidence + process", exact: true }).click();
+  await expect(governance.getByText(/Evidence frozen and artifact validated\. Receipt/i)).toBeVisible();
+
+  await faculty.getByRole("button", { name: "Refresh portal data" }).click();
+  await faculty.getByRole("button", { name: "Cases", exact: true }).click();
+  await expect(faculty.getByText(/Offer a bounded academic check-in/i)).toBeVisible();
+  await expect(faculty.getByText(/VALID · AURA-SUPPORT-1/i)).toBeVisible();
+  await faculty.getByRole("button", { name: "Approve exact artifact", exact: true }).click();
+  await expect(faculty.getByText(/Support artifact approved\. Receipt/i)).toBeVisible();
+
+  await student.getByRole("button", { name: "Refresh portal data" }).click();
+  await student.getByRole("button", { name: "Support", exact: true }).click();
+  await expect(student.getByText("A plan, not a label.", { exact: true })).toBeVisible();
+  await expect(student.getByText(/Schedule one 20-minute academic check-in/i)).toBeVisible();
+
+  await parent.getByRole("button", { name: "Refresh portal data" }).click();
+  await parent.getByRole("button", { name: "Children", exact: true }).click();
+  await expect(parent.getByText("A plan, not a label.", { exact: true })).toBeVisible();
+
+  await hod.getByRole("button", { name: "Refresh portal data" }).click();
+  await hod.getByRole("button", { name: "Cases", exact: true }).click();
+  await expect(hod.getByText("approved", { exact: true })).toBeVisible();
+
+  await governance.getByRole("button", { name: "Runs", exact: true }).click();
+  await expect(governance.getByText(/Validated deterministic runs/i)).toBeVisible();
+  await governance.getByRole("button", { name: "Replay + verify hashes", exact: true }).click();
+  await expect(governance.getByText(/Replay verified\. Receipt .* zero domain mutations/i)).toBeVisible();
+  const [evidenceDownload] = await Promise.all([
+    governance.waitForEvent("download"),
+    governance.getByRole("link", { name: /Download evidence JSON/i }).click(),
+  ]);
+  expect(evidenceDownload.suggestedFilename()).toMatch(/^AURA-run-.*-evidence\.json$/);
 
   await parent.getByTitle("Sign out").click();
   await expect(parent.getByRole("link", { name: /Enter as/i })).toBeVisible();
   await student.getByRole("button", { name: "Refresh portal data" }).click();
   await expect(student.getByTitle("Sign out")).toBeVisible();
+  await student.getByRole("button", { name: "Academics", exact: true }).click();
   await expect(student.getByText("Agent design review", { exact: true })).toBeVisible();
 
   await expect(student.locator('a[href="#"]')).toHaveCount(0);
