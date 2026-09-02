@@ -47,25 +47,18 @@ export async function POST(request: Request) {
   }
 
   const { auth } = await import("@/lib/auth");
-  const signedIn = await auth.api.signInEmail({
-    asResponse: true,
-    headers: request.headers,
-    body: { email: persona.email, password },
-  });
-  if (!signedIn.ok) return redirectWithError(request, "session_failed");
+  const signInHeaders = new Headers(request.headers);
+  signInHeaders.set("content-type", "application/json");
+  signInHeaders.set("accept", "text/html,application/xhtml+xml");
+  const signedIn = await auth.handler(new Request(new URL("/api/auth/sign-in/email", request.url), {
+    method: "POST",
+    headers: signInHeaders,
+    body: JSON.stringify({ email: persona.email, password, oauth_query: rawOAuthQuery }),
+  }));
+  if (signedIn.status >= 400) return redirectWithError(request, "session_failed");
 
   attempts.delete(ip);
-  const sessionCookies = signedIn.headers.getSetCookie();
-  const continuationHeaders = new Headers(request.headers);
-  const cookiePairs = sessionCookies.map((cookie) => cookie.split(";", 1)[0]);
-  continuationHeaders.set("cookie", [request.headers.get("cookie"), ...cookiePairs].filter(Boolean).join("; "));
-  const continued = await auth.api.oauth2Continue({
-    asResponse: true,
-    headers: continuationHeaders,
-    body: { postLogin: true, oauth_query: rawOAuthQuery },
-  });
-  const headers = new Headers(continued.headers);
+  const headers = new Headers(signedIn.headers);
   headers.set("Cache-Control", "no-store");
-  for (const cookie of sessionCookies) headers.append("Set-Cookie", cookie);
-  return new Response(continued.body, { status: continued.status, headers });
+  return new Response(signedIn.body, { status: signedIn.status, headers });
 }
