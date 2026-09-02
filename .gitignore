@@ -18,9 +18,13 @@ artifacts/traces/*.json
 .next/
 out/
 node_modules/
+.turbo/
+*.tsbuildinfo
 .vercel/
 .env*.local
 .agents/
 skills-lock.json
 .vercel
 .env*
+!.env.example
+!**/.env.example

@@ -1,5 +1,13 @@
 # Project contract
 
+> **Multi-portal branch notice:** portal topology, HOD visibility, parent
+> relationships, authentication, and the executable journey in this file are
+> superseded on `multi-portal-architecture` by
+> `docs/MULTI_PORTAL_ARCHITECTURE.md` and
+> `docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md`. The synthetic-data, deterministic
+> authority, bounded-LLM, faculty-gate, audit, replay, evaluation, and claim
+> boundaries below remain in force.
+
 **Contract:** `student-success-contract-v1`
 **Policy:** `demo-policy-v1`
 **Dataset:** `synthetic-cohort-v1`

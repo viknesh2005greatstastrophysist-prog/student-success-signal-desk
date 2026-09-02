@@ -1,3 +1,24 @@
+# AURA multi-portal rebuild
+
+This branch is the implementation baseline for five independently deployed
+websites: Student, Parent, Faculty, HOD, and AI Governance. The prior
+single-application implementation remains below as legacy reference material;
+it is not the target architecture on this branch.
+
+Start with:
+
+- `docs/MULTI_PORTAL_ARCHITECTURE.md`
+- `docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md`
+- `docs/PREREQUISITE_AUDIT.md`
+- `docs/BOOTSTRAP_EVIDENCE.md`
+- `platform/`
+
+The live URLs currently serve independently deployed prerequisite shells. They
+do not yet prove the functional course, academic-record, consent, casework, or
+agent workflow described in the acceptance contract.
+
+## Legacy single-portal reference
+
 # AURA Student Success Ecosystem
 
 A governed agentic AI capstone built from Chapter 11 of the *Agentic AI: 15 Worklets / 14-Lab Build Book* and the supplied *Student Success and Early Warning System* brief.

@@ -1,0 +1,31 @@
+{
+  "name": "aura-multi-portal-platform",
+  "version": "3.0.0",
+  "private": true,
+  "packageManager": "npm@10.9.8",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "services/auth-server"
+  ],
+  "scripts": {
+    "build": "turbo run build --filter='./apps/*'",
+    "build:all": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "node --test tests/*.test.mjs",
+    "prerequisites": "node scripts/check-prerequisites.mjs",
+    "check": "turbo run lint typecheck build --filter='./apps/*' && node --test tests/*.test.mjs && node scripts/check-prerequisites.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "auth": "^1.7.2",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4",
+    "tsx": "4.20.5",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3"
+  }
+}
