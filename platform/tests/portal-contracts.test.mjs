@@ -36,3 +36,29 @@ test("every portal carries an independent client and release contract", async ()
   }
   assert.equal(new Set(clientIds).size, 5);
 });
+
+test("every public surface uses the shared browser security policy", async () => {
+  const configurations = [
+    ...expected.map((portal) => `apps/${portal}-portal/next.config.ts`),
+    "services/core-api/next.config.ts",
+  ];
+  for (const path of configurations) {
+    const source = await readFile(join(root, path), "utf8");
+    assert.match(source, /headers:\s*auraSecurityHeaders/, `${path} does not apply the shared security headers`);
+    assert.match(source, /poweredByHeader:\s*false/, `${path} still exposes the framework header`);
+    if (path.startsWith("apps/")) assert.match(source, /rewrites:\s*auraPortalRewrites/, `${path} does not preserve its approved deep links`);
+  }
+  const identityConfiguration = await readFile(join(root, "services/auth-server/next.config.ts"), "utf8");
+  assert.match(identityConfiguration, /headers:\s*auraIdentitySecurityHeaders/, "Identity does not apply its portal-return security policy");
+  assert.match(identityConfiguration, /poweredByHeader:\s*false/, "Identity still exposes the framework header");
+
+  const policy = await readFile(join(root, "next-security.ts"), "utf8");
+  for (const header of [
+    "Content-Security-Policy",
+    "Permissions-Policy",
+    "Referrer-Policy",
+    "Strict-Transport-Security",
+    "X-Content-Type-Options",
+    "X-Frame-Options",
+  ]) assert.match(policy, new RegExp(header), `${header} is missing from the shared policy`);
+});

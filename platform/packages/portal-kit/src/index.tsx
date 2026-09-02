@@ -703,6 +703,7 @@ export function PortalHome({ portal, release, initialPath = "/dashboard" }: { po
   }, [load]);
   useEffect(() => {
     const restoreView = () => setActiveView(viewForPath(portal.id, window.location.pathname));
+    restoreView();
     window.addEventListener("popstate", restoreView);
     return () => window.removeEventListener("popstate", restoreView);
   }, [portal.id]);

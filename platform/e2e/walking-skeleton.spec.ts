@@ -200,7 +200,10 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
 
   await governance.getByRole("button", { name: "Runs", exact: true }).click();
   await expect(governance.getByText(/Validated deterministic runs/i)).toBeVisible();
+  const replayResponsePromise = governance.waitForResponse((response) => response.request().method() === "POST" && /\/api\/bff\/governance\/runs\/[0-9a-f-]+\/replay$/.test(new URL(response.url()).pathname));
   await governance.getByRole("button", { name: "Replay + verify hashes", exact: true }).click();
+  const replayResponse = await replayResponsePromise;
+  expect(replayResponse.status(), await replayResponse.text()).toBe(201);
   await expect(governance.getByText(/Replay verified\. Receipt .* zero domain mutations/i)).toBeVisible();
   const [evidenceDownload] = await Promise.all([
     governance.waitForEvent("download"),
