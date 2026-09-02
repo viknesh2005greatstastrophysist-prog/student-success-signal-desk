@@ -45,7 +45,7 @@ export default async function SignInPage({
             <form action={`/api/demo/sign-in?${params.toString()}`} method="post">
               <input type="hidden" name="persona" value={persona.portal} />
               <label htmlFor="access-pin">Demo access PIN</label>
-              <input id="access-pin" name="pin" type="password" inputMode="numeric" autoComplete="one-time-code" required minLength={4} maxLength={32} />
+              <input id="access-pin" name="pin" type="password" inputMode="numeric" autoComplete="one-time-code" required minLength={4} maxLength={32} data-action-id="identity-access-pin" />
               {error ? <p className="form-error" role="alert">The identity check failed. Verify the PIN and portal.</p> : null}
               <button type="submit" data-action-id="identity-enter-portal">Enter portal <span aria-hidden="true">↗</span></button>
             </form>

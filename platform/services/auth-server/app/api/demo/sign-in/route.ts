@@ -23,6 +23,7 @@ function redirectWithError(request: Request, code: string) {
 }
 
 export async function POST(request: Request) {
+  const rawOAuthQuery = request.url.includes("?") ? request.url.slice(request.url.indexOf("?") + 1) : "";
   const expectedOrigin = new URL(process.env.BETTER_AUTH_URL ?? request.url).origin;
   const suppliedOrigin = request.headers.get("origin");
   if (suppliedOrigin && suppliedOrigin !== expectedOrigin) return new NextResponse("Origin rejected", { status: 403 });
@@ -61,7 +62,7 @@ export async function POST(request: Request) {
   const continued = await auth.api.oauth2Continue({
     asResponse: true,
     headers: continuationHeaders,
-    body: { postLogin: true },
+    body: { postLogin: true, oauth_query: rawOAuthQuery },
   });
   const headers = new Headers(continued.headers);
   headers.set("Cache-Control", "no-store");

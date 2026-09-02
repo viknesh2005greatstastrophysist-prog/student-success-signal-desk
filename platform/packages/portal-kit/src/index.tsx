@@ -143,7 +143,7 @@ function HodSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => 
         <div className="course-copy"><small>Draft offering · section A</small><h2>{offering?.title}</h2><p>Capacity {offering?.capacity} · {offering?.enrolment} enrolled · revision {offering?.revision}</p></div>
         <div className="command-form">
           <label htmlFor="faculty-assignment">Assign faculty</label>
-          <select id="faculty-assignment" value={selected} onChange={(event) => setFacultyId(event.target.value)} disabled={offering?.status === "published"}>
+          <select id="faculty-assignment" value={selected} onChange={(event) => setFacultyId(event.target.value)} disabled={offering?.status === "published"} data-action-id="hod-select-faculty">
             {faculty.map((person) => <option value={person.id} key={person.id}>{person.display_name}</option>)}
           </select>
           <button type="button" onClick={publish} disabled={pending || offering?.status === "published" || !selected} data-action-id="hod-publish-and-assign">

@@ -67,6 +67,29 @@ export const apiErrorSchema = z.object({
 export const apiEnvelope = <T extends z.ZodType>(data: T) =>
   z.union([z.object({ ok: z.literal(true), data }), z.object({ ok: z.literal(false), error: apiErrorSchema })]);
 
+export type ActionContract = {
+  id: string;
+  portal: PortalId | "identity";
+  type: "navigate" | "query" | "command" | "form";
+  destination: string;
+};
+
+export const actionManifest: readonly ActionContract[] = [
+  { id: "identity-open-discovery", portal: "identity", type: "navigate", destination: "/api/auth/.well-known/openid-configuration" },
+  { id: "identity-access-pin", portal: "identity", type: "form", destination: "/api/demo/sign-in" },
+  { id: "identity-enter-portal", portal: "identity", type: "form", destination: "/api/demo/sign-in" },
+  { id: "identity-consent-allow", portal: "identity", type: "command", destination: "/api/auth/oauth2/consent" },
+  { id: "identity-consent-deny", portal: "identity", type: "command", destination: "/api/auth/oauth2/consent" },
+  ...(["student", "parent", "faculty", "hod", "governance"] as const).flatMap((portal) => [
+    { id: `${portal}-sign-in`, portal, type: "navigate" as const, destination: "/api/session/login" },
+    { id: `${portal}-refresh`, portal, type: "query" as const, destination: "/api/bff/dashboard" },
+    { id: `${portal}-sign-out`, portal, type: "command" as const, destination: "/api/session/logout" },
+    { id: `${portal}-retry`, portal, type: "query" as const, destination: "/api/bff/dashboard" },
+  ]),
+  { id: "hod-select-faculty", portal: "hod", type: "form", destination: "publish-and-assign form" },
+  { id: "hod-publish-and-assign", portal: "hod", type: "command", destination: "/api/bff/offerings/:id/publish-and-assign" },
+];
+
 export type PortalDefinition = {
   id: PortalId;
   name: string;
