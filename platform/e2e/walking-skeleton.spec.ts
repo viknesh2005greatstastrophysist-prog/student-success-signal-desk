@@ -46,18 +46,29 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await student.getByRole("button", { name: "Registration", exact: true }).click();
   const registrationRow = student.locator('[data-course="CS401"]');
   await registrationRow.getByRole("button", { name: "Register", exact: true }).click();
+  await registrationRow.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(registrationRow.getByRole("button", { name: "Register", exact: true })).toBeVisible();
+  await registrationRow.getByRole("button", { name: "Register", exact: true }).click();
   await registrationRow.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(student.getByText(/Registered\. Receipt/i)).toBeVisible();
   await expect(registrationRow.getByText("Active registration", { exact: true })).toBeVisible();
+  await registrationRow.getByRole("button", { name: "Withdraw", exact: true }).click();
+  await expect(student.getByText(/Withdrawn\. Receipt/i)).toBeVisible();
+  await expect(registrationRow.getByRole("button", { name: "Register", exact: true })).toBeVisible();
+  await registrationRow.getByRole("button", { name: "Register", exact: true }).click();
+  await registrationRow.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(student.getByText(/Registered\. Receipt/i)).toBeVisible();
 
   await enterPortal(faculty, "faculty");
   await expect(faculty.getByText(/CS401 Agentic AI Systems/i)).toBeVisible();
   await expect(faculty.getByText("ready", { exact: true })).toBeVisible();
   await faculty.getByRole("button", { name: "Classrooms", exact: true }).click();
   await expect(faculty.getByText("Ananya Rao", { exact: true })).toBeVisible();
+  await faculty.getByLabel("Attendance for Ananya Rao").selectOption("late");
   await faculty.getByRole("button", { name: "Submit attendance", exact: true }).click();
   await expect(faculty.getByText(/Attendance submitted\. Receipt/i)).toBeVisible();
   await faculty.getByRole("button", { name: "Gradebook", exact: true }).click();
+  await faculty.getByLabel("Score for Ananya Rao").fill("87");
   await faculty.getByRole("button", { name: "Publish marks", exact: true }).click();
   await expect(faculty.getByText(/Marks published\. Receipt/i)).toBeVisible();
 
@@ -70,6 +81,8 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await student.getByRole("button", { name: "Academics", exact: true }).click();
   await expect(student.getByText("Agent workflow design", { exact: true })).toBeVisible();
   await expect(student.getByText("Agent design review", { exact: true })).toBeVisible();
+  await expect(student.getByText("late", { exact: true })).toBeVisible();
+  await expect(student.locator(".academic-columns strong").filter({ hasText: "87.00/100.00" })).toBeVisible();
 
   await enterPortal(parent, "parent");
   await expect(parent.getByText("Ananya Rao", { exact: true })).toBeVisible();
@@ -83,6 +96,9 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await expect(parent.getByText("Agent design review", { exact: true })).toBeVisible();
   await parent.getByRole("button", { name: "Fees", exact: true }).click();
   await parent.getByLabel("Sandbox outcome").selectOption("decline");
+  await parent.getByRole("button", { name: /Pay ₹45,000/i }).click();
+  await parent.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(parent.getByRole("button", { name: /Pay ₹45,000/i })).toBeVisible();
   await parent.getByRole("button", { name: /Pay ₹45,000/i }).click();
   await parent.getByRole("button", { name: "Confirm sandbox payment", exact: true }).click();
   await expect(parent.getByText(/Payment declined by the sandbox/i)).toBeVisible();
@@ -110,6 +126,9 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await student.getByRole("button", { name: "Account", exact: true }).click();
   const marksGrant = student.locator('[data-grant="marks"]');
   await marksGrant.getByRole("button", { name: "Revoke access", exact: true }).click();
+  await marksGrant.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(marksGrant.getByRole("button", { name: "Revoke access", exact: true })).toBeVisible();
+  await marksGrant.getByRole("button", { name: "Revoke access", exact: true }).click();
   await marksGrant.getByRole("button", { name: "Confirm revoke", exact: true }).click();
   await expect(student.getByText(/marks access revoked\. Receipt/i)).toBeVisible();
   await parent.getByRole("button", { name: "Refresh portal data" }).click();
@@ -119,7 +138,7 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
 
   await enterPortal(governance, "governance");
   await expect(governance.getByText(/Offering published and faculty assigned/i)).toBeVisible();
-  await expect(governance.getByText(/Student registered and roster updated/i)).toBeVisible();
+  await expect(governance.getByText(/Student registered and roster updated/i).first()).toBeVisible();
   await expect(governance.getByText(/Faculty submitted the attendance register/i)).toBeVisible();
   await expect(governance.getByText(/Faculty published assessed marks/i)).toBeVisible();
   await expect(governance.getByText(/Parent completed a sandbox payment/i)).toBeVisible();
@@ -133,6 +152,17 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await faculty.getByRole("button", { name: "Cases", exact: true }).click();
   await expect(faculty.getByText(/Offer a bounded academic check-in/i)).toBeVisible();
   await expect(faculty.getByText(/VALID · AURA-SUPPORT-1/i)).toBeVisible();
+  await faculty.getByLabel("Decision rationale").fill("The first artifact is declined to verify the governed rejection path.");
+  await faculty.getByRole("button", { name: "Reject artifact", exact: true }).click();
+  await expect(faculty.getByText(/Support artifact rejected\. Receipt/i)).toBeVisible();
+
+  await governance.getByRole("button", { name: "Refresh portal data" }).click();
+  await governance.getByRole("button", { name: "Operations", exact: true }).click();
+  await governance.getByRole("button", { name: "Freeze evidence + process", exact: true }).click();
+  await expect(governance.getByText(/Evidence frozen and artifact validated\. Receipt/i)).toBeVisible();
+  await faculty.getByRole("button", { name: "Refresh portal data" }).click();
+  await expect(faculty.getByText(/Offer a bounded academic check-in/i)).toBeVisible();
+  await faculty.getByLabel("Decision rationale").fill("The second artifact is proportionate, student-visible, and grounded in the cited evidence.");
   await faculty.getByRole("button", { name: "Approve exact artifact", exact: true }).click();
   await expect(faculty.getByText(/Support artifact approved\. Receipt/i)).toBeVisible();
 
@@ -162,6 +192,12 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
     governance.getByRole("link", { name: /Download evidence JSON/i }).click(),
   ]);
   expect(evidenceDownload.suggestedFilename()).toMatch(/^AURA-run-.*-evidence\.json$/);
+  await governance.getByRole("button", { name: "Evidence", exact: true }).click();
+  const [evidencePackage] = await Promise.all([
+    governance.waitForEvent("download"),
+    governance.getByRole("link", { name: /Export immutable evidence package/i }).click(),
+  ]);
+  expect(evidencePackage.suggestedFilename()).toMatch(/^AURA-run-.*-evidence\.json$/);
 
   await parent.getByTitle("Sign out").click();
   await expect(parent.getByRole("link", { name: /Enter as/i })).toBeVisible();
@@ -169,6 +205,17 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await expect(student.getByTitle("Sign out")).toBeVisible();
   await student.getByRole("button", { name: "Academics", exact: true }).click();
   await expect(student.getByText("Agent design review", { exact: true })).toBeVisible();
+
+  await student.route("**/api/bff/dashboard", (route) => route.fulfill({
+    status: 503,
+    contentType: "application/json",
+    body: JSON.stringify({ ok: false, error: { code: "TEST_TRANSIENT", message: "Synthetic transient failure." } }),
+  }));
+  await student.getByRole("button", { name: "Refresh portal data" }).click();
+  await expect(student.getByText("Synthetic transient failure.", { exact: true })).toBeVisible();
+  await student.unroute("**/api/bff/dashboard");
+  await student.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(student.locator(".revision-strip")).toBeVisible();
 
   await governance.getByRole("button", { name: "Simulation", exact: true }).click();
   const resetButton = governance.getByRole("button", { name: "Reset synthetic ecosystem", exact: true });
@@ -180,6 +227,11 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await student.getByRole("button", { name: "Refresh portal data" }).click();
   await student.getByRole("button", { name: "Today", exact: true }).click();
   await expect(student.getByText("draft", { exact: true }).first()).toBeVisible();
+
+  for (const page of [student, faculty, hod, governance]) {
+    await page.getByTitle("Sign out").click();
+    await expect(page.getByRole("link", { name: /Enter as/i })).toBeVisible();
+  }
 
   await expect(student.locator('a[href="#"]')).toHaveCount(0);
   await expect(parent.locator('a[href="#"]')).toHaveCount(0);
