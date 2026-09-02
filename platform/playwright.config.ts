@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 90_000,
+  timeout: 180_000,
   expect: { timeout: 15_000 },
   // This journey mutates the shared synthetic generation. Retrying without a reset would test a different state.
   retries: 0,

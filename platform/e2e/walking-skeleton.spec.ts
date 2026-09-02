@@ -15,7 +15,7 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await page.getByLabel("Demo access PIN").fill(process.env.DEMO_ACCESS_PIN ?? "");
   await page.getByRole("button", { name: /Enter portal/i }).click();
   await expect(page).toHaveURL(new RegExp(`^${sites[portal].replaceAll(".", "\\.")}/?$`));
-  await expect(page.getByText("Institution revision", { exact: true })).toBeVisible();
+  await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
 }
 
 test("J01 crosses independent role sessions through the authoritative Core", async ({ browser }) => {
