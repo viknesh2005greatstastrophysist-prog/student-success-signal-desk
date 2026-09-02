@@ -7,6 +7,7 @@ it is not the target architecture on this branch.
 
 Start with:
 
+- `docs/FULL_COLLEGE_ECOSYSTEM_BUILD_PLAN.md`
 - `docs/MULTI_PORTAL_ARCHITECTURE.md`
 - `docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md`
 - `docs/PREREQUISITE_AUDIT.md`

@@ -1,5 +1,9 @@
 # Deployment runbook
 
+> **Legacy single-portal runbook:** this Clerk deployment procedure is retained
+> as historical evidence. It is not the release procedure for the independent
+> Better Auth multi-portal platform on `multi-portal-architecture`.
+
 ## Target
 
 Vercel hosts the responsive Next.js application and authenticated API routes.

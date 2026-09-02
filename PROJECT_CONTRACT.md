@@ -6,7 +6,9 @@
 > `docs/MULTI_PORTAL_ARCHITECTURE.md` and
 > `docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md`. The synthetic-data, deterministic
 > authority, bounded-LLM, faculty-gate, audit, replay, evaluation, and claim
-> boundaries below remain in force.
+> boundaries below remain in force. The earlier standalone intervention tracker
+> and broad legacy surfaces are not release requirements unless they appear in
+> the binding journey in `docs/FULL_COLLEGE_ECOSYSTEM_BUILD_PLAN.md`.
 
 **Contract:** `student-success-contract-v1`
 **Policy:** `demo-policy-v1`

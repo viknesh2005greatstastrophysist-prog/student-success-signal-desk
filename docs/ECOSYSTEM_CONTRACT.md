@@ -1,5 +1,12 @@
 # Student Success ecosystem contract
 
+> **Legacy single-portal contract:** this file documents the earlier Clerk
+> deployment. On `multi-portal-architecture`, authentication, HOD visibility,
+> fee simulation, portal topology, and the release journey are superseded by
+> `FULL_COLLEGE_ECOSYSTEM_BUILD_PLAN.md`, `MULTI_PORTAL_ARCHITECTURE.md`, and
+> `FIVE_PORTAL_ACCEPTANCE_CONTRACT.md`. Its bounded-AI and synthetic-data claim
+> limits remain applicable.
+
 ## Purpose
 
 The ecosystem turns four fragmented synthetic signal groups into an auditable

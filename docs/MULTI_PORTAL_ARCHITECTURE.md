@@ -36,9 +36,10 @@ AI Governance -----/                            +-> audit and artifacts
 ```
 
 Better Auth operates as the OAuth 2.1/OIDC authorization server. Each portal is
-an administrator-managed confidential client with its own exact redirect URIs
-and portal-local session. The Core API accepts one protected-resource audience
-and never trusts a client-supplied role or identity header.
+an administrator-managed public Authorization Code plus PKCE client with its
+own exact redirect URIs and portal-local session. Tokens remain in the portal
+server. The Core API accepts one protected-resource audience and never trusts a
+client-supplied role or identity header.
 
 ## Authority boundaries
 
@@ -47,7 +48,7 @@ and never trusts a client-supplied role or identity header.
 | Portal server | Authenticate, request a scoped view, submit typed commands | Authorize a domain action or access the database |
 | Core API | Authorize, validate, transact, emit outbox and audit records | Delegate authority to portal UI state |
 | Agent worker | Read frozen synthetic evidence, run policy, compose and validate a proposal | Change academic facts, approve support, or contact a person |
-| Assigned faculty | Correct owned academic records and approve or reject an exact proposal | Approve another faculty member's case or stale evidence |
+| Assigned faculty | Submit assigned attendance and marks and approve or reject an exact proposal | Operate another faculty member's class or approve a stale artifact |
 | HOD | Operate within one department | Read credentials, sessions, or unrelated department data |
 | Governance operator | Run synthetic scans, inspect traces, replay and export evidence | Approve support or edit academic records |
 
@@ -56,8 +57,9 @@ and never trusts a client-supplied role or identity header.
 - Identity and relationships: accounts, institutional roles, department scope,
   faculty assignments, parent links, field permissions, expiry, and revocation.
 - Academic records: course offerings, registrations, attendance, marks, and
-  versioned corrections.
-- Finance read model: seeded fee status and synthetic receipt references only.
+  versioned submissions.
+- Finance simulation: seeded invoices, sandbox payment transactions, balances,
+  and receipts. It never contacts a payment provider or moves money.
 - Student support: cases, evidence references, faculty decisions, and approved
   support plans.
 - Governance: run state, model mode, validation, bounded repair, fallback,
