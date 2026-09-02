@@ -18,7 +18,7 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
 }
 
-test("J01 crosses independent role sessions through the authoritative Core", async ({ browser }) => {
+test("J01-J02 cross independent role sessions through the authoritative Core", async ({ browser }) => {
   test.skip(!process.env.DEMO_ACCESS_PIN, "DEMO_ACCESS_PIN is required");
   const context = await browser.newContext();
   const hod = await context.newPage();
@@ -65,7 +65,8 @@ test("J01 crosses independent role sessions through the authoritative Core", asy
   await parent.getByTitle("Sign out").click();
   await expect(parent.getByRole("link", { name: /Enter as/i })).toBeVisible();
   await student.getByRole("button", { name: "Refresh portal data" }).click();
-  await expect(student.getByText(/Good morning/i)).toBeVisible();
+  await expect(student.getByTitle("Sign out")).toBeVisible();
+  await expect(student.getByText("Active registration", { exact: true })).toBeVisible();
 
   await expect(student.locator('a[href="#"]')).toHaveCount(0);
   await expect(parent.locator('a[href="#"]')).toHaveCount(0);
