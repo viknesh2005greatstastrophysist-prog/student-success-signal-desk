@@ -16,7 +16,7 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await expect(page).toHaveURL(new RegExp(`^${regexEscape(identityUrl)}/sign-in`));
   await page.getByLabel("Demo access PIN").fill(process.env.DEMO_ACCESS_PIN ?? "");
   await page.getByRole("button", { name: /Enter portal/i }).click();
-  await expect(page).toHaveURL(new RegExp(`^${sites[portal].replaceAll(".", "\\.")}/?$`));
+  await expect(page).toHaveURL(`${sites[portal]}/dashboard`);
   await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
   if (process.env.RELEASE_SHA) {
     await expect(page.locator(".portal-footer")).toContainText(`build ${process.env.RELEASE_SHA.slice(0, 8)}`);
@@ -34,16 +34,29 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
 
   await enterPortal(hod, "hod");
   await hod.getByRole("button", { name: "Offerings", exact: true }).click();
+  await expect.poll(() => new URL(hod.url()).pathname).toBe("/offerings/current");
   await hod.getByLabel("Assign faculty").selectOption({ label: "Dr Mira Sen" });
   await expect(hod.getByRole("button", { name: /Publish \+ assign/i })).toBeEnabled();
   await hod.getByRole("button", { name: /Publish \+ assign/i }).click();
   await expect(hod.getByText(/Published\. Every authorized portal/i)).toBeVisible();
-  await expect(hod.getByRole("button", { name: "Published" })).toBeDisabled();
+  await expect(hod.getByRole("button", { name: "Published", exact: true })).toBeDisabled();
 
   await enterPortal(student, "student");
   await expect(student.getByText("published", { exact: true }).first()).toBeVisible();
   await expect(student.getByText(/HOD has published this offering/i)).toBeVisible();
-  await student.getByRole("button", { name: "Registration", exact: true }).click();
+  const csrfToken = await student.evaluate(async () => (await fetch("/api/bff/dashboard", { cache: "no-store" })).headers.get("x-csrf-token"));
+  expect(csrfToken).toBeTruthy();
+  const missingCsrfStatus = await student.evaluate(async () => (await fetch("/api/bff/registrations", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  })).status);
+  expect(missingCsrfStatus).toBe(403);
+  const forgedOrigin = await context.request.post(`${sites.student}/api/bff/registrations`, {
+    headers: { Origin: "https://attacker.invalid", "X-CSRF-Token": csrfToken!, "Content-Type": "application/json" },
+    data: {},
+  });
+  expect(forgedOrigin.status()).toBe(403);
+  await student.getByRole("button", { name: /Open consequence: Offering published and faculty assigned/i }).click();
+  await expect.poll(() => new URL(student.url()).pathname).toBe("/registration");
   const registrationRow = student.locator('[data-course="CS401"]');
   await registrationRow.getByRole("button", { name: "Register", exact: true }).click();
   await registrationRow.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -79,6 +92,8 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
 
   await student.getByRole("button", { name: "Refresh portal data" }).click();
   await student.getByRole("button", { name: "Academics", exact: true }).click();
+  await expect.poll(() => new URL(student.url()).pathname).toBe("/academics");
+  await student.reload();
   await expect(student.getByText("Agent workflow design", { exact: true })).toBeVisible();
   await expect(student.getByText("Agent design review", { exact: true })).toBeVisible();
   await expect(student.getByText("late", { exact: true })).toBeVisible();

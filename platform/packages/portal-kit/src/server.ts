@@ -1,9 +1,9 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { coreApiAudience, portalOidcClients, type PortalId } from "@aura/contracts";
 import { createRemoteJWKSet, EncryptJWT, jwtDecrypt, jwtVerify } from "jose";
 
 type PortalTransaction = { state: string; nonce: string; verifier: string; returnTo: string };
-type PortalSession = { accessToken: string; refreshToken?: string; subject: string; expiresAt: number };
+type PortalSession = { accessToken: string; refreshToken?: string; subject: string; expiresAt: number; csrfToken: string };
 
 const productionOrigins: Record<PortalId, string> = {
   student: "https://aura-student-portal.vercel.app",
@@ -142,7 +142,7 @@ export async function finishPortalLogin(request: Request, portal: PortalId) {
 
   const expiresIn = Math.min(Number(tokens.expires_in ?? 3600), 3600);
   const session = await seal(
-    { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, subject: verified.payload.sub, expiresAt: Date.now() + expiresIn * 1000 },
+    { accessToken: tokens.access_token, refreshToken: tokens.refresh_token, subject: verified.payload.sub, expiresAt: Date.now() + expiresIn * 1000, csrfToken: base64url(randomBytes(32)) },
     config.secret!,
     `${portal}:portal-session`,
     `${expiresIn}s`,
@@ -168,6 +168,16 @@ function sameOrigin(request: Request, portal: PortalId) {
   return origin ? new URL(origin).origin === settings(portal).origin : false;
 }
 
+function validCsrfToken(request: Request, session: PortalSession) {
+  const suppliedBytes = Buffer.from(request.headers.get("x-csrf-token") ?? "");
+  const expectedBytes = Buffer.from(session.csrfToken ?? "");
+  return suppliedBytes.length > 0 && suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+}
+
+function csrfRejected(request: Request, portal: PortalId, session: PortalSession) {
+  return !sameOrigin(request, portal) || !validCsrfToken(request, session);
+}
+
 export async function portalDashboard(request: Request, portal: PortalId) {
   const session = await readSession(request, portal);
   if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
@@ -178,13 +188,13 @@ export async function portalDashboard(request: Request, portal: PortalId) {
     headers: { Authorization: `Bearer ${session.accessToken}`, "X-Request-Id": randomUUID() },
     cache: "no-store",
   });
-  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-CSRF-Token": session.csrfToken } });
 }
 
 export async function portalPublishAndAssign(request: Request, portal: PortalId, offeringId: string) {
-  if (!sameOrigin(request, portal)) return Response.json({ ok: false, error: { code: "CSRF_REJECTED", message: "Request origin rejected" } }, { status: 403 });
   const session = await readSession(request, portal);
   if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  if (csrfRejected(request, portal, session)) return Response.json({ ok: false, error: { code: "CSRF_REJECTED", message: "Request origin or session token rejected" } }, { status: 403 });
   const response = await fetch(`${settings(portal).coreUrl}/api/v1/offerings/${encodeURIComponent(offeringId)}/publish-and-assign`, {
     method: "POST",
     headers: {
@@ -199,9 +209,9 @@ export async function portalPublishAndAssign(request: Request, portal: PortalId,
 }
 
 async function portalCoreCommand(request: Request, portal: PortalId, path: string) {
-  if (!sameOrigin(request, portal)) return Response.json({ ok: false, error: { code: "CSRF_REJECTED", message: "Request origin rejected" } }, { status: 403 });
   const session = await readSession(request, portal);
   if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  if (csrfRejected(request, portal, session)) return Response.json({ ok: false, error: { code: "CSRF_REJECTED", message: "Request origin or session token rejected" } }, { status: 403 });
   const response = await fetch(`${settings(portal).coreUrl}${path}`, {
     method: "POST",
     headers: {
@@ -307,8 +317,9 @@ export async function portalDownloadReceipt(request: Request, portal: PortalId, 
 
 export async function endPortalSession(request: Request, portal: PortalId) {
   const config = settings(portal);
-  if (!sameOrigin(request, portal)) return new Response("Request origin rejected", { status: 403 });
   const session = await readSession(request, portal);
+  if (!session) return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+  if (csrfRejected(request, portal, session)) return Response.json({ ok: false, error: { code: "CSRF_REJECTED", message: "Request origin or session token rejected" } }, { status: 403 });
   if (session?.refreshToken) {
     await fetch(`${config.identityUrl}/api/auth/oauth2/revoke`, {
       method: "POST",

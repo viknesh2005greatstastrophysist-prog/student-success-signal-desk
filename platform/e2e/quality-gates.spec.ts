@@ -1,4 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
+import { portalViewRoutes } from "@aura/contracts";
 import { expect, test, type Page } from "@playwright/test";
 
 const sites = {
@@ -47,6 +48,7 @@ test("all portal surfaces pass serious accessibility, overflow, and runtime-erro
 
     for (const view of views[portal]) {
       await page.getByRole("button", { name: view, exact: true }).click();
+      await expect.poll(() => new URL(page.url()).pathname).toBe((portalViewRoutes[portal] as Record<string, string>)[view]);
       await expect(page.locator(".role-surface").first()).toBeVisible();
       const accessibility = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
       const blocking = accessibility.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious");

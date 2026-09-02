@@ -35,7 +35,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .hero-copy > p:last-child { max-width: 590px; color: var(--muted); line-height: 1.65; }
 .activity-rail { position: relative; padding-left: 24px; border-left: 1px solid var(--line); }
 .section-heading { padding-bottom: 16px; display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); }
-.activity-item { position: relative; padding: 18px 0; border-bottom: 1px solid var(--line); }
+.activity-item { width: 100%; position: relative; padding: 18px 0; display: block; border: 0; border-bottom: 1px solid var(--line); color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.activity-item:hover p { color: var(--accent); }
 .activity-item p { margin: 0 0 7px; font-size: .82rem; font-weight: 650; line-height: 1.4; }
 .activity-item small, .activity-item code { display: block; color: var(--muted); font: .64rem/1.5 "DM Mono", monospace; }
 .activity-item code { margin-top: 6px; color: var(--accent); }

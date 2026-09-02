@@ -1,6 +1,6 @@
 "use client";
 
-import type { PortalDefinition, PortalId } from "@aura/contracts";
+import { portalViewRoutes, type PortalDefinition, type PortalId } from "@aura/contracts";
 import { useCallback, useEffect, useState } from "react";
 
 type Person = { id: string; display_name: string; role: string; department_id: string | null };
@@ -100,11 +100,39 @@ const navByPortal: Record<PortalId, string[]> = {
   governance: ["Operations", "Runs", "Evidence", "Simulation"],
 };
 
+function routeForView(portal: PortalId, view: string) {
+  return (portalViewRoutes[portal] as Record<string, string>)[view] ?? "/dashboard";
+}
+
+function viewForPath(portal: PortalId, path: string) {
+  const routes = portalViewRoutes[portal] as Record<string, string>;
+  return Object.entries(routes).find(([, route]) => route === path)?.[0] ?? navByPortal[portal][0];
+}
+
+const consequenceViews: Record<string, Partial<Record<PortalId, string>>> = {
+  "offering.published": { student: "Registration", faculty: "Today", hod: "Offerings", governance: "Operations" },
+  "registration.created": { student: "Registration", faculty: "Classrooms", hod: "Department", governance: "Operations" },
+  "registration.withdrawn": { student: "Registration", faculty: "Classrooms", hod: "Department", governance: "Operations" },
+  "attendance.submitted": { student: "Academics", parent: "Children", faculty: "Classrooms", hod: "Department", governance: "Operations" },
+  "marks.published": { student: "Academics", parent: "Children", faculty: "Gradebook", hod: "Department", governance: "Operations" },
+  "payment.captured": { student: "Fees", parent: "Fees", hod: "Department", governance: "Operations" },
+  "payment.failed": { parent: "Fees", hod: "Department", governance: "Operations" },
+  "parent_grant.revoked": { student: "Account", parent: "Access", governance: "Operations" },
+  "support.proposed": { faculty: "Cases", hod: "Cases", governance: "Runs" },
+  "support.approved": { student: "Support", parent: "Children", faculty: "Cases", hod: "Cases", governance: "Runs" },
+  "support.rejected": { faculty: "Cases", hod: "Cases", governance: "Runs" },
+  "agent.replayed": { governance: "Runs" },
+};
+
 function money(paise: string | number | null | undefined) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(paise ?? 0) / 100);
 }
 
-function ActivityRail({ activity }: { activity: Activity[] }) {
+function commandHeaders(csrfToken: string) {
+  return { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID(), "X-CSRF-Token": csrfToken };
+}
+
+function ActivityRail({ activity, portal, navigate }: { activity: Activity[]; portal: PortalId; navigate: (view: string) => void }) {
   const eventLabel: Record<string, string> = {
     "offering.published": "Offering published and faculty assigned",
     "registration.created": "Student registered and roster updated",
@@ -122,12 +150,12 @@ function ActivityRail({ activity }: { activity: Activity[] }) {
     <aside className="activity-rail" aria-label="Causal activity">
       <div className="section-heading"><span>Live ledger</span><b>{activity.length}</b></div>
       {activity.length ? activity.map((event) => (
-        <article className="activity-item" key={event.id}>
+        <button type="button" className="activity-item" key={event.id} onClick={() => navigate(consequenceViews[event.type]?.[portal] ?? navByPortal[portal][0])} data-action-id={`${portal}-open-activity-consequence`} aria-label={`Open consequence: ${eventLabel[event.type] ?? event.type.replaceAll(".", " ")}`}>
           <span className="event-node" aria-hidden="true" />
           <p>{eventLabel[event.type] ?? event.type.replaceAll(".", " ")}</p>
           <small>revision {event.revision} · {new Date(event.occurredAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</small>
           <code>{event.id.slice(0, 8)}</code>
-        </article>
+        </button>
       )) : <p className="empty-copy">No cross-portal consequences yet. The ledger is quiet, not broken.</p>}
     </aside>
   );
@@ -181,7 +209,7 @@ function StudentSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function StudentRegistrationSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => Promise<void> | void }) {
+function StudentRegistrationSurface({ snapshot, refresh, csrfToken }: { snapshot: Snapshot; refresh: () => Promise<void> | void; csrfToken: string }) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -193,7 +221,7 @@ function StudentRegistrationSurface({ snapshot, refresh }: { snapshot: Snapshot;
     const endpoint = action === "register" ? "/api/bff/registrations" : `/api/bff/registrations/${item.registration_id}/withdraw`;
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: action === "register" ? JSON.stringify({ offeringId: item.id }) : "{}",
     });
     const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
@@ -260,7 +288,7 @@ function StudentFeesSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function StudentAccountSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => Promise<void> | void }) {
+function StudentAccountSurface({ snapshot, refresh, csrfToken }: { snapshot: Snapshot; refresh: () => Promise<void> | void; csrfToken: string }) {
   const grants = snapshot.parentAccess ?? [];
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -270,7 +298,7 @@ function StudentAccountSurface({ snapshot, refresh }: { snapshot: Snapshot; refr
     setPendingId(grant.id); setMessage("");
     const response = await fetch(`/api/bff/parent-grants/${grant.id}/revoke`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: JSON.stringify({ expectedRevision: grant.revision }),
     });
     const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
@@ -334,7 +362,7 @@ function ParentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function ParentFeesSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => Promise<void> | void }) {
+function ParentFeesSurface({ snapshot, refresh, csrfToken }: { snapshot: Snapshot; refresh: () => Promise<void> | void; csrfToken: string }) {
   const invoice = snapshot.childFinance?.invoices[0];
   const [scenario, setScenario] = useState<"success" | "decline">("success");
   const [confirming, setConfirming] = useState(false);
@@ -347,7 +375,7 @@ function ParentFeesSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh:
     setPending(true); setMessage("");
     const response = await fetch(`/api/bff/fees/invoices/${invoice.id}/payment-attempts`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: JSON.stringify({ expectedRevision: invoice.revision, scenario }),
     });
     const result = await response.json() as ApiResult<{ transaction: FeeTransaction; receipt: { eventId: string } }>;
@@ -396,7 +424,7 @@ function ParentAccessSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void }) {
+function FacultySurface({ snapshot, activeView, refresh, csrfToken }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void; csrfToken: string }) {
   const offering = snapshot.assignableOffering;
   const roster = snapshot.roster ?? [];
   const attendanceSession = snapshot.classroom?.attendanceSession;
@@ -413,7 +441,7 @@ function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot;
     setPending("attendance"); setMessage("");
     const response = await fetch(`/api/bff/attendance-sessions/${attendanceSession.id}/submit`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: JSON.stringify({ expectedRevision: attendanceSession.revision, records: roster.map((student) => ({ studentId: student.id, status: attendance[student.id] ?? "present" })) }),
     });
     const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
@@ -427,7 +455,7 @@ function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot;
     setPending("marks"); setMessage("");
     const response = await fetch(`/api/bff/assessments/${assessment.id}/marks`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: JSON.stringify({ expectedRevision: assessment.revision, marks: roster.map((student) => ({ studentId: student.id, score: Number(scores[student.id] ?? 82), feedback: "Clear reasoning and a well-bounded design." })) }),
     });
     const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
@@ -441,7 +469,7 @@ function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot;
     setPending("decision"); setMessage("");
     const response = await fetch(`/api/bff/support/cases/${supportCase.id}/decisions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: JSON.stringify({
         artifactId: supportCase.artifact_id,
         contentHash: supportCase.content_hash,
@@ -522,7 +550,7 @@ function HodPeopleSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; refresh: () => Promise<void> | void; activeView: string }) {
+function HodSurface({ snapshot, refresh, activeView, csrfToken }: { snapshot: Snapshot; refresh: () => Promise<void> | void; activeView: string; csrfToken: string }) {
   const offering = snapshot.offering;
   const faculty = snapshot.availableFaculty ?? [];
   const [facultyId, setFacultyId] = useState("");
@@ -535,7 +563,7 @@ function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; ref
     setPending(true); setMessage("");
     const response = await fetch(`/api/bff/offerings/${offering.id}/publish-and-assign`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: JSON.stringify({ facultyPersonId: selected, expectedRevision: offering.revision }),
     });
     const result = await response.json() as ApiResult<unknown>;
@@ -570,7 +598,7 @@ function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; ref
   );
 }
 
-function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void }) {
+function GovernanceSurface({ snapshot, activeView, refresh, csrfToken }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void; csrfToken: string }) {
   const event = snapshot.processableEvents?.[0];
   const run = snapshot.governanceRuns?.[0];
   const [pending, setPending] = useState<"process" | "replay" | "reset" | null>(null);
@@ -582,7 +610,7 @@ function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapsh
     setPending("process"); setMessage("");
     const response = await fetch("/api/bff/governance/runs", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      headers: commandHeaders(csrfToken),
       body: JSON.stringify({ eventId: event.id }),
     });
     const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
@@ -595,7 +623,7 @@ function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapsh
     if (!run) return;
     setPending("replay"); setMessage("");
     const response = await fetch(`/api/bff/governance/runs/${run.id}/replay`, {
-      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: "{}",
+      method: "POST", headers: commandHeaders(csrfToken), body: "{}",
     });
     const result = await response.json() as ApiResult<{ replay: { matched: boolean; id: string } }>;
     if (result.ok) { setMessage(result.data.replay.matched ? `Replay verified. Receipt ${result.data.replay.id.slice(0, 8)}; zero domain mutations.` : "Replay hash mismatch. Release is blocked."); await refresh(); }
@@ -607,7 +635,7 @@ function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapsh
     if (resetConfirmation !== "AURA-SYNTHETIC-SEED-V1") return;
     setPending("reset"); setMessage("");
     const response = await fetch("/api/bff/governance/simulation/reset", {
-      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      method: "POST", headers: commandHeaders(csrfToken),
       body: JSON.stringify({ confirmation: resetConfirmation }),
     });
     const result = await response.json() as ApiResult<{ manifest: { generationId: string; seedVersion: string } }>;
@@ -638,12 +666,13 @@ function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapsh
   );
 }
 
-export function PortalHome({ portal, release }: { portal: PortalDefinition; release?: string }) {
+export function PortalHome({ portal, release, initialPath = "/dashboard" }: { portal: PortalDefinition; release?: string; initialPath?: string }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "guest" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [activeView, setActiveView] = useState(navByPortal[portal.id][0]);
+  const [csrfToken, setCsrfToken] = useState("");
+  const [activeView, setActiveView] = useState(viewForPath(portal.id, initialPath));
   const [selectedChildId, setSelectedChildId] = useState("");
 
   const load = useCallback(async () => {
@@ -654,8 +683,10 @@ export function PortalHome({ portal, release }: { portal: PortalDefinition; rele
       const result = await response.json() as ApiResult<Snapshot>;
       if (response.status === 401) { setStatus("guest"); setSnapshot(null); }
       else if (!result.ok) { setError(result.error.message); setStatus("error"); }
+      else if (!response.headers.get("x-csrf-token")) { setError("The session security token is missing."); setStatus("error"); }
       else if (result.data.actor.role !== portal.id) { setError("This identity belongs to a different portal."); setStatus("error"); }
       else {
+        setCsrfToken(response.headers.get("x-csrf-token")!);
         setSnapshot(result.data); setStatus("ready"); setError("");
         if (portal.id === "parent" && !selectedChildId && result.data.selectedChildId) setSelectedChildId(result.data.selectedChildId);
       }
@@ -670,10 +701,24 @@ export function PortalHome({ portal, release }: { portal: PortalDefinition; rele
     const poll = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 15_000);
     return () => window.clearInterval(poll);
   }, [load]);
+  useEffect(() => {
+    const restoreView = () => setActiveView(viewForPath(portal.id, window.location.pathname));
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, [portal.id]);
+
+  const navigate = useCallback((view: string) => {
+    setActiveView(view);
+    const route = routeForView(portal.id, view);
+    if (window.location.pathname !== route) window.history.pushState({}, "", route);
+  }, [portal.id]);
 
   async function signOut() {
-    await fetch("/api/session/logout", { method: "POST" });
-    setSnapshot(null); setStatus("guest");
+    try {
+      const response = await fetch("/api/session/logout", { method: "POST", headers: { "X-CSRF-Token": csrfToken } });
+      if (!response.ok) { setError("Sign-out was rejected. Refresh the session and try again."); setStatus("error"); return; }
+      setSnapshot(null); setCsrfToken(""); setStatus("guest");
+    } catch { setError("The identity service could not complete sign-out."); setStatus("error"); }
   }
 
   return (
@@ -685,29 +730,29 @@ export function PortalHome({ portal, release }: { portal: PortalDefinition; rele
           <p className="kicker">Independent {portal.name}</p>
           <h1>{portal.purpose}</h1>
           <p>Authenticate at the central identity boundary. Your session remains local to this website.</p>
-          <a href="/api/session/login" data-action-id={`${portal.id}-sign-in`}>Enter as {portal.actor}<span aria-hidden="true">↗</span></a>
+          <a href={`/api/session/login?returnTo=${encodeURIComponent(routeForView(portal.id, activeView))}`} data-action-id={`${portal.id}-sign-in`}>Enter as {portal.actor}<span aria-hidden="true">↗</span></a>
           <small>Synthetic institutional simulation · no real student data</small>
         </section>
       ) : null}
       {status === "error" ? <section className="error-state"><p className="kicker">Boundary response</p><h1>Access stopped.</h1><p>{error}</p><button type="button" onClick={() => void load()} data-action-id={`${portal.id}-retry`}>Retry</button></section> : null}
       {status === "ready" && snapshot ? (
         <>
-          <PortalMasthead portal={portal} snapshot={snapshot} refresh={() => void load()} signOut={() => void signOut()} refreshing={refreshing} activeView={activeView} navigate={setActiveView} />
+          <PortalMasthead portal={portal} snapshot={snapshot} refresh={() => void load()} signOut={() => void signOut()} refreshing={refreshing} activeView={activeView} navigate={navigate} />
           <div className="portal-workspace">
             {portal.id === "student" && activeView === "Today" ? <StudentSurface snapshot={snapshot} /> : null}
-            {portal.id === "student" && activeView === "Registration" ? <StudentRegistrationSurface snapshot={snapshot} refresh={load} /> : null}
+            {portal.id === "student" && activeView === "Registration" ? <StudentRegistrationSurface snapshot={snapshot} refresh={load} csrfToken={csrfToken} /> : null}
             {portal.id === "student" && activeView === "Academics" ? <StudentAcademicsSurface snapshot={snapshot} /> : null}
             {portal.id === "student" && activeView === "Fees" ? <StudentFeesSurface snapshot={snapshot} /> : null}
             {portal.id === "student" && activeView === "Support" ? <SupportPlanSurface plans={snapshot.supportPlans} audience="student" /> : null}
-            {portal.id === "student" && activeView === "Account" ? <StudentAccountSurface snapshot={snapshot} refresh={load} /> : null}
+            {portal.id === "student" && activeView === "Account" ? <StudentAccountSurface snapshot={snapshot} refresh={load} csrfToken={csrfToken} /> : null}
             {portal.id === "parent" && activeView === "Overview" ? <ParentSurface snapshot={snapshot} chooseChild={setSelectedChildId} /> : null}
             {portal.id === "parent" && activeView === "Children" ? <ParentAcademicsSurface snapshot={snapshot} /> : null}
-            {portal.id === "parent" && activeView === "Fees" ? <ParentFeesSurface snapshot={snapshot} refresh={load} /> : null}
+            {portal.id === "parent" && activeView === "Fees" ? <ParentFeesSurface snapshot={snapshot} refresh={load} csrfToken={csrfToken} /> : null}
             {portal.id === "parent" && activeView === "Access" ? <ParentAccessSurface snapshot={snapshot} /> : null}
-            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} activeView={activeView} refresh={load} /> : null}
-            {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} activeView={activeView} /> : null}
-            {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} activeView={activeView} refresh={load} /> : null}
-            <ActivityRail activity={snapshot.activity} />
+            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} activeView={activeView} refresh={load} csrfToken={csrfToken} /> : null}
+            {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} activeView={activeView} csrfToken={csrfToken} /> : null}
+            {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} activeView={activeView} refresh={load} csrfToken={csrfToken} /> : null}
+            <ActivityRail activity={snapshot.activity} portal={portal.id} navigate={navigate} />
           </div>
           <footer className="portal-footer"><span>AURA Institute of Technology</span><span>Synthetic ecosystem / {portal.id} / build {(release ?? "local").slice(0, 8)}</span></footer>
         </>

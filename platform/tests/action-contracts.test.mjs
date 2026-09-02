@@ -30,7 +30,7 @@ test("every interactive control is named and every action contract is rendered",
     governance: ["operations", "runs", "evidence", "simulation"],
   };
   const dynamicRendered = new Set([
-    ...["student", "parent", "faculty", "hod", "governance"].flatMap((portal) => ["sign-in", "refresh", "sign-out", "retry"].map((action) => `${portal}-${action}`)),
+    ...["student", "parent", "faculty", "hod", "governance"].flatMap((portal) => ["sign-in", "refresh", "sign-out", "retry", "open-activity-consequence"].map((action) => `${portal}-${action}`)),
     ...Object.entries(dynamicViews).flatMap(([portal, views]) => views.map((view) => `${portal}-open-${view}`)),
   ]);
   const allRendered = new Set([...rendered, ...dynamicRendered]);
