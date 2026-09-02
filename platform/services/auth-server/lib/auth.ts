@@ -6,7 +6,9 @@ import { Pool } from "pg";
 import { coreApiAudience } from "@aura/contracts";
 
 const databaseUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
-const baseURL = process.env.BETTER_AUTH_URL ?? "http://localhost:3200";
+const baseURL = process.env.NODE_ENV === "production"
+  ? process.env.BETTER_AUTH_URL ?? "https://aura-identity-service.vercel.app"
+  : process.env.LOCAL_BETTER_AUTH_URL ?? "http://127.0.0.1:3200";
 const databaseSchema = process.env.AUTH_DATABASE_SCHEMA ?? "aura_identity";
 
 if (!databaseUrl) throw new Error("DATABASE_URL_UNPOOLED or DATABASE_URL is required by the AURA identity service");

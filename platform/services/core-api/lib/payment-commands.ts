@@ -50,12 +50,20 @@ export async function createPaymentAttempt(
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return {
-      transaction: duplicate.payload.transaction as PaymentTransactionResult,
-      invoice: duplicate.payload.invoice as PaymentInvoiceResult,
-      duplicate: true,
-      receipt: duplicate.receipt,
-    };
+    if (duplicate) {
+      const priorTransaction = duplicate.payload.transaction as PaymentTransactionResult | undefined;
+      const priorInvoice = duplicate.payload.invoice as PaymentInvoiceResult | undefined;
+      const priorScenario = priorTransaction?.status === "captured" ? "success" : "decline";
+      if (priorInvoice?.id !== invoiceId || priorScenario !== input.scenario) {
+        throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for a different payment attempt");
+      }
+      return {
+        transaction: priorTransaction,
+        invoice: priorInvoice,
+        duplicate: true,
+        receipt: duplicate.receipt,
+      } as PaymentAttemptResult;
+    }
 
     const result = await client.query<{
       id: string;

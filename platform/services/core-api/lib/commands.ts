@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { causalReceiptSchema, type ActorContext } from "@aura/contracts";
+import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
+import { assertCommandId, findDuplicateCommand, getCurrentGeneration, writeCommandLedger } from "./command-ledger";
 import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
 import { requireDepartmentScope } from "./security";
@@ -16,32 +17,20 @@ export async function publishAndAssignOffering(
   commandId: string,
   input: z.infer<typeof publishAndAssignInput>,
 ) {
-  if (!z.string().uuid().safeParse(commandId).success) throw new ConflictError("INVALID_IDEMPOTENCY_KEY", "A UUID idempotency key is required");
+  assertCommandId(commandId);
 
   return withCoreTransaction(async (client) => {
-    const current = await client.query<{ generation_id: string }>(
-      "SELECT current_generation_id AS generation_id FROM institution_revisions WHERE singleton = true",
-    );
-    const generationId = current.rows[0]!.generation_id;
-    const duplicate = await client.query(
-      `SELECT cr.command_id, cr.event_id, cr.audit_id, cr.institution_revision, cr.occurred_at,
-              de.payload
-       FROM command_receipts cr JOIN domain_events de ON de.id = cr.event_id
-       WHERE cr.generation_id = $1 AND cr.command_id = $2`,
-      [generationId, commandId],
-    );
-    if (duplicate.rowCount) {
-      const row = duplicate.rows[0];
+    const generationId = await getCurrentGeneration(client);
+    const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
+    if (duplicate) {
+      const priorOffering = duplicate.payload.offering as { id?: string } | undefined;
+      if (priorOffering?.id !== offeringId || duplicate.payload.facultyPersonId !== input.facultyPersonId) {
+        throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for a different publish command");
+      }
       return {
-        offering: row.payload.offering,
+        offering: duplicate.payload.offering,
         duplicate: true,
-        receipt: causalReceiptSchema.parse({
-          commandId: row.command_id,
-          eventId: row.event_id,
-          auditId: row.audit_id,
-          institutionRevision: Number(row.institution_revision),
-          occurredAt: new Date(row.occurred_at).toISOString(),
-        }),
+        receipt: duplicate.receipt,
       };
     }
 
@@ -81,50 +70,29 @@ export async function publishAndAssignOffering(
        VALUES ($1, $2, $3, $4, $5)`,
       [randomUUID(), generationId, input.facultyPersonId, offeringId, actor.personId],
     );
-    const revision = await client.query<{ revision: string }>(
-      "UPDATE institution_revisions SET revision = revision + 1, updated_at = now() WHERE singleton = true RETURNING revision::text",
-    );
-
-    const eventId = randomUUID();
-    const auditId = randomUUID();
-    const receiptId = randomUUID();
-    const occurredAt = new Date().toISOString();
     const eventPayload = {
       departmentId: row.department_id,
       facultyPersonId: input.facultyPersonId,
       facultyName: faculty.rows[0]!.display_name,
       offering: { id: row.id, code: row.code, title: row.title, status: "published", revision: updated.rows[0]!.revision },
     };
-    await client.query(
-      `INSERT INTO domain_events (id, generation_id, aggregate_type, aggregate_id, event_type, command_id, actor_person_id, institution_revision, payload, occurred_at)
-       VALUES ($1, $2, 'course_offering', $3, 'offering.published', $4, $5, $6, $7::jsonb, $8)`,
-      [eventId, generationId, offeringId, commandId, actor.personId, revision.rows[0]!.revision, JSON.stringify(eventPayload), occurredAt],
-    );
-    await client.query(
-      "INSERT INTO outbox_items (id, generation_id, domain_event_id, topic, payload) VALUES ($1, $2, $3, 'academic.offering.published', $4::jsonb)",
-      [randomUUID(), generationId, eventId, JSON.stringify(eventPayload)],
-    );
-    await client.query(
-      `INSERT INTO audit_events (id, generation_id, command_id, event_id, actor_person_id, action, resource_type, resource_id, outcome, metadata, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, 'publish_and_assign', 'course_offering', $6, 'allowed', $7::jsonb, $8)`,
-      [auditId, generationId, commandId, eventId, actor.personId, offeringId, JSON.stringify({ expectedRevision: input.expectedRevision }), occurredAt],
-    );
-    await client.query(
-      `INSERT INTO command_receipts (id, generation_id, command_id, event_id, audit_id, institution_revision, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [receiptId, generationId, commandId, eventId, auditId, revision.rows[0]!.revision, occurredAt],
-    );
+    const receipt = await writeCommandLedger(client, {
+      generationId,
+      commandId,
+      actorPersonId: actor.personId,
+      aggregateType: "course_offering",
+      aggregateId: offeringId,
+      eventType: "offering.published",
+      action: "publish_and_assign",
+      topic: "academic.offering.published",
+      payload: eventPayload,
+      metadata: { expectedRevision: input.expectedRevision },
+    });
 
     return {
       offering: eventPayload.offering,
       duplicate: false,
-      receipt: causalReceiptSchema.parse({
-        commandId,
-        eventId,
-        auditId,
-        institutionRevision: Number(revision.rows[0]!.revision),
-        occurredAt,
-      }),
+      receipt,
     };
   });
 }

@@ -106,6 +106,14 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.equal(duplicate.duplicate, true);
   assert.deepEqual(duplicate.receipt, first.receipt);
   await assert.rejects(
+    publishAndAssignOffering(hod, fixture.cse_offering_id, commandId, { facultyPersonId: fixture.faculty2_person_id, expectedRevision: 0 }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
+  await assert.rejects(
+    publishAndAssignOffering({ ...hod, personId: fixture.faculty2_person_id }, fixture.cse_offering_id, commandId, { facultyPersonId: fixture.faculty_person_id, expectedRevision: 0 }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_REUSED",
+  );
+  await assert.rejects(
     publishAndAssignOffering(hod, fixture.ece_offering_id, randomUUID(), { facultyPersonId: fixture.faculty_person_id, expectedRevision: 0 }),
     AuthorizationError,
   );
@@ -124,6 +132,10 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.equal(registered.duplicate, false);
   assert.equal(registeredDuplicate.duplicate, true);
   assert.deepEqual(registeredDuplicate.receipt, registered.receipt);
+  await assert.rejects(
+    registerForOffering(student, registrationCommand, { offeringId: fixture.ece_offering_id }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
   const registrationId = (registered.registration as { id: string }).id;
   await assert.rejects(withdrawRegistration(student2, registrationId, randomUUID()), AuthorizationError);
 
@@ -139,6 +151,10 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.equal(attendance.duplicate, false);
   assert.equal(attendanceDuplicate.duplicate, true);
   assert.deepEqual(attendanceDuplicate.receipt, attendance.receipt);
+  await assert.rejects(
+    submitAttendance(faculty, fixture.attendance_session_id, attendanceCommand, { expectedRevision: 0, records: [{ studentId: fixture.student_profile_id, status: "absent" }] }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
 
   await assert.rejects(
     publishMarks(faculty, fixture.assessment_id, randomUUID(), { expectedRevision: 0, marks: [{ studentId: fixture.student_profile_id, score: 101, feedback: "invalid" }] }),
@@ -150,11 +166,18 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.equal(marks.duplicate, false);
   assert.equal(marksDuplicate.duplicate, true);
   assert.deepEqual(marksDuplicate.receipt, marks.receipt);
+  await assert.rejects(
+    publishMarks(faculty, fixture.assessment_id, marksCommand, { expectedRevision: 0, marks: [{ studentId: fixture.student_profile_id, score: 81, feedback: "Changed payload." }] }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
 
   const parent: AuthenticatedActor = { subject: "database-test-parent", role: "parent", personId: fixture.parent_person_id, displayName: "Lakshmi Rao", email: "parent1@aura.invalid", clientId: portalOidcClients.parent };
   const granted = await loadPortalSnapshot(parent) as { childAcademics?: { marks?: unknown[]; attendance?: unknown[] } };
   assert.ok((granted.childAcademics?.marks?.length ?? 0) >= 2);
   assert.ok((granted.childAcademics?.attendance?.length ?? 0) >= 2);
+  const selectedSecondChild = await loadPortalSnapshot(parent, fixture.student10_profile_id) as { selectedChildId?: string; childAcademics?: { studentId?: string } };
+  assert.equal(selectedSecondChild.selectedChildId, fixture.student10_profile_id);
+  assert.equal(selectedSecondChild.childAcademics?.studentId, fixture.student10_profile_id);
   const revokeCommand = randomUUID();
   const grantRevoked = await revokeParentGrant(student, fixture.marks_grant_id, revokeCommand, { expectedRevision: 0 });
   const grantRevokedDuplicate = await revokeParentGrant(student, fixture.marks_grant_id, revokeCommand, { expectedRevision: 0 });
@@ -170,6 +193,10 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.equal(declined.transaction.status, "failed");
   assert.equal(declinedDuplicate.duplicate, true);
   assert.deepEqual(declinedDuplicate.receipt, declined.receipt);
+  await assert.rejects(
+    createPaymentAttempt(parent, fixture.invoice_id, declineCommand, { expectedRevision: 0, scenario: "success" }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
 
   const paymentCommand = randomUUID();
   const paid = await createPaymentAttempt(parent, fixture.invoice_id, paymentCommand, { expectedRevision: 0, scenario: "success" });
@@ -209,6 +236,10 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.equal(processed.artifact.validation.valid, true);
   assert.equal(processedDuplicate.duplicate, true);
   assert.deepEqual(processedDuplicate.receipt, processed.receipt);
+  await assert.rejects(
+    processAcademicEvent(governance, processCommand, { eventId: attendance.receipt.eventId }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
   await assert.rejects(
     processAcademicEvent(governance, randomUUID(), { eventId: marks.receipt.eventId }),
     (error: unknown) => error instanceof ConflictError && error.code === "EVENT_ALREADY_PROCESSED",
@@ -260,6 +291,13 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.ok(decided.plan);
   assert.equal(decidedDuplicate.duplicate, true);
   assert.deepEqual(decidedDuplicate.receipt, decided.receipt);
+  await assert.rejects(
+    decideSupportCase(faculty, processed.supportCase.id, decisionCommand, {
+      artifactId: processed.artifact.id, contentHash: processed.artifact.contentHash,
+      expectedRevision: processed.supportCase.revision, decision: "approved", rationale: "A changed rationale must not reuse the prior command key.",
+    }),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
 
   const studentWithPlan = await loadPortalSnapshot({ ...student, displayName: "Ananya Rao", email: "student1@aura.invalid", clientId: portalOidcClients.student } as AuthenticatedActor) as { supportPlans?: unknown[] };
   assert.equal(studentWithPlan.supportPlans?.length, 1);
@@ -274,12 +312,24 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.equal(replayed.replay.matched, true);
   assert.equal(replayedDuplicate.duplicate, true);
   assert.deepEqual(replayedDuplicate.replay, replayed.replay);
+  await assert.rejects(
+    replayAgentRun(governance, randomUUID(), replayCommand),
+    (error: unknown) => error instanceof ConflictError && error.code === "IDEMPOTENCY_KEY_MISMATCH",
+  );
   const countsAfterReplay = await Promise.all(protectedTables.map(async (table) => Number((await pool.query<{ count: string }>(`SELECT count(*)::text AS count FROM "${schema}".${table} WHERE generation_id = $1`, [fixture.generation_id])).rows[0]!.count)));
   assert.deepEqual(countsAfterReplay, countsBeforeReplay);
   const runEvidence = await loadGovernanceRun(governance, processed.run.id) as { replays: unknown[]; input_hash: string; content_hash: string };
   assert.equal(runEvidence.replays.length, 1);
   assert.equal(runEvidence.input_hash, processed.run.inputHash);
   assert.equal(runEvidence.content_hash, processed.artifact.contentHash);
+
+  const hodSnapshot = await loadPortalSnapshot({ ...hod, displayName: "Dr Sahana Krishnan", email: "hod.cse@aura.invalid", clientId: portalOidcClients.hod } as AuthenticatedActor) as {
+    departmentStudents?: Array<{ register_number: string }>;
+    departmentFaculty?: Array<{ display_name: string }>;
+  };
+  assert.equal(hodSnapshot.departmentStudents?.length, 10);
+  assert.equal(hodSnapshot.departmentFaculty?.length, 3);
+  assert.equal(hodSnapshot.departmentStudents?.some((item) => item.register_number.startsWith("SYN-ECE")), false);
 
   await pool.query(`UPDATE "${schema}".student_profiles SET completed_course_codes = '["CS301"]'::jsonb WHERE id IN ($1, $2)`, [fixture.student2_profile_id, fixture.student10_profile_id]);
   await assert.rejects(

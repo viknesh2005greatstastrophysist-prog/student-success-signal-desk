@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
 
-import { assertCommandId, findDuplicateCommand, getCurrentGeneration, writeCommandLedger } from "./command-ledger";
+import { assertCommandId, findDuplicateCommand, getCurrentGeneration, jsonMatches, writeCommandLedger } from "./command-ledger";
 import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
 import { requireRole } from "./security";
@@ -43,7 +43,13 @@ export async function submitAttendance(actor: ActorContext, sessionId: string, c
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return { attendanceSession: duplicate.payload.attendanceSession, duplicate: true, receipt: duplicate.receipt };
+    if (duplicate) {
+      const prior = duplicate.payload.attendanceSession as { id?: string } | undefined;
+      if (prior?.id !== sessionId || !jsonMatches(duplicate.payload.records, input.records)) {
+        throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for different attendance data");
+      }
+      return { attendanceSession: duplicate.payload.attendanceSession, duplicate: true, receipt: duplicate.receipt };
+    }
     const session = await client.query<{
       id: string;
       status: string;
@@ -130,7 +136,13 @@ export async function publishMarks(actor: ActorContext, assessmentId: string, co
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return { assessment: duplicate.payload.assessment, duplicate: true, receipt: duplicate.receipt };
+    if (duplicate) {
+      const prior = duplicate.payload.assessment as { id?: string } | undefined;
+      if (prior?.id !== assessmentId || !jsonMatches(duplicate.payload.marks, input.marks)) {
+        throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for different marks data");
+      }
+      return { assessment: duplicate.payload.assessment, duplicate: true, receipt: duplicate.receipt };
+    }
     const assessment = await client.query<{
       id: string;
       title: string;

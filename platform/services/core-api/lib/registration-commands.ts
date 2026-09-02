@@ -17,7 +17,11 @@ export async function registerForOffering(actor: ActorContext, commandId: string
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return { registration: duplicate.payload.registration, duplicate: true, receipt: duplicate.receipt };
+    if (duplicate) {
+      const priorOffering = duplicate.payload.offering as { id?: string } | undefined;
+      if (priorOffering?.id !== input.offeringId) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for another offering");
+      return { registration: duplicate.payload.registration, duplicate: true, receipt: duplicate.receipt };
+    }
 
     const offering = await client.query<{
       id: string;
@@ -147,7 +151,11 @@ export async function withdrawRegistration(actor: ActorContext, registrationId: 
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return { registration: duplicate.payload.registration, duplicate: true, receipt: duplicate.receipt };
+    if (duplicate) {
+      const prior = duplicate.payload.registration as { id?: string } | undefined;
+      if (prior?.id !== registrationId) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for another registration");
+      return { registration: duplicate.payload.registration, duplicate: true, receipt: duplicate.receipt };
+    }
     const result = await client.query<{
       id: string;
       student_id: string;

@@ -54,6 +54,13 @@ type GovernanceRun = {
   case_status: string; risk_band: string; student_name: string; input_hash: string; artifact_id: string;
   content_hash: string; recommendation: SupportRecommendation; validation: Record<string, unknown>; replay_count: number;
 };
+type DepartmentStudent = {
+  id: string; register_number: string; semester: number; display_name: string; active_registrations: number;
+  submitted_attendance_records: number; published_marks: number; outstanding_paise: string;
+};
+type DepartmentFaculty = {
+  id: string; display_name: string; assigned_offerings: number; submitted_attendance_sheets: number; published_assessments: number;
+};
 type Snapshot = {
   actor: { role: PortalId; displayName: string; email: string };
   institutionRevision: number;
@@ -61,8 +68,11 @@ type Snapshot = {
   activity: Activity[];
   student?: { register_number: string; semester: number; department: string; fee_status: string; amount_paise: string; paid_paise: string; remaining_paise: string; due_on: string };
   children?: Array<{ id: string; display_name: string; register_number: string; grants: string[] }>;
+  selectedChildId?: string | null;
   availableFaculty?: Person[];
   departmentPeople?: Person[];
+  departmentStudents?: DepartmentStudent[];
+  departmentFaculty?: DepartmentFaculty[];
   assignableOffering?: Offering | null;
   registrationCatalogue?: CatalogueOffering[];
   roster?: RosterStudent[];
@@ -130,8 +140,8 @@ function PortalMasthead({ portal, snapshot, refresh, signOut, refreshing, active
     student: ["Today", "Registration", "Academics", "Fees", "Support", "Account"],
     parent: ["Overview", "Children", "Fees", "Access"],
     faculty: ["Today", "Classrooms", "Gradebook", "Cases"],
-    hod: ["Department", "Offerings", "Cases"],
-    governance: ["Operations", "Runs", "Evidence"],
+    hod: ["Department", "Offerings", "People", "Cases"],
+    governance: ["Operations", "Runs", "Evidence", "Simulation"],
   };
   return (
     <>
@@ -296,19 +306,20 @@ function SupportPlanSurface({ plans, audience }: { plans: SupportPlanView[] | un
   );
 }
 
-function ParentSurface({ snapshot }: { snapshot: Snapshot }) {
-  const child = snapshot.children?.[0];
+function ParentSurface({ snapshot, chooseChild }: { snapshot: Snapshot; chooseChild: (childId: string) => void }) {
+  const child = snapshot.children?.find((item) => item.id === snapshot.selectedChildId) ?? snapshot.children?.[0];
   return (
     <section className="role-surface parent-surface">
       <div className="hero-copy"><p className="kicker">Family academic view</p><h1>What needs<br />your attention.</h1><p>Only the fields Ananya has permitted. No surveillance theatre.</p></div>
-      <article className="child-card"><span className="portrait-token">AR</span><div><small>Linked student</small><h2>{child?.display_name ?? "No active link"}</h2><p>{child?.register_number}</p></div><span className="grant-count">{child?.grants.length ?? 0}<small>active grants</small></span></article>
+      {snapshot.children && snapshot.children.length > 1 ? <label className="child-switcher">Linked student<select aria-label="Linked student" value={child?.id} onChange={(event) => chooseChild(event.target.value)} data-action-id="parent-switch-child">{snapshot.children.map((item) => <option value={item.id} key={item.id}>{item.display_name} · {item.register_number}</option>)}</select></label> : null}
+      <article className="child-card"><span className="portrait-token">{child?.display_name.split(" ").map((part) => part[0]).slice(0, 2).join("") ?? "--"}</span><div><small>Linked student</small><h2>{child?.display_name ?? "No active link"}</h2><p>{child?.register_number}</p></div><span className="grant-count">{child?.grants.length ?? 0}<small>active grants</small></span></article>
       <div className="grant-grid">{child?.grants.map((grant) => <span key={grant}><i aria-hidden="true">✓</i>{grant}</span>)}</div>
     </section>
   );
 }
 
 function ParentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
-  const child = snapshot.children?.[0];
+  const child = snapshot.children?.find((item) => item.id === snapshot.selectedChildId) ?? snapshot.children?.[0];
   const academics = snapshot.childAcademics;
   return (
     <section className="role-surface parent-record-surface">
@@ -375,7 +386,7 @@ function ParentFeesSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh:
 }
 
 function ParentAccessSurface({ snapshot }: { snapshot: Snapshot }) {
-  const child = snapshot.children?.[0];
+  const child = snapshot.children?.find((item) => item.id === snapshot.selectedChildId) ?? snapshot.children?.[0];
   const fields = ["attendance", "marks", "fees", "support"];
   return (
     <section className="role-surface parent-access-surface">
@@ -481,6 +492,36 @@ function HodCasesSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
+function HodDepartmentSurface({ snapshot }: { snapshot: Snapshot }) {
+  const students = snapshot.departmentStudents ?? [];
+  const faculty = snapshot.departmentFaculty ?? [];
+  const activeRegistrations = students.reduce((total, item) => total + Number(item.active_registrations), 0);
+  return (
+    <section className="role-surface hod-department-surface">
+      <div className="hero-copy"><p className="kicker">CSE / operating picture</p><h1>One department.<br />One ledger.</h1><p>Academic, staffing, support, and fee signals. Department-scoped and current to revision {snapshot.institutionRevision}.</p></div>
+      <div className="department-scoreboard">
+        <article><small>Active students</small><strong>{students.length}</strong><span>{activeRegistrations} current registrations</span></article>
+        <article><small>Faculty</small><strong>{faculty.length}</strong><span>{faculty.reduce((total, item) => total + Number(item.assigned_offerings), 0)} assigned offerings</span></article>
+        <article><small>Academic outputs</small><strong>{Number(snapshot.academicSummary?.submitted_attendance ?? 0) + Number(snapshot.academicSummary?.published_assessments ?? 0)}</strong><span>submitted sheets + published assessments</span></article>
+        <article><small>Open obligations</small><strong>{money(snapshot.financeSummary?.outstanding_paise)}</strong><span>{snapshot.financeSummary?.due_invoices ?? 0} due or partial invoices</span></article>
+      </div>
+      <div className="department-brief"><div><p className="kicker">Current teaching line</p><h2>{snapshot.offering?.code} / {snapshot.offering?.title}</h2><p>{snapshot.offering?.faculty_name ?? "Faculty assignment pending"} · {snapshot.offering?.enrolment ?? 0} enrolled · {snapshot.offering?.status}</p></div><span className={`status-stamp status-${snapshot.offering?.status}`}>{snapshot.offering?.status}</span></div>
+    </section>
+  );
+}
+
+function HodPeopleSurface({ snapshot }: { snapshot: Snapshot }) {
+  const students = snapshot.departmentStudents ?? [];
+  const faculty = snapshot.departmentFaculty ?? [];
+  return (
+    <section className="role-surface hod-people-surface">
+      <div className="registration-heading"><div><p className="kicker">CSE / authorized directory</p><h1>People, in context.</h1></div><p>Operational records for this department only. Parent identities, credentials, and other departments remain outside the HOD boundary.</p></div>
+      <section className="people-ledger"><div className="section-heading"><span>Students</span><b>{students.length}</b></div>{students.map((student) => <article key={student.id}><div><b>{student.display_name}</b><code>{student.register_number} · semester {student.semester}</code></div><span><b>{student.active_registrations}</b><small>courses</small></span><span><b>{student.submitted_attendance_records}</b><small>attendance</small></span><span><b>{student.published_marks}</b><small>marks</small></span><span className="money-cell"><b>{money(student.outstanding_paise)}</b><small>outstanding</small></span></article>)}</section>
+      <section className="people-ledger faculty-directory"><div className="section-heading"><span>Faculty</span><b>{faculty.length}</b></div>{faculty.map((person) => <article key={person.id}><div><b>{person.display_name}</b><code>CSE faculty</code></div><span><b>{person.assigned_offerings}</b><small>offerings</small></span><span><b>{person.submitted_attendance_sheets}</b><small>sheets</small></span><span><b>{person.published_assessments}</b><small>assessments</small></span></article>)}</section>
+    </section>
+  );
+}
+
 function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; refresh: () => Promise<void> | void; activeView: string }) {
   const offering = snapshot.offering;
   const faculty = snapshot.availableFaculty ?? [];
@@ -488,8 +529,6 @@ function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; ref
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const selected = facultyId || faculty[0]?.id || "";
-
-  if (activeView === "Cases") return <HodCasesSurface snapshot={snapshot} />;
 
   async function publish() {
     if (!offering || !selected) return;
@@ -504,6 +543,10 @@ function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; ref
     else setMessage(result.error.message);
     setPending(false);
   }
+
+  if (activeView === "Department") return <HodDepartmentSurface snapshot={snapshot} />;
+  if (activeView === "People") return <HodPeopleSurface snapshot={snapshot} />;
+  if (activeView === "Cases") return <HodCasesSurface snapshot={snapshot} />;
 
   return (
     <section className="role-surface hod-surface">
@@ -530,8 +573,9 @@ function HodSurface({ snapshot, refresh, activeView }: { snapshot: Snapshot; ref
 function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void }) {
   const event = snapshot.processableEvents?.[0];
   const run = snapshot.governanceRuns?.[0];
-  const [pending, setPending] = useState<"process" | "replay" | null>(null);
+  const [pending, setPending] = useState<"process" | "replay" | "reset" | null>(null);
   const [message, setMessage] = useState("");
+  const [resetConfirmation, setResetConfirmation] = useState("");
 
   async function processEvent() {
     if (!event) return;
@@ -559,6 +603,22 @@ function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapsh
     setPending(null);
   }
 
+  async function resetSimulation() {
+    if (resetConfirmation !== "AURA-SYNTHETIC-SEED-V1") return;
+    setPending("reset"); setMessage("");
+    const response = await fetch("/api/bff/governance/simulation/reset", {
+      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ confirmation: resetConfirmation }),
+    });
+    const result = await response.json() as ApiResult<{ manifest: { generationId: string; seedVersion: string } }>;
+    if (result.ok) {
+      setMessage(`New synthetic generation active: ${result.data.manifest.generationId.slice(0, 8)}. Previous evidence remains retained.`);
+      setResetConfirmation("");
+      await refresh();
+    } else setMessage(result.error.message);
+    setPending(null);
+  }
+
   return (
     <section className="role-surface governance-surface">
       <div className="hero-copy"><p className="kicker">AURA control plane</p><h1>Evidence,<br />not theatre.</h1><p>Observe lineage and replay. Academic authority lives elsewhere.</p></div>
@@ -573,29 +633,35 @@ function GovernanceSurface({ snapshot, activeView, refresh }: { snapshot: Snapsh
       </> : null}
       {activeView === "Runs" ? <div className="run-workbench"><div className="section-heading"><span>Validated deterministic runs</span><b>{snapshot.governanceRuns?.length ?? 0}</b></div>{run ? <article><header><div><small>{run.student_name} · {run.risk_band} context</small><h2>{run.recommendation.summary}</h2></div><span className={`case-state case-${run.case_status}`}>{run.case_status.replaceAll("_", " ")}</span></header><div className="run-metrics"><span>mode <b>{run.mode}</b></span><span>validation <b>{String(run.validation.valid ?? false).toUpperCase()}</b></span><span>replays <b>{run.replay_count}</b></span></div><ol>{run.recommendation.actions.map((action) => <li key={action.code}>{action.label}</li>)}</ol><div className="run-actions"><button type="button" onClick={() => void replay()} disabled={pending === "replay"} data-action-id="governance-replay-run">{pending === "replay" ? "Replaying…" : "Replay + verify hashes"}</button><a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Download evidence JSON <span aria-hidden="true">↓</span></a></div></article> : <div className="empty-support"><span>0</span><p>Process one academic event to create a governed run.</p></div>}</div> : null}
       {activeView === "Evidence" ? <div className="evidence-workbench"><div className="section-heading"><span>Frozen lineage</span><b>{run ? 1 : 0}</b></div>{run ? <article><div><small>Input SHA-256</small><code>{run.input_hash}</code></div><div><small>Artifact SHA-256</small><code>{run.content_hash}</code></div><div><small>Policy result</small><b>{String(run.validation.valid ?? false).toUpperCase()} · deterministic</b></div><h2>Cited evidence</h2>{run.recommendation.citations.map((citation) => <p key={citation.evidencePath}><code>{citation.evidencePath}</code>{citation.statement}</p>)}<a href={`/api/bff/governance/runs/${run.id}`} download data-action-id="governance-download-evidence">Export immutable evidence package <span aria-hidden="true">↓</span></a></article> : <div className="empty-support"><span>0</span><p>No frozen evidence exists in this generation.</p></div>}</div> : null}
+      {activeView === "Simulation" ? <div className="simulation-workbench"><div className="section-heading"><span>Synthetic generation control</span><b>destructive</b></div><article><p className="kicker">Explicit operator boundary</p><h2>Start a clean institutional generation.</h2><p>This switches every portal to a deterministic fresh seed. The current generation becomes inactive but remains in the audit database. This cannot affect a real student because the ecosystem contains synthetic records only.</p><label htmlFor="simulation-confirmation">Type <code>AURA-SYNTHETIC-SEED-V1</code> to confirm</label><input id="simulation-confirmation" value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} autoComplete="off" spellCheck={false} data-action-id="governance-enter-reset-confirmation" /><button type="button" onClick={() => void resetSimulation()} disabled={pending === "reset" || resetConfirmation !== "AURA-SYNTHETIC-SEED-V1"} data-action-id="governance-reset-simulation">{pending === "reset" ? "Creating generation…" : "Reset synthetic ecosystem"}</button><small>Authentication, governance role, exact confirmation, and database transaction are all required.</small></article></div> : null}
     </section>
   );
 }
 
-export function PortalHome({ portal }: { portal: PortalDefinition }) {
+export function PortalHome({ portal, release }: { portal: PortalDefinition; release?: string }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "guest" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [activeView, setActiveView] = useState(navByPortal[portal.id][0]);
+  const [selectedChildId, setSelectedChildId] = useState("");
 
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const response = await fetch("/api/bff/dashboard", { cache: "no-store" });
+      const query = portal.id === "parent" && selectedChildId ? `?childId=${encodeURIComponent(selectedChildId)}` : "";
+      const response = await fetch(`/api/bff/dashboard${query}`, { cache: "no-store" });
       const result = await response.json() as ApiResult<Snapshot>;
       if (response.status === 401) { setStatus("guest"); setSnapshot(null); }
       else if (!result.ok) { setError(result.error.message); setStatus("error"); }
       else if (result.data.actor.role !== portal.id) { setError("This identity belongs to a different portal."); setStatus("error"); }
-      else { setSnapshot(result.data); setStatus("ready"); setError(""); }
+      else {
+        setSnapshot(result.data); setStatus("ready"); setError("");
+        if (portal.id === "parent" && !selectedChildId && result.data.selectedChildId) setSelectedChildId(result.data.selectedChildId);
+      }
     } catch { setError("The portal could not reach its Core service."); setStatus("error"); }
     finally { setRefreshing(false); }
-  }, [portal.id]);
+  }, [portal.id, selectedChildId]);
 
   // The session is held in an HTTP-only cookie, so the first client render must probe the same-origin BFF.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -634,7 +700,7 @@ export function PortalHome({ portal }: { portal: PortalDefinition }) {
             {portal.id === "student" && activeView === "Fees" ? <StudentFeesSurface snapshot={snapshot} /> : null}
             {portal.id === "student" && activeView === "Support" ? <SupportPlanSurface plans={snapshot.supportPlans} audience="student" /> : null}
             {portal.id === "student" && activeView === "Account" ? <StudentAccountSurface snapshot={snapshot} refresh={load} /> : null}
-            {portal.id === "parent" && activeView === "Overview" ? <ParentSurface snapshot={snapshot} /> : null}
+            {portal.id === "parent" && activeView === "Overview" ? <ParentSurface snapshot={snapshot} chooseChild={setSelectedChildId} /> : null}
             {portal.id === "parent" && activeView === "Children" ? <ParentAcademicsSurface snapshot={snapshot} /> : null}
             {portal.id === "parent" && activeView === "Fees" ? <ParentFeesSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "parent" && activeView === "Access" ? <ParentAccessSurface snapshot={snapshot} /> : null}
@@ -643,7 +709,7 @@ export function PortalHome({ portal }: { portal: PortalDefinition }) {
             {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} activeView={activeView} refresh={load} /> : null}
             <ActivityRail activity={snapshot.activity} />
           </div>
-          <footer className="portal-footer"><span>AURA Institute of Technology</span><span>Synthetic ecosystem / {portal.id}</span></footer>
+          <footer className="portal-footer"><span>AURA Institute of Technology</span><span>Synthetic ecosystem / {portal.id} / build {(release ?? "local").slice(0, 8)}</span></footer>
         </>
       ) : null}
     </main>

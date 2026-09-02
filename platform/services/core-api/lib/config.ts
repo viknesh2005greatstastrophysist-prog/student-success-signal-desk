@@ -18,13 +18,14 @@ export function loadCoreConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig
   }
 
   const databaseSchema = schemaName.parse(env.CORE_DATABASE_SCHEMA ?? "aura_core");
+  const production = env.NODE_ENV === "production";
 
   return {
     databaseUrl,
     databaseSchema,
     resetConfirmation: env.CORE_RESET_CONFIRMATION ?? "AURA-SYNTHETIC-SEED-V1",
-    oidcIssuer: env.CORE_OIDC_ISSUER ?? "http://localhost:3200/api/auth",
-    oidcJwksUrl: env.CORE_OIDC_JWKS_URL ?? "http://localhost:3200/api/auth/jwks",
+    oidcIssuer: production ? env.CORE_OIDC_ISSUER ?? "https://aura-identity-service.vercel.app/api/auth" : env.LOCAL_CORE_OIDC_ISSUER ?? "http://127.0.0.1:3200/api/auth",
+    oidcJwksUrl: production ? env.CORE_OIDC_JWKS_URL ?? "https://aura-identity-service.vercel.app/api/auth/jwks" : env.LOCAL_CORE_OIDC_JWKS_URL ?? "http://127.0.0.1:3200/api/auth/jwks",
     oidcAudience: env.CORE_API_AUDIENCE ?? "urn:aura:core-api",
   };
 }

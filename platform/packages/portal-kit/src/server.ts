@@ -24,9 +24,9 @@ function settings(portal: PortalId) {
   const production = process.env.NODE_ENV === "production";
   return {
     clientId: portalOidcClients[portal],
-    origin: process.env.PORTAL_ORIGIN ?? (production ? productionOrigins[portal] : localOrigins[portal]),
-    identityUrl: process.env.AURA_IDENTITY_URL ?? (production ? "https://aura-identity-service.vercel.app" : "http://127.0.0.1:3200"),
-    coreUrl: process.env.CORE_API_URL ?? (production ? "https://aura-core-api.vercel.app" : "http://127.0.0.1:3300"),
+    origin: production ? process.env.PORTAL_ORIGIN ?? productionOrigins[portal] : process.env.LOCAL_PORTAL_ORIGIN ?? localOrigins[portal],
+    identityUrl: production ? process.env.AURA_IDENTITY_URL ?? "https://aura-identity-service.vercel.app" : process.env.LOCAL_AURA_IDENTITY_URL ?? "http://127.0.0.1:3200",
+    coreUrl: production ? process.env.CORE_API_URL ?? "https://aura-core-api.vercel.app" : process.env.LOCAL_CORE_API_URL ?? "http://127.0.0.1:3300",
     secret: process.env.PORTAL_SESSION_SECRET,
     secure: production,
   };
@@ -171,7 +171,10 @@ function sameOrigin(request: Request, portal: PortalId) {
 export async function portalDashboard(request: Request, portal: PortalId) {
   const session = await readSession(request, portal);
   if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
-  const response = await fetch(`${settings(portal).coreUrl}/api/v1/dashboard`, {
+  const childId = new URL(request.url).searchParams.get("childId");
+  const coreDashboard = new URL("/api/v1/dashboard", settings(portal).coreUrl);
+  if (childId) coreDashboard.searchParams.set("childId", childId);
+  const response = await fetch(coreDashboard, {
     headers: { Authorization: `Bearer ${session.accessToken}`, "X-Request-Id": randomUUID() },
     cache: "no-store",
   });
@@ -242,6 +245,10 @@ export function portalProcessAcademicEvent(request: Request, portal: PortalId) {
 
 export function portalReplayAgentRun(request: Request, portal: PortalId, runId: string) {
   return portalCoreCommand(request, portal, `/api/v1/governance/runs/${encodeURIComponent(runId)}/replay`);
+}
+
+export function portalResetSimulation(request: Request, portal: PortalId) {
+  return portalCoreCommand(request, portal, "/api/v1/governance/simulation/reset");
 }
 
 export function portalDecideSupportCase(request: Request, portal: PortalId, caseId: string) {

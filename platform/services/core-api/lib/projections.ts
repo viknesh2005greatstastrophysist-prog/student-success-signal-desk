@@ -1,7 +1,8 @@
 import type { AuthenticatedActor } from "./authentication";
 import { withCoreTransaction } from "./db";
+import { NotFoundError } from "./http";
 
-export async function loadPortalSnapshot(actor: AuthenticatedActor) {
+export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChildId?: string) {
   return withCoreTransaction(async (client) => {
     const current = await client.query<{ generation_id: string; revision: string }>(
       "SELECT current_generation_id AS generation_id, revision::text FROM institution_revisions WHERE singleton = true",
@@ -231,7 +232,9 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         [generationId, actor.personId],
       );
       roleData.children = children.rows;
-      const child = children.rows[0];
+      const child = selectedChildId ? children.rows.find((item) => item.id === selectedChildId) : children.rows[0];
+      if (selectedChildId && !child) throw new NotFoundError("Linked student not found");
+      roleData.selectedChildId = child?.id ?? null;
       if (child) {
         const grants = child.grants ?? [];
         const attendance = grants.includes("attendance") ? await client.query(
@@ -342,6 +345,39 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
     if (actor.role === "hod") {
       roleData.departmentPeople = people.rows.filter((person) => person.department_id === actor.departmentId);
       roleData.availableFaculty = people.rows.filter((person) => person.department_id === actor.departmentId && person.role === "faculty");
+      const departmentStudents = await client.query(
+        `SELECT student.id, student.register_number, student.semester, person.display_name,
+                (SELECT count(*)::int FROM registrations registration
+                 WHERE registration.generation_id = student.generation_id AND registration.student_id = student.id AND registration.status = 'registered') AS active_registrations,
+                (SELECT count(*)::int FROM attendance_records attendance JOIN attendance_sessions session ON session.id = attendance.attendance_session_id
+                 WHERE attendance.generation_id = student.generation_id AND attendance.student_id = student.id AND session.status IN ('submitted', 'locked')) AS submitted_attendance_records,
+                (SELECT count(*)::int FROM marks mark JOIN assessments assessment ON assessment.id = mark.assessment_id
+                 WHERE mark.generation_id = student.generation_id AND mark.student_id = student.id AND assessment.published) AS published_marks,
+                (SELECT COALESCE(sum(invoice.amount_paise - invoice.paid_paise), 0)::text FROM fee_invoices invoice
+                 WHERE invoice.generation_id = student.generation_id AND invoice.student_id = student.id AND invoice.status IN ('due', 'partial')) AS outstanding_paise
+         FROM student_profiles student
+         JOIN people person ON person.id = student.person_id
+         WHERE student.generation_id = $1 AND student.department_id = $2
+         ORDER BY student.register_number`,
+        [generationId, actor.departmentId],
+      );
+      roleData.departmentStudents = departmentStudents.rows;
+      const departmentFaculty = await client.query(
+        `SELECT person.id, person.display_name,
+                count(DISTINCT assignment.course_offering_id) FILTER (WHERE assignment.active)::int AS assigned_offerings,
+                count(DISTINCT attendance.id) FILTER (WHERE attendance.status IN ('submitted', 'locked'))::int AS submitted_attendance_sheets,
+                count(DISTINCT assessment.id) FILTER (WHERE assessment.published)::int AS published_assessments
+         FROM people person
+         JOIN role_assignments role ON role.person_id = person.id AND role.generation_id = person.generation_id AND role.active AND role.role = 'faculty'
+         LEFT JOIN faculty_assignments assignment ON assignment.generation_id = person.generation_id AND assignment.faculty_person_id = person.id AND assignment.active
+         LEFT JOIN attendance_sessions attendance ON attendance.generation_id = person.generation_id AND attendance.course_offering_id = assignment.course_offering_id
+         LEFT JOIN assessments assessment ON assessment.generation_id = person.generation_id AND assessment.course_offering_id = assignment.course_offering_id
+         WHERE person.generation_id = $1 AND role.department_id = $2
+         GROUP BY person.id
+         ORDER BY person.display_name`,
+        [generationId, actor.departmentId],
+      );
+      roleData.departmentFaculty = departmentFaculty.rows;
       const academicSummary = await client.query<{ submitted_attendance: number; published_assessments: number }>(
         `SELECT
           (SELECT count(*)::int FROM attendance_sessions attendance

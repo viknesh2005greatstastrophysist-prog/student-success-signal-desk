@@ -24,7 +24,10 @@ function redirectWithError(request: Request, code: string) {
 
 export async function POST(request: Request) {
   const rawOAuthQuery = request.url.includes("?") ? request.url.slice(request.url.indexOf("?") + 1) : "";
-  const expectedOrigin = new URL(process.env.BETTER_AUTH_URL ?? request.url).origin;
+  const configuredIdentity = process.env.NODE_ENV === "production"
+    ? process.env.BETTER_AUTH_URL ?? request.url
+    : process.env.LOCAL_BETTER_AUTH_URL ?? "http://127.0.0.1:3200";
+  const expectedOrigin = new URL(configuredIdentity).origin;
   const suppliedOrigin = request.headers.get("origin");
   if (suppliedOrigin && suppliedOrigin !== expectedOrigin) return new NextResponse("Origin rejected", { status: 403 });
 

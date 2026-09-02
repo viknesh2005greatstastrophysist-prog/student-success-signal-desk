@@ -113,6 +113,7 @@ export const actionManifest: readonly ActionContract[] = [
   { id: "faculty-reject-support-artifact", portal: "faculty", type: "command", destination: "/api/bff/support/cases/:id/decisions" },
   { id: "faculty-approve-support-artifact", portal: "faculty", type: "command", destination: "/api/bff/support/cases/:id/decisions" },
   { id: "parent-open-overview", portal: "parent", type: "navigate", destination: "Parent overview" },
+  { id: "parent-switch-child", portal: "parent", type: "query", destination: "/api/bff/dashboard?childId=:id" },
   { id: "parent-open-children", portal: "parent", type: "navigate", destination: "Granted child academics" },
   { id: "parent-open-fees", portal: "parent", type: "navigate", destination: "Sandbox fee checkout" },
   { id: "parent-open-access", portal: "parent", type: "navigate", destination: "Field grant ledger" },
@@ -123,13 +124,17 @@ export const actionManifest: readonly ActionContract[] = [
   { id: "parent-download-receipt", portal: "parent", type: "query", destination: "/api/bff/receipts/:id" },
   { id: "hod-open-department", portal: "hod", type: "navigate", destination: "Department surface" },
   { id: "hod-open-offerings", portal: "hod", type: "navigate", destination: "Offering command" },
+  { id: "hod-open-people", portal: "hod", type: "navigate", destination: "Department-scoped people directory" },
   { id: "hod-open-cases", portal: "hod", type: "navigate", destination: "Department support disposition" },
   { id: "governance-open-operations", portal: "governance", type: "navigate", destination: "Academic event queue" },
   { id: "governance-open-runs", portal: "governance", type: "navigate", destination: "Governed runs" },
   { id: "governance-open-evidence", portal: "governance", type: "navigate", destination: "Frozen evidence" },
+  { id: "governance-open-simulation", portal: "governance", type: "navigate", destination: "Synthetic generation control" },
   { id: "governance-process-academic-event", portal: "governance", type: "command", destination: "/api/bff/governance/runs" },
   { id: "governance-replay-run", portal: "governance", type: "command", destination: "/api/bff/governance/runs/:id/replay" },
   { id: "governance-download-evidence", portal: "governance", type: "query", destination: "/api/bff/governance/runs/:id" },
+  { id: "governance-enter-reset-confirmation", portal: "governance", type: "form", destination: "Synthetic reset confirmation" },
+  { id: "governance-reset-simulation", portal: "governance", type: "command", destination: "/api/bff/governance/simulation/reset" },
 ];
 
 export type PortalDefinition = {

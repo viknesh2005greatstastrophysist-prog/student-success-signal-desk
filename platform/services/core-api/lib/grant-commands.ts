@@ -29,7 +29,11 @@ export async function revokeParentGrant(
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return { grant: duplicate.payload.grant as GrantResult, duplicate: true, receipt: duplicate.receipt };
+    if (duplicate) {
+      const prior = duplicate.payload.grant as GrantResult;
+      if (prior.id !== grantId) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for another field grant");
+      return { grant: prior, duplicate: true, receipt: duplicate.receipt };
+    }
     const result = await client.query<{
       id: string;
       field_group: string;

@@ -22,6 +22,7 @@
     "check": "turbo run lint typecheck build && node --test tests/*.test.mjs && npm run test:core && node scripts/check-prerequisites.mjs"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.0",
     "@playwright/test": "1.62.1",
     "@types/node": "22.20.1",
     "@types/react": "19.2.18",

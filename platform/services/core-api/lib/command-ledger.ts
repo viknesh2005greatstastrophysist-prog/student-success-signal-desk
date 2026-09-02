@@ -5,6 +5,18 @@ import { z } from "zod";
 
 import { ConflictError } from "./http";
 
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalJson(item)]));
+  }
+  return value;
+}
+
+export function jsonMatches(left: unknown, right: unknown) {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
 export function assertCommandId(commandId: string) {
   if (!z.string().uuid().safeParse(commandId).success) {
     throw new ConflictError("INVALID_IDEMPOTENCY_KEY", "A UUID idempotency key is required");

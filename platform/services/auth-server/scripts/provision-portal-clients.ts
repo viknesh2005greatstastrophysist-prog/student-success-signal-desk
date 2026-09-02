@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
+import { portalOidcClients } from "@aura/contracts";
 
 import { auth } from "../lib/auth";
 
@@ -31,6 +32,18 @@ try {
       [client.name],
     );
     if (existing.rows[0]) {
+      if (existing.rows[0].clientId !== portalOidcClients[client.id]) {
+        throw new Error(`${client.name} client ID does not match the checked-in portal contract`);
+      }
+      await pool.query(
+        `UPDATE "oauthClient" SET "redirectUris" = $2::jsonb, "postLogoutRedirectUris" = $3::jsonb, "updatedAt" = now()
+         WHERE "clientId" = $1`,
+        [
+          existing.rows[0].clientId,
+          JSON.stringify([`https://${client.domain}/api/auth/callback/aura`, `http://127.0.0.1:${client.port}/api/auth/callback/aura`]),
+          JSON.stringify([`https://${client.domain}/`, `http://127.0.0.1:${client.port}/`]),
+        ],
+      );
       result[client.id] = existing.rows[0].clientId;
       continue;
     }
@@ -60,9 +73,11 @@ try {
           client_name: client.name,
           redirect_uris: [
             `https://${client.domain}/api/auth/callback/aura`,
+            `http://127.0.0.1:${client.port}/api/auth/callback/aura`,
           ],
           post_logout_redirect_uris: [
             `https://${client.domain}/`,
+            `http://127.0.0.1:${client.port}/`,
           ],
           token_endpoint_auth_method: "none",
           application_type: "web",

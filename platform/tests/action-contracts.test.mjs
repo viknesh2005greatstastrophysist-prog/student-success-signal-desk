@@ -7,7 +7,7 @@ import { actionManifest } from "@aura/contracts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-test("action manifest is unique and covers every literal rendered action", async () => {
+test("every interactive control is named and every action contract is rendered", async () => {
   const ids = actionManifest.map((action) => action.id);
   assert.equal(new Set(ids).size, ids.length);
   const sources = await Promise.all([
@@ -16,8 +16,25 @@ test("action manifest is unique and covers every literal rendered action", async
     "services/auth-server/app/sign-in/page.tsx",
     "services/auth-server/app/consent/consent-client.tsx",
   ].map((path) => readFile(join(root, path), "utf8")));
-  const rendered = [...sources.join("\n").matchAll(/data-action-id="([^"]+)"/g)].map((match) => match[1]);
+  const source = sources.join("\n");
+  const rendered = [...source.matchAll(/data-action-id="([^"]+)"/g)].map((match) => match[1]);
   for (const actionId of rendered) assert.ok(ids.includes(actionId), `${actionId} is missing from the action manifest`);
-  assert.doesNotMatch(sources.join("\n"), /href=["']#["']/);
-  assert.doesNotMatch(sources.join("\n"), /onClick=\{\(\) => \{\s*\}\}/);
+  for (const line of source.split("\n").filter((item) => /<(button|a|select|input|textarea)\b/.test(item) && !/<input\b[^>]*type="hidden"/.test(item))) {
+    assert.match(line, /data-action-id=/, `interactive control has no action id: ${line.trim().replace(/\s+/g, " ").slice(0, 160)}`);
+  }
+  const dynamicViews = {
+    student: ["today", "registration", "academics", "fees", "support", "account"],
+    parent: ["overview", "children", "fees", "access"],
+    faculty: ["today", "classrooms", "gradebook", "cases"],
+    hod: ["department", "offerings", "people", "cases"],
+    governance: ["operations", "runs", "evidence", "simulation"],
+  };
+  const dynamicRendered = new Set([
+    ...["student", "parent", "faculty", "hod", "governance"].flatMap((portal) => ["sign-in", "refresh", "sign-out", "retry"].map((action) => `${portal}-${action}`)),
+    ...Object.entries(dynamicViews).flatMap(([portal, views]) => views.map((view) => `${portal}-open-${view}`)),
+  ]);
+  const allRendered = new Set([...rendered, ...dynamicRendered]);
+  for (const actionId of ids) assert.ok(allRendered.has(actionId), `${actionId} is declared but never rendered`);
+  assert.doesNotMatch(source, /href=["']#["']/);
+  assert.doesNotMatch(source, /onClick=\{\(\) => \{\s*\}\}/);
 });

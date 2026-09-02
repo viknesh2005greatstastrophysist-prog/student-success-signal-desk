@@ -1,21 +1,26 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const sites = {
-  student: "https://aura-student-portal.vercel.app",
-  parent: "https://aura-parent-portal.vercel.app",
-  faculty: "https://aura-faculty-portal.vercel.app",
-  hod: "https://aura-hod-portal.vercel.app",
-  governance: "https://aura-ai-governance.vercel.app",
+  student: process.env.STUDENT_PORTAL_URL ?? "https://aura-student-portal.vercel.app",
+  parent: process.env.PARENT_PORTAL_URL ?? "https://aura-parent-portal.vercel.app",
+  faculty: process.env.FACULTY_PORTAL_URL ?? "https://aura-faculty-portal.vercel.app",
+  hod: process.env.HOD_PORTAL_URL ?? "https://aura-hod-portal.vercel.app",
+  governance: process.env.GOVERNANCE_PORTAL_URL ?? "https://aura-ai-governance.vercel.app",
 } as const;
+const identityUrl = process.env.IDENTITY_URL ?? "https://aura-identity-service.vercel.app";
+function regexEscape(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 async function enterPortal(page: Page, portal: keyof typeof sites) {
   await page.goto(sites[portal]);
   await page.getByRole("link", { name: /Enter as/i }).click();
-  await expect(page).toHaveURL(/aura-identity-service\.vercel\.app\/sign-in/);
+  await expect(page).toHaveURL(new RegExp(`^${regexEscape(identityUrl)}/sign-in`));
   await page.getByLabel("Demo access PIN").fill(process.env.DEMO_ACCESS_PIN ?? "");
   await page.getByRole("button", { name: /Enter portal/i }).click();
   await expect(page).toHaveURL(new RegExp(`^${sites[portal].replaceAll(".", "\\.")}/?$`));
   await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
+  if (process.env.RELEASE_SHA) {
+    await expect(page.locator(".portal-footer")).toContainText(`build ${process.env.RELEASE_SHA.slice(0, 8)}`);
+  }
 }
 
 test("J01-J10 cross independent role sessions through the authoritative Core", async ({ browser }) => {
@@ -28,6 +33,7 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   const governance = await context.newPage();
 
   await enterPortal(hod, "hod");
+  await hod.getByRole("button", { name: "Offerings", exact: true }).click();
   await hod.getByLabel("Assign faculty").selectOption({ label: "Dr Mira Sen" });
   await expect(hod.getByRole("button", { name: /Publish \+ assign/i })).toBeEnabled();
   await hod.getByRole("button", { name: /Publish \+ assign/i }).click();
@@ -68,6 +74,10 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await enterPortal(parent, "parent");
   await expect(parent.getByText("Ananya Rao", { exact: true })).toBeVisible();
   await expect(parent.locator(".grant-count")).toContainText("4");
+  await parent.getByLabel("Linked student").selectOption({ index: 1 });
+  await expect(parent.getByText("Tarun Bose", { exact: true })).toBeVisible();
+  await parent.getByLabel("Linked student").selectOption({ index: 0 });
+  await expect(parent.getByText("Ananya Rao", { exact: true })).toBeVisible();
   await parent.getByRole("button", { name: "Children", exact: true }).click();
   await expect(parent.getByText("Agent workflow design", { exact: true })).toBeVisible();
   await expect(parent.getByText("Agent design review", { exact: true })).toBeVisible();
@@ -138,6 +148,10 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await hod.getByRole("button", { name: "Refresh portal data" }).click();
   await hod.getByRole("button", { name: "Cases", exact: true }).click();
   await expect(hod.getByText("approved", { exact: true })).toBeVisible();
+  await hod.getByRole("button", { name: "People", exact: true }).click();
+  await expect(hod.getByText("SYN-CSE-001", { exact: false })).toBeVisible();
+  await expect(hod.getByText("Dr Mira Sen", { exact: true })).toBeVisible();
+  await expect(hod.getByText(/SYN-ECE-/)).toHaveCount(0);
 
   await governance.getByRole("button", { name: "Runs", exact: true }).click();
   await expect(governance.getByText(/Validated deterministic runs/i)).toBeVisible();
@@ -155,6 +169,17 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await expect(student.getByTitle("Sign out")).toBeVisible();
   await student.getByRole("button", { name: "Academics", exact: true }).click();
   await expect(student.getByText("Agent design review", { exact: true })).toBeVisible();
+
+  await governance.getByRole("button", { name: "Simulation", exact: true }).click();
+  const resetButton = governance.getByRole("button", { name: "Reset synthetic ecosystem", exact: true });
+  await expect(resetButton).toBeDisabled();
+  await governance.getByLabel(/Type AURA-SYNTHETIC-SEED-V1 to confirm/i).fill("AURA-SYNTHETIC-SEED-V1");
+  await expect(resetButton).toBeEnabled();
+  await resetButton.click();
+  await expect(governance.getByText(/New synthetic generation active/i)).toBeVisible();
+  await student.getByRole("button", { name: "Refresh portal data" }).click();
+  await student.getByRole("button", { name: "Today", exact: true }).click();
+  await expect(student.getByText("draft", { exact: true }).first()).toBeVisible();
 
   await expect(student.locator('a[href="#"]')).toHaveCount(0);
   await expect(parent.locator('a[href="#"]')).toHaveCount(0);

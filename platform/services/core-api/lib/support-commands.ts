@@ -116,13 +116,16 @@ export async function processAcademicEvent(
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return {
-      supportCase: duplicate.payload.supportCase as ProcessResult["supportCase"],
-      run: duplicate.payload.run as ProcessResult["run"],
-      artifact: duplicate.payload.artifact as ProcessResult["artifact"],
-      duplicate: true,
-      receipt: duplicate.receipt,
-    };
+    if (duplicate) {
+      if (duplicate.payload.sourceEventId !== input.eventId) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for another academic event");
+      return {
+        supportCase: duplicate.payload.supportCase as ProcessResult["supportCase"],
+        run: duplicate.payload.run as ProcessResult["run"],
+        artifact: duplicate.payload.artifact as ProcessResult["artifact"],
+        duplicate: true,
+        receipt: duplicate.receipt,
+      };
+    }
     const source = await client.query<{
       event_id: string; event_type: string; institution_revision: string; payload: Record<string, unknown>;
       outbox_id: string; delivered_at: Date | null; attempts: number;
@@ -219,7 +222,7 @@ export async function processAcademicEvent(
     const supportCase = { id: caseId, status: "awaiting_faculty", revision: updatedCase.rows[0]!.revision, riskBand, reason };
     const run = { id: runId, status: "validated", mode: "deterministic", inputHash };
     const artifact = { id: artifactId, contentHash, recommendation: composed.recommendation, validation: composed.validation };
-    const payload = { studentId, departmentId: student.department_id, facultyPersonId, supportCase, run, artifact };
+    const payload = { sourceEventId: event.event_id, studentId, departmentId: student.department_id, facultyPersonId, supportCase, run, artifact };
     const receipt = await writeCommandLedger(client, {
       generationId, commandId, actorPersonId: actor.personId,
       aggregateType: "support_case", aggregateId: caseId, eventType: "support.proposed",
@@ -250,11 +253,18 @@ export async function decideSupportCase(
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
-    if (duplicate) return {
-      supportCase: duplicate.payload.supportCase as DecisionResult["supportCase"],
-      decision: duplicate.payload.decision as DecisionResult["decision"],
-      plan: duplicate.payload.plan as DecisionResult["plan"], duplicate: true, receipt: duplicate.receipt,
-    };
+    if (duplicate) {
+      const priorCase = duplicate.payload.supportCase as DecisionResult["supportCase"];
+      const priorRequest = duplicate.payload.request as { artifactId?: string; contentHash?: string; decision?: string; rationale?: string } | undefined;
+      if (priorCase.id !== caseId || priorRequest?.artifactId !== input.artifactId || priorRequest.contentHash !== input.contentHash || priorRequest.decision !== input.decision || priorRequest.rationale !== input.rationale) {
+        throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for another support decision");
+      }
+      return {
+        supportCase: priorCase,
+        decision: duplicate.payload.decision as DecisionResult["decision"],
+        plan: duplicate.payload.plan as DecisionResult["plan"], duplicate: true, receipt: duplicate.receipt,
+      };
+    }
     const result = await client.query<{
       case_id: string; student_id: string; department_id: string; status: string; revision: number;
       artifact_id: string; content_hash: string; recommendation: Recommendation; assigned_faculty_person_id: string;
@@ -303,7 +313,10 @@ export async function decideSupportCase(
     );
     const supportCase = { id: caseId, status: nextStatus, revision: updated.rows[0]!.revision };
     const decision = { id: decisionId, decision: input.decision, rationale: input.rationale };
-    const payload = { studentId: current.student_id, departmentId: current.department_id, facultyPersonId: actor.personId, supportCase, decision, plan };
+    const payload = {
+      studentId: current.student_id, departmentId: current.department_id, facultyPersonId: actor.personId, supportCase, decision, plan,
+      request: { artifactId: input.artifactId, contentHash: input.contentHash, decision: input.decision, rationale: input.rationale },
+    };
     const receipt = await writeCommandLedger(client, {
       generationId, commandId, actorPersonId: actor.personId,
       aggregateType: "support_case", aggregateId: caseId,
@@ -322,14 +335,15 @@ export async function replayAgentRun(actor: ActorContext, runId: string, command
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [commandId]);
-    const existing = await client.query<{ id: string; requested_by_person_id: string; input_hash: string; output_hash: string; matched: boolean; created_at: Date }>(
-      "SELECT id, requested_by_person_id, input_hash, output_hash, matched, created_at FROM replay_receipts WHERE generation_id = $1 AND command_id = $2",
+    const existing = await client.query<{ id: string; original_agent_run_id: string; requested_by_person_id: string; input_hash: string; output_hash: string; matched: boolean; created_at: Date }>(
+      "SELECT id, original_agent_run_id, requested_by_person_id, input_hash, output_hash, matched, created_at FROM replay_receipts WHERE generation_id = $1 AND command_id = $2",
       [generationId, commandId],
     );
     if (existing.rowCount) {
       const row = existing.rows[0]!;
       if (row.requested_by_person_id !== actor.personId) throw new ConflictError("IDEMPOTENCY_KEY_REUSED", "This idempotency key belongs to another actor");
-      return { replay: { id: row.id, originalRunId: runId, inputHash: row.input_hash, outputHash: row.output_hash, matched: row.matched, createdAt: row.created_at.toISOString() }, duplicate: true };
+      if (row.original_agent_run_id !== runId) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for another replay");
+      return { replay: { id: row.id, originalRunId: row.original_agent_run_id, inputHash: row.input_hash, outputHash: row.output_hash, matched: row.matched, createdAt: row.created_at.toISOString() }, duplicate: true };
     }
     const result = await client.query<{ input_hash: string; evidence: Record<string, unknown>; content_hash: string }>(
       `SELECT evidence.input_hash, evidence.evidence, artifact.content_hash
