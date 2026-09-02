@@ -6,7 +6,7 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "services/auth-server"
+    "services/*"
   ],
   "scripts": {
     "build": "turbo run build --filter='./apps/*'",
@@ -14,8 +14,11 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "node --test tests/*.test.mjs",
+    "test:core": "npm run test --workspace=@aura/core-api",
+    "db:migrate": "npm run db:migrate --workspace=@aura/core-api",
+    "db:reset": "npm run db:reset --workspace=@aura/core-api",
     "prerequisites": "node scripts/check-prerequisites.mjs",
-    "check": "turbo run lint typecheck build --filter='./apps/*' && node --test tests/*.test.mjs && node scripts/check-prerequisites.mjs"
+    "check": "turbo run lint typecheck build && node --test tests/*.test.mjs && npm run test:core && node scripts/check-prerequisites.mjs"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

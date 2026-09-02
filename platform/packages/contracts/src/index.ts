@@ -1,4 +1,61 @@
-export type PortalId = "student" | "parent" | "faculty" | "hod" | "governance";
+import { z } from "zod";
+
+export const portalIdSchema = z.enum(["student", "parent", "faculty", "hod", "governance"]);
+export type PortalId = z.infer<typeof portalIdSchema>;
+
+export const actorRoleSchema = z.enum(["student", "parent", "faculty", "hod", "governance"]);
+export type ActorRole = z.infer<typeof actorRoleSchema>;
+
+export const actorContextSchema = z.object({
+  subject: z.string().min(1),
+  role: actorRoleSchema,
+  personId: z.string().uuid(),
+  departmentId: z.string().uuid().optional(),
+  studentId: z.string().uuid().optional(),
+});
+export type ActorContext = z.infer<typeof actorContextSchema>;
+
+export const causalReceiptSchema = z.object({
+  commandId: z.string().uuid(),
+  eventId: z.string().uuid(),
+  auditId: z.string().uuid(),
+  institutionRevision: z.number().int().nonnegative(),
+  occurredAt: z.string().datetime(),
+});
+export type CausalReceipt = z.infer<typeof causalReceiptSchema>;
+
+export const seedManifestSchema = z.object({
+  seedVersion: z.literal("AURA-SYNTHETIC-SEED-V1"),
+  generationId: z.string().uuid(),
+  institutionCode: z.literal("AURA-DEMO"),
+  termCode: z.literal("2026-ODD"),
+  counts: z.object({
+    departments: z.literal(2),
+    students: z.literal(12),
+    parents: z.literal(9),
+    faculty: z.literal(4),
+    hods: z.literal(2),
+    courses: z.literal(6),
+    offerings: z.literal(6),
+  }),
+  demoSubjects: z.object({
+    student: z.literal("aura-demo-student"),
+    parent: z.literal("aura-demo-parent"),
+    faculty: z.literal("aura-demo-faculty"),
+    hod: z.literal("aura-demo-hod"),
+    governance: z.literal("aura-demo-governance"),
+  }),
+});
+export type SeedManifest = z.infer<typeof seedManifestSchema>;
+
+export const apiErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  requestId: z.string().uuid().optional(),
+});
+
+export const apiEnvelope = <T extends z.ZodType>(data: T) =>
+  z.union([z.object({ ok: z.literal(true), data }), z.object({ ok: z.literal(false), error: apiErrorSchema })]);
 
 export type PortalDefinition = {
   id: PortalId;

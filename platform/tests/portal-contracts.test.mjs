@@ -9,7 +9,7 @@ const expected = ["student", "parent", "faculty", "hod", "governance"];
 
 test("exactly five independent portal workspaces are declared", async () => {
   const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-  assert.deepEqual(rootPackage.workspaces, ["apps/*", "packages/*", "services/auth-server"]);
+  assert.deepEqual(rootPackage.workspaces, ["apps/*", "packages/*", "services/*"]);
 
   const names = [];
   for (const portal of expected) {

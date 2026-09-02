@@ -29,6 +29,8 @@ for (const file of [
   "../docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md",
   ".env.example",
   "services/auth-server/package.json",
+  "services/core-api/package.json",
+  "services/core-api/migrations/001_core.sql",
 ]) {
   try {
     await access(join(root, file));

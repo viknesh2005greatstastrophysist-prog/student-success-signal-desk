@@ -10,6 +10,9 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "zod": "4.5.4"
+  },
   "devDependencies": {
     "typescript": "5.9.3"
   }
