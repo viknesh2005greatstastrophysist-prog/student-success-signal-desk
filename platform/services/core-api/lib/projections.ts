@@ -83,7 +83,8 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
          JOIN people p ON p.id = sp.person_id
          LEFT JOIN parent_field_grants pfg ON pfg.parent_link_id = pl.id AND pfg.generation_id = pl.generation_id
          WHERE pl.generation_id = $1 AND pl.parent_person_id = $2 AND pl.active
-         GROUP BY sp.id, p.display_name, sp.register_number`,
+         GROUP BY sp.id, p.display_name, sp.register_number
+         ORDER BY sp.register_number`,
         [generationId, actor.personId],
       );
       roleData.children = children.rows;

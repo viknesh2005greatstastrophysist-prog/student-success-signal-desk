@@ -28,6 +28,7 @@ test("J01 crosses independent role sessions through the authoritative Core", asy
   const governance = await context.newPage();
 
   await enterPortal(hod, "hod");
+  await hod.getByLabel("Assign faculty").selectOption({ label: "Dr Mira Sen" });
   await expect(hod.getByRole("button", { name: /Publish \+ assign/i })).toBeEnabled();
   await hod.getByRole("button", { name: /Publish \+ assign/i }).click();
   await expect(hod.getByText(/Published\. Every authorized portal/i)).toBeVisible();
@@ -43,7 +44,7 @@ test("J01 crosses independent role sessions through the authoritative Core", asy
 
   await enterPortal(parent, "parent");
   await expect(parent.getByText("Ananya Rao", { exact: true })).toBeVisible();
-  await expect(parent.getByText("4", { exact: true })).toBeVisible();
+  await expect(parent.locator(".grant-count")).toContainText("4");
 
   await enterPortal(governance, "governance");
   await expect(governance.getByText(/Offering published and faculty assigned/i)).toBeVisible();

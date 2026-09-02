@@ -4,7 +4,8 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 90_000,
   expect: { timeout: 15_000 },
-  retries: 1,
+  // This journey mutates the shared synthetic generation. Retrying without a reset would test a different state.
+  retries: 0,
   workers: 1,
   use: {
     channel: "chrome",
