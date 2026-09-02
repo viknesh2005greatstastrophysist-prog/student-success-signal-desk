@@ -24,6 +24,9 @@ node_modules/
 .env*.local
 .agents/
 skills-lock.json
+platform/test-results/
+platform/playwright-report/
+platform/blob-report/
 .vercel
 .env*
 !.env.example
