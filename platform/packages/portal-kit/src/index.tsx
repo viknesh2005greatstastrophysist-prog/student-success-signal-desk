@@ -32,12 +32,17 @@ type Classroom = {
   attendanceSession: { id: string; session_date: string; topic: string; status: string; revision: number } | null;
   assessment: { id: string; title: string; category: string; maximum_score: string; weight_percent: string; published: boolean; revision: number } | null;
 };
+type FeeTransaction = { id: string; amountPaise: number; providerReference: string; status: "captured" | "failed"; createdAt: string; receiptId: string | null };
+type FeeInvoice = {
+  id: string; invoice_number: string; description: string; amount_paise: string; paid_paise: string;
+  remaining_paise: string; due_on: string; status: string; revision: number; transactions: FeeTransaction[];
+};
 type Snapshot = {
   actor: { role: PortalId; displayName: string; email: string };
   institutionRevision: number;
   offering: Offering | null;
   activity: Activity[];
-  student?: { register_number: string; semester: number; department: string; fee_status: string; amount_paise: string; due_on: string };
+  student?: { register_number: string; semester: number; department: string; fee_status: string; amount_paise: string; paid_paise: string; remaining_paise: string; due_on: string };
   children?: Array<{ id: string; display_name: string; register_number: string; grants: string[] }>;
   availableFaculty?: Person[];
   departmentPeople?: Person[];
@@ -47,19 +52,22 @@ type Snapshot = {
   classroom?: Classroom;
   academics?: { attendance: AttendanceView[]; marks: MarkView[] };
   childAcademics?: { studentId: string; grantedFields: string[]; attendance?: AttendanceView[]; marks?: MarkView[] };
+  childFinance?: { studentId: string; granted: true; invoices: FeeInvoice[] };
+  parentAccess?: Array<{ id: string; field_group: string; granted: boolean; revision: number; parent_name: string; relationship: string; linked_at: string }>;
   academicSummary?: { submitted_attendance: number; published_assessments: number };
+  financeSummary?: { due_invoices: number; outstanding_paise: string; captured_payments: number };
 };
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } };
 
 const navByPortal: Record<PortalId, string[]> = {
-  student: ["Today", "Registration", "Academics", "Fees", "Support"],
+  student: ["Today", "Registration", "Academics", "Fees", "Support", "Account"],
   parent: ["Overview", "Children", "Fees", "Access"],
   faculty: ["Today", "Classrooms", "Gradebook", "Cases"],
   hod: ["Department", "Offerings", "People", "Cases"],
   governance: ["Operations", "Runs", "Evidence", "Simulation"],
 };
 
-function money(paise: string | undefined) {
+function money(paise: string | number | null | undefined) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(paise ?? 0) / 100);
 }
 
@@ -70,6 +78,9 @@ function ActivityRail({ activity }: { activity: Activity[] }) {
     "registration.withdrawn": "Student withdrew and seat was released",
     "attendance.submitted": "Faculty submitted the attendance register",
     "marks.published": "Faculty published assessed marks",
+    "payment.captured": "Parent completed a sandbox payment",
+    "payment.failed": "Sandbox payment attempt was declined",
+    "parent_grant.revoked": "Student revoked a parent field grant",
   };
   return (
     <aside className="activity-rail" aria-label="Causal activity">
@@ -90,8 +101,8 @@ function PortalMasthead({ portal, snapshot, refresh, signOut, refreshing, active
   portal: PortalDefinition; snapshot: Snapshot; refresh: () => void; signOut: () => void; refreshing: boolean; activeView: string; navigate: (view: string) => void;
 }) {
   const enabledViews: Partial<Record<PortalId, string[]>> = {
-    student: ["Today", "Registration", "Academics"],
-    parent: ["Overview", "Children"],
+    student: ["Today", "Registration", "Academics", "Fees", "Account"],
+    parent: ["Overview", "Children", "Fees", "Access"],
     faculty: ["Today", "Classrooms", "Gradebook"],
     hod: ["Department", "Offerings"],
   };
@@ -195,6 +206,54 @@ function StudentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
+function StudentFeesSurface({ snapshot }: { snapshot: Snapshot }) {
+  const fee = snapshot.student;
+  const settled = fee?.fee_status === "paid";
+  return (
+    <section className="role-surface student-fees-surface">
+      <div className="registration-heading"><div><p className="kicker">Semester account</p><h1>{settled ? "All settled." : "Fees, clearly."}</h1></div><p>This is a read-only student view. Payments can be completed only by an actively linked parent with a current fees grant.</p></div>
+      <div className="fee-statement">
+        <article><small>Invoice amount</small><strong>{money(fee?.amount_paise)}</strong></article>
+        <article><small>Paid</small><strong>{money(fee?.paid_paise)}</strong></article>
+        <article><small>Balance</small><strong>{money(fee?.remaining_paise)}</strong></article>
+        <article><small>Status</small><strong className={`fee-state fee-${fee?.fee_status}`}>{fee?.fee_status ?? "clear"}</strong></article>
+      </div>
+      <p className="sandbox-notice">Synthetic account. No real charges, money movement, or payment credentials exist in this simulation.</p>
+    </section>
+  );
+}
+
+function StudentAccountSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => Promise<void> | void }) {
+  const grants = snapshot.parentAccess ?? [];
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+
+  async function revoke(grant: NonNullable<Snapshot["parentAccess"]>[number]) {
+    setPendingId(grant.id); setMessage("");
+    const response = await fetch(`/api/bff/parent-grants/${grant.id}/revoke`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ expectedRevision: grant.revision }),
+    });
+    const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
+    if (result.ok) {
+      setMessage(`${grant.field_group} access revoked. Receipt ${result.data.receipt.eventId.slice(0, 8)} committed.`);
+      setConfirmId(null);
+      await refresh();
+    } else setMessage(result.error.message);
+    setPendingId(null);
+  }
+
+  return (
+    <section className="role-surface student-account-surface">
+      <div className="registration-heading"><div><p className="kicker">Account / parent access</p><h1>Your record. Your boundary.</h1></div><p>Revocation is enforced at Core on the parent&apos;s next request. It does not rewrite historical audit events.</p></div>
+      {message ? <p className="command-message" role="status">{message}</p> : null}
+      <div className="student-grant-ledger">{grants.length ? grants.map((grant) => <article key={grant.id} data-grant={grant.field_group}><div><small>{grant.parent_name} · {grant.relationship}</small><h2>{grant.field_group}</h2></div><span className={`fee-state ${grant.granted ? "fee-paid" : ""}`}>{grant.granted ? "granted" : "revoked"}</span>{grant.granted ? confirmId === grant.id ? <div className="grant-confirm"><p>Remove {grant.field_group} from the parent&apos;s next authorized response?</p><button type="button" onClick={() => setConfirmId(null)} data-action-id="student-cancel-grant-revocation">Cancel</button><button type="button" onClick={() => void revoke(grant)} disabled={pendingId === grant.id} data-action-id="student-confirm-grant-revocation">{pendingId === grant.id ? "Revoking…" : "Confirm revoke"}</button></div> : <button type="button" onClick={() => setConfirmId(grant.id)} data-action-id="student-start-grant-revocation">Revoke access</button> : <small className="revoked-copy">No data returned to parent</small>}</article>) : <p>No active parent relationship exists.</p>}</div>
+    </section>
+  );
+}
+
 function ParentSurface({ snapshot }: { snapshot: Snapshot }) {
   const child = snapshot.children?.[0];
   return (
@@ -217,6 +276,68 @@ function ParentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
         {academics?.attendance ? <section><div className="section-heading"><span>Granted attendance</span><b>{academics.attendance.length}</b></div>{academics.attendance.map((item) => <article key={`${item.code}-${item.session_date}`}><div><b>{item.code}</b><small>{item.topic}</small></div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>)}</section> : <section className="revoked-panel"><p>Attendance access is not granted.</p></section>}
         {academics?.marks ? <section><div className="section-heading"><span>Granted marks</span><b>{academics.marks.length}</b></div>{academics.marks.map((item) => <article key={`${item.code}-${item.assessment}`}><div><b>{item.code}</b><small>{item.assessment}</small></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}</p></article>)}</section> : <section className="revoked-panel"><p>Marks access is not granted.</p></section>}
       </div>
+    </section>
+  );
+}
+
+function ParentFeesSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => Promise<void> | void }) {
+  const invoice = snapshot.childFinance?.invoices[0];
+  const [scenario, setScenario] = useState<"success" | "decline">("success");
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState("");
+  const captured = invoice?.transactions.find((transaction) => transaction.status === "captured");
+
+  async function pay() {
+    if (!invoice) return;
+    setPending(true); setMessage("");
+    const response = await fetch(`/api/bff/fees/invoices/${invoice.id}/payment-attempts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ expectedRevision: invoice.revision, scenario }),
+    });
+    const result = await response.json() as ApiResult<{ transaction: FeeTransaction; receipt: { eventId: string } }>;
+    if (result.ok) {
+      setMessage(result.data.transaction.status === "captured"
+        ? `Payment captured in the sandbox. Receipt ${result.data.receipt.eventId.slice(0, 8)} committed.`
+        : `Payment declined by the sandbox. Attempt ${result.data.receipt.eventId.slice(0, 8)} was audited; the balance did not change.`);
+      setConfirming(false);
+      await refresh();
+    } else setMessage(result.error.message);
+    setPending(false);
+  }
+
+  if (!snapshot.childFinance) return <section className="role-surface revoked-fee-surface"><p className="kicker">Fees access</p><h1>Not granted.</h1><p>The linked student has not granted fee access. No invoice data was returned by Core.</p></section>;
+  if (!invoice) return <section className="role-surface revoked-fee-surface"><p className="kicker">Fees access</p><h1>No invoices.</h1><p>This student has no synthetic invoice for the current term.</p></section>;
+  const paid = invoice.status === "paid";
+  return (
+    <section className="role-surface parent-fees-surface">
+      <div className="registration-heading"><div><p className="kicker">Household ledger / sandbox</p><h1>{paid ? "Paid in full." : "One clear balance."}</h1></div><p>Payment is simulated. The server rechecks your active link, fees grant, invoice version, and outstanding balance before recording anything.</p></div>
+      {message ? <p className="command-message" role="status">{message}</p> : null}
+      <article className="invoice-card">
+        <header><div><small>Invoice</small><b>{invoice.invoice_number}</b></div><span className={`fee-state fee-${invoice.status}`}>{invoice.status}</span></header>
+        <h2>{invoice.description}</h2>
+        <div className="invoice-total"><span>Outstanding</span><strong>{money(invoice.remaining_paise)}</strong><small>Due {new Date(invoice.due_on).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</small></div>
+        {!paid ? <div className="sandbox-checkout">
+          <label htmlFor="payment-scenario">Sandbox outcome</label>
+          <select id="payment-scenario" value={scenario} onChange={(event) => setScenario(event.target.value as "success" | "decline")} data-action-id="parent-select-payment-scenario"><option value="success">Simulate success</option><option value="decline">Simulate decline</option></select>
+          {!confirming ? <button type="button" onClick={() => setConfirming(true)} data-action-id="parent-start-payment">Pay {money(invoice.remaining_paise)}</button>
+            : <div className="payment-confirm"><p>Record a <b>{scenario}</b> sandbox attempt for {money(invoice.remaining_paise)}?</p><button type="button" onClick={() => setConfirming(false)} data-action-id="parent-cancel-payment">Cancel</button><button type="button" onClick={() => void pay()} disabled={pending} data-action-id="parent-confirm-payment">{pending ? "Recording…" : "Confirm sandbox payment"}</button></div>}
+        </div> : captured?.receiptId ? <a className="receipt-download" href={`/api/bff/receipts/${captured.receiptId}`} download data-action-id="parent-download-receipt">Download verified receipt <span aria-hidden="true">↓</span></a> : null}
+      </article>
+      <div className="payment-history"><div className="section-heading"><span>Payment attempts</span><b>{invoice.transactions.length}</b></div>{invoice.transactions.length ? invoice.transactions.map((transaction) => <article key={transaction.id}><span className={`attempt-dot attempt-${transaction.status}`} /><div><b>{transaction.status}</b><small>{transaction.providerReference}</small></div><strong>{money(transaction.amountPaise)}</strong><time>{new Date(transaction.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time></article>) : <p>No attempts recorded.</p>}</div>
+      <p className="sandbox-notice">Simulation only. No card form exists because collecting payment credentials would be dishonest and unnecessary here.</p>
+    </section>
+  );
+}
+
+function ParentAccessSurface({ snapshot }: { snapshot: Snapshot }) {
+  const child = snapshot.children?.[0];
+  const fields = ["attendance", "marks", "fees", "support"];
+  return (
+    <section className="role-surface parent-access-surface">
+      <div className="registration-heading"><div><p className="kicker">Consent boundary</p><h1>Access, named.</h1></div><p>Every request rechecks the active relationship and field-level grants. A missing grant means Core omits the field, not merely hides it in the browser.</p></div>
+      <div className="access-ledger">{fields.map((field) => { const granted = child?.grants.includes(field); return <article key={field}><span>{field}</span><b>{granted ? "Granted" : "Not granted"}</b><small>{granted ? "Available on the next authorized request" : "No data returned by Core"}</small></article>; })}</div>
     </section>
   );
 }
@@ -311,7 +432,7 @@ function HodSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => 
           </button>
         </div>
       </article>
-      <div className="hod-academic-strip"><article><small>Submitted attendance sheets</small><strong>{snapshot.academicSummary?.submitted_attendance ?? 0}</strong></article><article><small>Published assessments</small><strong>{snapshot.academicSummary?.published_assessments ?? 0}</strong></article><article><small>Current enrolment</small><strong>{offering?.enrolment ?? 0}</strong></article></div>
+      <div className="hod-academic-strip"><article><small>Submitted attendance sheets</small><strong>{snapshot.academicSummary?.submitted_attendance ?? 0}</strong></article><article><small>Published assessments</small><strong>{snapshot.academicSummary?.published_assessments ?? 0}</strong></article><article><small>Current enrolment</small><strong>{offering?.enrolment ?? 0}</strong></article><article><small>Outstanding fees</small><strong>{money(snapshot.financeSummary?.outstanding_paise)}</strong></article></div>
       {message ? <p className="command-message" role="status">{message}</p> : null}
     </section>
   );
@@ -384,8 +505,12 @@ export function PortalHome({ portal }: { portal: PortalDefinition }) {
             {portal.id === "student" && activeView === "Today" ? <StudentSurface snapshot={snapshot} /> : null}
             {portal.id === "student" && activeView === "Registration" ? <StudentRegistrationSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "student" && activeView === "Academics" ? <StudentAcademicsSurface snapshot={snapshot} /> : null}
+            {portal.id === "student" && activeView === "Fees" ? <StudentFeesSurface snapshot={snapshot} /> : null}
+            {portal.id === "student" && activeView === "Account" ? <StudentAccountSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "parent" && activeView === "Overview" ? <ParentSurface snapshot={snapshot} /> : null}
             {portal.id === "parent" && activeView === "Children" ? <ParentAcademicsSurface snapshot={snapshot} /> : null}
+            {portal.id === "parent" && activeView === "Fees" ? <ParentFeesSurface snapshot={snapshot} refresh={load} /> : null}
+            {portal.id === "parent" && activeView === "Access" ? <ParentAccessSurface snapshot={snapshot} /> : null}
             {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} activeView={activeView} refresh={load} /> : null}
             {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} /> : null}

@@ -63,6 +63,7 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         const studentIds = Array.isArray(event.payload.studentIds) ? event.payload.studentIds : [];
         return event.event_type === "offering.published" || event.payload.studentId === actor.studentId || studentIds.includes(actor.studentId);
       }
+      if (actor.role === "parent") return event.payload.parentPersonId === actor.personId;
       return false;
     });
 
@@ -76,10 +77,13 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         completed_course_codes: string[];
         fee_status: string | null;
         amount_paise: string | null;
+        paid_paise: string | null;
+        remaining_paise: string | null;
         due_on: string | null;
       }>(
         `SELECT sp.register_number, sp.semester, sp.department_id, sp.completed_course_codes, d.name AS department,
-                fi.status AS fee_status, fi.amount_paise::text, fi.due_on
+                fi.status AS fee_status, fi.amount_paise::text, fi.paid_paise::text,
+                (fi.amount_paise - fi.paid_paise)::text AS remaining_paise, fi.due_on
          FROM student_profiles sp JOIN departments d ON d.id = sp.department_id
          LEFT JOIN fee_invoices fi ON fi.generation_id = sp.generation_id AND fi.student_id = sp.id
          WHERE sp.generation_id = $1 AND sp.id = $2`,
@@ -171,6 +175,17 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         [generationId, actor.studentId],
       );
       roleData.academics = { attendance: attendance.rows, marks: marks.rows };
+      const parentAccess = await client.query(
+        `SELECT grant_row.id, grant_row.field_group, grant_row.granted, grant_row.revision,
+                parent.display_name AS parent_name, link.relationship, link.linked_at
+         FROM parent_links link
+         JOIN people parent ON parent.id = link.parent_person_id
+         JOIN parent_field_grants grant_row ON grant_row.parent_link_id = link.id AND grant_row.generation_id = link.generation_id
+         WHERE link.generation_id = $1 AND link.student_id = $2 AND link.active
+         ORDER BY parent.display_name, grant_row.field_group`,
+        [generationId, actor.studentId],
+      );
+      roleData.parentAccess = parentAccess.rows;
     }
     if (actor.role === "parent") {
       const children = await client.query<{ id: string; display_name: string; register_number: string; grants: string[] | null }>(
@@ -214,6 +229,28 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
           attendance: attendance?.rows,
           marks: marks?.rows,
         };
+        if (grants.includes("fees")) {
+          const invoices = await client.query(
+            `SELECT invoice.id, invoice.invoice_number, invoice.description, invoice.amount_paise::text,
+                    invoice.paid_paise::text, (invoice.amount_paise - invoice.paid_paise)::text AS remaining_paise,
+                    invoice.due_on::text, invoice.status, invoice.revision,
+                    COALESCE(jsonb_agg(jsonb_build_object(
+                      'id', transaction.id,
+                      'amountPaise', transaction.amount_paise,
+                      'providerReference', transaction.provider_reference,
+                      'status', transaction.status,
+                      'createdAt', transaction.created_at,
+                      'receiptId', CASE WHEN transaction.status = 'captured' THEN transaction.id ELSE NULL END
+                    ) ORDER BY transaction.created_at DESC) FILTER (WHERE transaction.id IS NOT NULL), '[]'::jsonb) AS transactions
+             FROM fee_invoices invoice
+             LEFT JOIN payment_transactions transaction ON transaction.generation_id = invoice.generation_id AND transaction.invoice_id = invoice.id
+             WHERE invoice.generation_id = $1 AND invoice.student_id = $2
+             GROUP BY invoice.id
+             ORDER BY invoice.due_on`,
+            [generationId, child.id],
+          );
+          roleData.childFinance = { studentId: child.id, granted: true, invoices: invoices.rows };
+        }
       }
     }
     if (actor.role === "faculty") {
@@ -260,6 +297,19 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         [generationId, actor.departmentId],
       );
       roleData.academicSummary = academicSummary.rows[0];
+      const financeSummary = await client.query<{ due_invoices: number; outstanding_paise: string; captured_payments: number }>(
+        `SELECT
+          count(*) FILTER (WHERE invoice.status IN ('due', 'partial'))::int AS due_invoices,
+          COALESCE(sum(invoice.amount_paise - invoice.paid_paise) FILTER (WHERE invoice.status IN ('due', 'partial')), 0)::text AS outstanding_paise,
+          (SELECT count(*)::int FROM payment_transactions transaction
+           JOIN fee_invoices paid_invoice ON paid_invoice.id = transaction.invoice_id
+           JOIN student_profiles paid_student ON paid_student.id = paid_invoice.student_id
+           WHERE transaction.generation_id = $1 AND paid_student.department_id = $2 AND transaction.status = 'captured') AS captured_payments
+         FROM fee_invoices invoice JOIN student_profiles student ON student.id = invoice.student_id
+         WHERE invoice.generation_id = $1 AND student.department_id = $2`,
+        [generationId, actor.departmentId],
+      );
+      roleData.financeSummary = financeSummary.rows[0];
     }
 
     return {

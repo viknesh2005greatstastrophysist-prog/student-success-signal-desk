@@ -18,7 +18,7 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
 }
 
-test("J01-J05 cross independent role sessions through the authoritative Core", async ({ browser }) => {
+test("J01-J06 cross independent role sessions through the authoritative Core", async ({ browser }) => {
   test.skip(!process.env.DEMO_ACCESS_PIN, "DEMO_ACCESS_PIN is required");
   const context = await browser.newContext();
   const hod = await context.newPage();
@@ -71,12 +71,50 @@ test("J01-J05 cross independent role sessions through the authoritative Core", a
   await parent.getByRole("button", { name: "Children", exact: true }).click();
   await expect(parent.getByText("Agent workflow design", { exact: true })).toBeVisible();
   await expect(parent.getByText("Agent design review", { exact: true })).toBeVisible();
+  await parent.getByRole("button", { name: "Fees", exact: true }).click();
+  await parent.getByLabel("Sandbox outcome").selectOption("decline");
+  await parent.getByRole("button", { name: /Pay ₹45,000/i }).click();
+  await parent.getByRole("button", { name: "Confirm sandbox payment", exact: true }).click();
+  await expect(parent.getByText(/Payment declined by the sandbox/i)).toBeVisible();
+  await expect(parent.getByText("due", { exact: true })).toBeVisible();
+  await parent.getByLabel("Sandbox outcome").selectOption("success");
+  await parent.getByRole("button", { name: /Pay ₹45,000/i }).click();
+  await parent.getByRole("button", { name: "Confirm sandbox payment", exact: true }).click();
+  await expect(parent.getByText(/Payment captured in the sandbox/i)).toBeVisible();
+  await expect(parent.getByText("paid", { exact: true }).first()).toBeVisible();
+  const [download] = await Promise.all([
+    parent.waitForEvent("download"),
+    parent.getByRole("link", { name: /Download verified receipt/i }).click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/^AURA-INV-AURA-2026-001-receipt\.html$/);
+
+  await student.getByRole("button", { name: "Refresh portal data" }).click();
+  await student.getByRole("button", { name: "Fees", exact: true }).click();
+  await expect(student.getByText("All settled.", { exact: true })).toBeVisible();
+  await expect(student.getByText("₹0", { exact: true })).toBeVisible();
+
+  await hod.getByRole("button", { name: "Refresh portal data" }).click();
+  await expect(hod.getByText("Outstanding fees", { exact: true })).toBeVisible();
+  await expect(hod.getByText("₹0", { exact: true })).toBeVisible();
+
+  await student.getByRole("button", { name: "Account", exact: true }).click();
+  const marksGrant = student.locator('[data-grant="marks"]');
+  await marksGrant.getByRole("button", { name: "Revoke access", exact: true }).click();
+  await marksGrant.getByRole("button", { name: "Confirm revoke", exact: true }).click();
+  await expect(student.getByText(/marks access revoked\. Receipt/i)).toBeVisible();
+  await parent.getByRole("button", { name: "Refresh portal data" }).click();
+  await parent.getByRole("button", { name: "Children", exact: true }).click();
+  await expect(parent.getByText("Marks access is not granted.", { exact: true })).toBeVisible();
+  await expect(parent.getByText("Agent design review", { exact: true })).toHaveCount(0);
 
   await enterPortal(governance, "governance");
   await expect(governance.getByText(/Offering published and faculty assigned/i)).toBeVisible();
   await expect(governance.getByText(/Student registered and roster updated/i)).toBeVisible();
   await expect(governance.getByText(/Faculty submitted the attendance register/i)).toBeVisible();
   await expect(governance.getByText(/Faculty published assessed marks/i)).toBeVisible();
+  await expect(governance.getByText(/Parent completed a sandbox payment/i)).toBeVisible();
+  await expect(governance.getByText(/Sandbox payment attempt was declined/i)).toBeVisible();
+  await expect(governance.getByText(/Student revoked a parent field grant/i)).toBeVisible();
   await expect(governance.getByText("NONE", { exact: true })).toBeVisible();
 
   await parent.getByTitle("Sign out").click();

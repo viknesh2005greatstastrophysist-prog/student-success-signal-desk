@@ -42,7 +42,7 @@ export async function submitAttendance(actor: ActorContext, sessionId: string, c
 
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
-    const duplicate = await findDuplicateCommand(client, generationId, commandId);
+    const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
     if (duplicate) return { attendanceSession: duplicate.payload.attendanceSession, duplicate: true, receipt: duplicate.receipt };
     const session = await client.query<{
       id: string;
@@ -129,7 +129,7 @@ export async function publishMarks(actor: ActorContext, assessmentId: string, co
 
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
-    const duplicate = await findDuplicateCommand(client, generationId, commandId);
+    const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
     if (duplicate) return { assessment: duplicate.payload.assessment, duplicate: true, receipt: duplicate.receipt };
     const assessment = await client.query<{
       id: string;

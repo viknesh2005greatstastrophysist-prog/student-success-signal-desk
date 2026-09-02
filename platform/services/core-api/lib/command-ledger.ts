@@ -18,7 +18,7 @@ export async function getCurrentGeneration(client: PoolClient) {
   return result.rows[0]!.generation_id;
 }
 
-export async function findDuplicateCommand(client: PoolClient, generationId: string, commandId: string) {
+export async function findDuplicateCommand(client: PoolClient, generationId: string, commandId: string, actorPersonId: string) {
   await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [commandId]);
   const result = await client.query<{
     command_id: string;
@@ -27,14 +27,20 @@ export async function findDuplicateCommand(client: PoolClient, generationId: str
     institution_revision: string;
     occurred_at: Date;
     payload: Record<string, unknown>;
+    actor_person_id: string;
   }>(
-    `SELECT cr.command_id, cr.event_id, cr.audit_id, cr.institution_revision::text, cr.occurred_at, de.payload
+    `SELECT cr.command_id, cr.event_id, cr.audit_id, cr.institution_revision::text, cr.occurred_at, de.payload,
+            audit.actor_person_id
      FROM command_receipts cr JOIN domain_events de ON de.id = cr.event_id
+     JOIN audit_events audit ON audit.id = cr.audit_id
      WHERE cr.generation_id = $1 AND cr.command_id = $2`,
     [generationId, commandId],
   );
   if (!result.rowCount) return undefined;
   const row = result.rows[0]!;
+  if (row.actor_person_id !== actorPersonId) {
+    throw new ConflictError("IDEMPOTENCY_KEY_REUSED", "This idempotency key belongs to another actor");
+  }
   return {
     payload: row.payload,
     receipt: causalReceiptSchema.parse({

@@ -7,8 +7,10 @@ import type { AuthenticatedActor } from "../lib/authentication";
 import { publishAndAssignOffering } from "../lib/commands";
 import { closePool, getPool } from "../lib/db";
 import { ConflictError } from "../lib/http";
+import { revokeParentGrant } from "../lib/grant-commands";
 import { migrateCoreDatabase } from "../lib/migrations";
 import { loadPortalSnapshot } from "../lib/projections";
+import { createPaymentAttempt, loadPaymentReceipt } from "../lib/payment-commands";
 import { registerForOffering, withdrawRegistration } from "../lib/registration-commands";
 import { readCurrentSeedStats, resetSyntheticSeed } from "../lib/reset";
 import { AuthorizationError } from "../lib/security";
@@ -60,7 +62,7 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   const fixtures = await pool.query<{
     generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;
     student_person_id: string; student_profile_id: string; student2_person_id: string; student2_profile_id: string; student10_person_id: string; student10_profile_id: string;
-    faculty2_person_id: string; parent_person_id: string; attendance_session_id: string; assessment_id: string;
+    faculty2_person_id: string; parent_person_id: string; attendance_session_id: string; assessment_id: string; invoice_id: string; marks_grant_id: string;
   }>(
     `SELECT ir.current_generation_id AS generation_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'hod.cse@aura.invalid') AS hod_person_id,
@@ -77,6 +79,8 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
       (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'CS401') AS cse_offering_id,
       (SELECT attendance.id FROM "${schema}".attendance_sessions attendance JOIN "${schema}".course_offerings o ON o.id = attendance.course_offering_id JOIN "${schema}".courses c ON c.id = o.course_id WHERE attendance.generation_id = ir.current_generation_id AND c.code = 'CS401') AS attendance_session_id,
       (SELECT assessment.id FROM "${schema}".assessments assessment JOIN "${schema}".course_offerings o ON o.id = assessment.course_offering_id JOIN "${schema}".courses c ON c.id = o.course_id WHERE assessment.generation_id = ir.current_generation_id AND c.code = 'CS401') AS assessment_id,
+      (SELECT invoice.id FROM "${schema}".fee_invoices invoice WHERE invoice.generation_id = ir.current_generation_id AND invoice.invoice_number = 'INV-AURA-2026-001') AS invoice_id,
+      (SELECT grant_row.id FROM "${schema}".parent_field_grants grant_row JOIN "${schema}".parent_links link ON link.id = grant_row.parent_link_id WHERE grant_row.generation_id = ir.current_generation_id AND link.parent_person_id = (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'parent1@aura.invalid') AND link.student_id = (SELECT sp.id FROM "${schema}".student_profiles sp WHERE sp.generation_id = ir.current_generation_id AND sp.register_number = 'SYN-CSE-001') AND grant_row.field_group = 'marks') AS marks_grant_id,
       (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'EC401') AS ece_offering_id
      FROM "${schema}".institution_revisions ir WHERE ir.singleton = true`,
   );
@@ -149,14 +153,37 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   const granted = await loadPortalSnapshot(parent) as { childAcademics?: { marks?: unknown[]; attendance?: unknown[] } };
   assert.ok((granted.childAcademics?.marks?.length ?? 0) >= 2);
   assert.ok((granted.childAcademics?.attendance?.length ?? 0) >= 2);
-  await pool.query(
-    `UPDATE "${schema}".parent_field_grants grant_row SET granted = false
-     FROM "${schema}".parent_links link
-     WHERE grant_row.parent_link_id = link.id AND grant_row.generation_id = $1 AND link.parent_person_id = $2 AND grant_row.field_group = 'marks'`,
-    [fixture.generation_id, fixture.parent_person_id],
-  );
+  const revokeCommand = randomUUID();
+  const grantRevoked = await revokeParentGrant(student, fixture.marks_grant_id, revokeCommand, { expectedRevision: 0 });
+  const grantRevokedDuplicate = await revokeParentGrant(student, fixture.marks_grant_id, revokeCommand, { expectedRevision: 0 });
+  assert.equal(grantRevoked.grant.granted, false);
+  assert.equal(grantRevokedDuplicate.duplicate, true);
+  assert.deepEqual(grantRevokedDuplicate.receipt, grantRevoked.receipt);
   const revoked = await loadPortalSnapshot(parent) as { childAcademics?: { marks?: unknown[] } };
   assert.equal(revoked.childAcademics?.marks, undefined);
+
+  const declineCommand = randomUUID();
+  const declined = await createPaymentAttempt(parent, fixture.invoice_id, declineCommand, { expectedRevision: 0, scenario: "decline" });
+  const declinedDuplicate = await createPaymentAttempt(parent, fixture.invoice_id, declineCommand, { expectedRevision: 0, scenario: "decline" });
+  assert.equal(declined.transaction.status, "failed");
+  assert.equal(declinedDuplicate.duplicate, true);
+  assert.deepEqual(declinedDuplicate.receipt, declined.receipt);
+
+  const paymentCommand = randomUUID();
+  const paid = await createPaymentAttempt(parent, fixture.invoice_id, paymentCommand, { expectedRevision: 0, scenario: "success" });
+  const paidDuplicate = await createPaymentAttempt(parent, fixture.invoice_id, paymentCommand, { expectedRevision: 0, scenario: "success" });
+  assert.equal(paid.invoice.status, "paid");
+  assert.equal(paid.transaction.status, "captured");
+  assert.equal(paidDuplicate.duplicate, true);
+  assert.deepEqual(paidDuplicate.receipt, paid.receipt);
+  const paymentCount = await pool.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM "${schema}".payment_transactions WHERE generation_id = $1 AND invoice_id = $2`,
+    [fixture.generation_id, fixture.invoice_id],
+  );
+  assert.equal(Number(paymentCount.rows[0]!.count), 2);
+  const paymentReceipt = await loadPaymentReceipt(parent, paid.transaction.receiptId!);
+  assert.equal(paymentReceipt.invoiceNumber, "INV-AURA-2026-001");
+  assert.equal(paymentReceipt.amountPaise, 4500000);
 
   await pool.query(`UPDATE "${schema}".student_profiles SET completed_course_codes = '["CS301"]'::jsonb WHERE id IN ($1, $2)`, [fixture.student2_profile_id, fixture.student10_profile_id]);
   await assert.rejects(

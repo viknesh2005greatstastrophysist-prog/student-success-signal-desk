@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { loadCoreConfig, quoteIdentifier } from "./config";
 
-const migrations = [{ id: "001_core", url: new URL("../migrations/001_core.sql", import.meta.url) }];
+const migrations = [
+  { id: "001_core", url: new URL("../migrations/001_core.sql", import.meta.url) },
+  { id: "002_parent_grant_revision", url: new URL("../migrations/002_parent_grant_revision.sql", import.meta.url) },
+];
 
 export async function migrateCoreDatabase(): Promise<void> {
   const config = loadCoreConfig();

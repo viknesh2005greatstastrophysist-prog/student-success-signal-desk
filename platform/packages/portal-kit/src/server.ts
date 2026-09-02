@@ -228,6 +228,46 @@ export function portalPublishMarks(request: Request, portal: PortalId, assessmen
   return portalCoreCommand(request, portal, `/api/v1/assessments/${encodeURIComponent(assessmentId)}/marks`);
 }
 
+export function portalCreatePaymentAttempt(request: Request, portal: PortalId, invoiceId: string) {
+  return portalCoreCommand(request, portal, `/api/v1/fees/invoices/${encodeURIComponent(invoiceId)}/payment-attempts`);
+}
+
+export function portalRevokeParentGrant(request: Request, portal: PortalId, grantId: string) {
+  return portalCoreCommand(request, portal, `/api/v1/parent-grants/${encodeURIComponent(grantId)}/revoke`);
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]!);
+}
+
+export async function portalDownloadReceipt(request: Request, portal: PortalId, receiptId: string) {
+  const session = await readSession(request, portal);
+  if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  const response = await fetch(`${settings(portal).coreUrl}/api/v1/receipts/${encodeURIComponent(receiptId)}`, {
+    headers: { Authorization: `Bearer ${session.accessToken}`, "X-Request-Id": randomUUID() },
+    cache: "no-store",
+  });
+  const result = await response.json().catch(() => null) as { ok?: boolean; data?: Record<string, unknown>; error?: unknown } | null;
+  if (!response.ok || !result?.ok || !result.data) {
+    return Response.json(result ?? { ok: false, error: { code: "RECEIPT_UNAVAILABLE", message: "Receipt could not be generated" } }, { status: response.status || 502 });
+  }
+  const item = result.data;
+  const amount = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(Number(item.amountPaise) / 100);
+  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><title>AURA sandbox receipt</title><style>body{margin:0;padding:56px;background:#f6efe1;color:#29271f;font:16px/1.6 system-ui,sans-serif}.receipt{max-width:720px;margin:auto;padding:48px;border:1px solid #b9ad99;background:#fffdf8}.eyebrow{font:12px monospace;letter-spacing:.14em;text-transform:uppercase;color:#9a4f25}h1{font:500 48px Georgia,serif;margin:12px 0 36px}.row{display:flex;justify-content:space-between;gap:30px;padding:14px 0;border-top:1px solid #ded6c9}.total{font-size:24px;font-weight:700}.notice{margin-top:34px;padding:14px;border-left:3px solid #9a4f25;background:#f6efe1;font-size:13px}</style><body><main class="receipt"><p class="eyebrow">AURA Institute of Technology</p><h1>Payment receipt</h1><div class="row"><span>Student</span><b>${escapeHtml(item.studentName)} · ${escapeHtml(item.registerNumber)}</b></div><div class="row"><span>Invoice</span><b>${escapeHtml(item.invoiceNumber)}</b></div><div class="row"><span>Term</span><b>${escapeHtml(item.term)}</b></div><div class="row"><span>Description</span><b>${escapeHtml(item.description)}</b></div><div class="row"><span>Reference</span><b>${escapeHtml(item.providerReference)}</b></div><div class="row"><span>Paid at</span><b>${escapeHtml(item.paidAt)}</b></div><div class="row total"><span>Total paid</span><b>${escapeHtml(amount)}</b></div><p class="notice">Sandbox simulation only. No money was transferred and this is not a real tax receipt.</p></main></body></html>`;
+  const safeId = String(item.invoiceNumber ?? receiptId).replace(/[^A-Za-z0-9_-]/g, "-");
+  return new Response(html, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Disposition": `attachment; filename="AURA-${safeId}-receipt.html"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 export async function endPortalSession(request: Request, portal: PortalId) {
   const config = settings(portal);
   if (!sameOrigin(request, portal)) return new Response("Request origin rejected", { status: 403 });

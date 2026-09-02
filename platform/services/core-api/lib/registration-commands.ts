@@ -16,7 +16,7 @@ export async function registerForOffering(actor: ActorContext, commandId: string
 
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
-    const duplicate = await findDuplicateCommand(client, generationId, commandId);
+    const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
     if (duplicate) return { registration: duplicate.payload.registration, duplicate: true, receipt: duplicate.receipt };
 
     const offering = await client.query<{
@@ -146,7 +146,7 @@ export async function withdrawRegistration(actor: ActorContext, registrationId: 
 
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
-    const duplicate = await findDuplicateCommand(client, generationId, commandId);
+    const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
     if (duplicate) return { registration: duplicate.payload.registration, duplicate: true, receipt: duplicate.receipt };
     const result = await client.query<{
       id: string;
