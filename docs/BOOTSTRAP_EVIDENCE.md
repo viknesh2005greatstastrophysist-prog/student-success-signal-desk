@@ -6,6 +6,8 @@
 
 **Base commit:** `439a963`
 
+**Bootstrap commit:** `06588856fffc796f93b12de83cdaf9754a603f80`
+
 ## Isolation
 
 The rebuild runs in `/Users/vik/Agentic AI/student-success-multi-portal` as a
@@ -36,6 +38,16 @@ OIDC discovery returns HTTP 200 at:
 - Future domain tables have a separate empty `aura_core` schema.
 - The existing public schema used by the legacy deployment was not migrated or
   dropped by this setup.
+
+## Source control and delivery
+
+- The `multi-portal-architecture` branch is published to the GitHub origin.
+- The Vercel account is connected to the owning GitHub account.
+- The Vercel GitHub App can access the repository.
+- Each of the five portal projects and the identity-service project is linked
+  to the same repository with its own verified root directory.
+- Git-triggered builds are therefore isolated per deployable even though the
+  code is maintained in one monorepo.
 
 ## Local verification
 

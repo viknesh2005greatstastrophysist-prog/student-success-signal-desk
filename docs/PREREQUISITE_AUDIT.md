@@ -8,7 +8,10 @@
 - Python 3.12.14 is available through `uv` for the existing Python/LangGraph
   reference runtime.
 - Git remote read/write authentication works.
+- The architecture branch is published to the GitHub origin.
 - Vercel CLI authentication works for the existing account.
+- The Vercel GitHub App is installed and all six Vercel projects are connected
+  to the repository with verified root directories.
 - An existing Neon/PostgreSQL connection is available.
 - A Better Auth secret exists locally.
 - Better Auth 1.7.2 and `@better-auth/oauth-provider` 1.7.2 support a central
