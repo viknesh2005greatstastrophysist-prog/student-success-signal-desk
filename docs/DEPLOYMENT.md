@@ -20,10 +20,14 @@ platform's encrypted secrets interface. Never commit it.
 
 ## Smoke checks
 
-- The queue loads with the synthetic demo cohort on a cold database.
-- `SYN-0004` is visibly `DATA_BLOCKED` and offers the bundled correction path.
-- The `DEMO:UNSAFE-REPAIR` case shows validator rejection and repair in Replay.
-- A mentor can approve, decline, or defer a case and the decision is audited.
+- The Ecosystem Map loads a six-student synthetic cohort on a cold database.
+- AURA Coordinator can open Command Centre, Agent Operations, and Governance.
+- Faculty Mentor 01 can open assigned cases and the intervention ledger.
+- Synthetic Student 0001 sees only its approved support and source status.
+- HoD/Dean receives aggregate metrics without student or case identifiers.
+- `SYN-0005` remains visibly data-blocked for the correction demonstration.
+- `SYN-0002` shows validator rejection and targeted repair in Replay.
+- A mentor approval creates intervention records and the decision is audited.
 - Refreshing the page preserves data while the current instance remains alive.
 
 ## Persistence boundary

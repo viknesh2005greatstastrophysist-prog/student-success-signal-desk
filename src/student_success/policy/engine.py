@@ -52,6 +52,7 @@ class PriorityEngine:
         if not snapshot.is_sufficient:
             return PriorityAssessment(
                 priority=Priority.DATA_BLOCKED,
+                concern_index=0,
                 reason_codes=sorted(
                     {issue.reason_code for issue in snapshot.data_issues}
                 ),
@@ -196,8 +197,20 @@ class PriorityEngine:
         reason_codes = [signal.reason_code for signal in signals] or [
             "NO_CONCERNING_SIGNALS"
         ]
+        # This index is a transparent demo-policy sorting aid, not a
+        # probability, diagnosis, or prediction. Critical signals carry an
+        # explicit extra policy weight and the result is capped at 100.
+        concern_index = min(
+            self.policy.concern_index.cap,
+            (self.policy.concern_index.signal_points * len(signals))
+            + (
+                self.policy.concern_index.critical_bonus
+                * sum(signal.critical for signal in signals)
+            ),
+        )
         return PriorityAssessment(
             priority=priority,
+            concern_index=concern_index,
             reason_codes=reason_codes,
             signals=signals,
             policy_version=self.policy.policy_version,

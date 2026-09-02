@@ -26,3 +26,17 @@ Every lab maps to an implementation artifact and verifiable evidence. The source
 - Deliberate unsafe-output detection and targeted repair: `artifacts/traces/CASE-119358D74B.json`
 
 The deliberate unsafe fixture is labelled `test_fault_injection`. It is not represented as output from a live language model.
+
+## Ecosystem extension
+
+| Requirement | Implementation | Verification evidence |
+|---|---|---|
+| `ECO-01` role surfaces | `access.py`, role-aware sidebar routing, seven product views | Multi-role Streamlit smoke test |
+| `ECO-02` student isolation | `require_student_scope` and `EcosystemService.student_portal` | Cross-student access test |
+| `ECO-03` aggregate leadership | `leadership_snapshot` omits student references and case IDs | Serialized aggregate-leak test |
+| `ECO-04` intervention creation | Transactional `interventions` insert inside approved mentor close | Approval/rejection ecosystem test |
+| `ECO-05` intervention ownership | Owner guard plus `INTERVENTION_STATUS_UPDATED` audit event | Ownership and audit test |
+| `ECO-06` connector operations | Source-state-derived connector health and operations page | Connector health test and browser inspection |
+| `ECO-07` concern index | Deterministic signal/critical weighting capped at 100 | High-signal deterministic test |
+| `ECO-08` cold-start ecosystem | Idempotent six-student seed, one approval, correction, unsafe-repair trace | Empty-database role-surface smoke test |
+| `ECO-09` cohort operations | `cohort_runs`, `cohort_run_cases`, coordinator run controls and ledger | Completed-with-blocks cohort-run test |

@@ -17,11 +17,17 @@ from student_success.contracts.models import (
     CasePacket,
     CaseRecord,
     CaseStatus,
+    CohortRunRecord,
+    CohortRunStatus,
+    DecisionType,
+    InterventionRecord,
+    InterventionStatus,
     MentorDecision,
     NormalizedSnapshot,
     PriorityAssessment,
     SourceName,
     ValidationReport,
+    allowed_intervention_statuses,
 )
 
 
@@ -145,6 +151,42 @@ class CaseRepository:
                     dimensions_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS interventions (
+                    intervention_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL REFERENCES cases(case_id),
+                    artifact_version INTEGER NOT NULL,
+                    catalogue_id TEXT NOT NULL,
+                    rationale TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    due_at TEXT,
+                    outcome TEXT,
+                    latest_note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(case_id, catalogue_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_interventions_owner
+                    ON interventions(owner_id, status);
+                CREATE INDEX IF NOT EXISTS idx_cases_student
+                    ON cases(student_ref, created_at);
+                CREATE TABLE IF NOT EXISTS cohort_runs (
+                    run_id TEXT PRIMARY KEY,
+                    cohort_id TEXT NOT NULL,
+                    requested_by TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    total_cases INTEGER NOT NULL,
+                    completed_cases INTEGER NOT NULL DEFAULT 0,
+                    blocked_cases INTEGER NOT NULL DEFAULT 0,
+                    failure_reason TEXT,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS cohort_run_cases (
+                    run_id TEXT NOT NULL REFERENCES cohort_runs(run_id),
+                    case_id TEXT NOT NULL REFERENCES cases(case_id),
+                    PRIMARY KEY(run_id, case_id)
+                );
                 """
             )
 
@@ -230,6 +272,131 @@ class CaseRepository:
                 "SELECT * FROM cases ORDER BY created_at DESC"
             ).fetchall()
         return [self._case_from_row(row) for row in rows]
+
+    @staticmethod
+    def _cohort_run_from_row(row: sqlite3.Row) -> CohortRunRecord:
+        return CohortRunRecord(
+            run_id=row["run_id"],
+            cohort_id=row["cohort_id"],
+            requested_by=row["requested_by"],
+            status=CohortRunStatus(row["status"]),
+            total_cases=row["total_cases"],
+            completed_cases=row["completed_cases"],
+            blocked_cases=row["blocked_cases"],
+            failure_reason=row["failure_reason"],
+            started_at=datetime.fromisoformat(row["started_at"]),
+            completed_at=(
+                datetime.fromisoformat(row["completed_at"])
+                if row["completed_at"]
+                else None
+            ),
+        )
+
+    def start_cohort_run(
+        self,
+        cohort_id: str,
+        requested_by: str,
+        total_cases: int,
+        *,
+        run_id: str | None = None,
+    ) -> CohortRunRecord:
+        if total_cases < 1:
+            raise ValueError("A cohort run requires at least one case")
+        run_id = run_id or f"COHORT-{uuid.uuid4().hex[:12].upper()}"
+        with self.connection() as conn:
+            conn.execute(
+                """INSERT INTO cohort_runs
+                (run_id,cohort_id,requested_by,status,total_cases,started_at)
+                VALUES (?,?,?,?,?,?)""",
+                (
+                    run_id,
+                    cohort_id,
+                    requested_by,
+                    CohortRunStatus.RUNNING.value,
+                    total_cases,
+                    _now(),
+                ),
+            )
+            conn.commit()
+        return self.get_cohort_run(run_id)
+
+    def attach_case_to_cohort_run(self, run_id: str, case_id: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO cohort_run_cases(run_id,case_id) VALUES (?,?)",
+                (run_id, case_id),
+            )
+            conn.commit()
+
+    def get_cohort_run(self, run_id: str) -> CohortRunRecord:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM cohort_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown cohort run {run_id}")
+        return self._cohort_run_from_row(row)
+
+    def complete_cohort_run(self, run_id: str) -> CohortRunRecord:
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            run = conn.execute(
+                "SELECT * FROM cohort_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if run is None:
+                conn.rollback()
+                raise KeyError(f"Unknown cohort run {run_id}")
+            rows = conn.execute(
+                """SELECT c.status FROM cases c
+                JOIN cohort_run_cases crc ON crc.case_id=c.case_id
+                WHERE crc.run_id=?""",
+                (run_id,),
+            ).fetchall()
+            blocked = sum(
+                row["status"] == CaseStatus.DATA_BLOCKED.value for row in rows
+            )
+            completed = sum(
+                row["status"]
+                in {
+                    CaseStatus.DATA_BLOCKED.value,
+                    CaseStatus.AWAITING_MENTOR.value,
+                    CaseStatus.CLOSED.value,
+                }
+                for row in rows
+            )
+            status = (
+                CohortRunStatus.COMPLETED_WITH_BLOCKS
+                if blocked
+                else CohortRunStatus.COMPLETED
+            )
+            conn.execute(
+                """UPDATE cohort_runs SET status=?,completed_cases=?,blocked_cases=?,completed_at=?
+                WHERE run_id=?""",
+                (status.value, completed, blocked, _now(), run_id),
+            )
+            conn.commit()
+        return self.get_cohort_run(run_id)
+
+    def fail_cohort_run(self, run_id: str, reason: str) -> CohortRunRecord:
+        if not reason.strip():
+            raise ValueError("Failure reason cannot be blank")
+        with self.connection() as conn:
+            conn.execute(
+                """UPDATE cohort_runs SET status=?,failure_reason=?,completed_at=?
+                WHERE run_id=?""",
+                (CohortRunStatus.FAILED.value, reason, _now(), run_id),
+            )
+            if conn.total_changes == 0:
+                raise KeyError(f"Unknown cohort run {run_id}")
+            conn.commit()
+        return self.get_cohort_run(run_id)
+
+    def list_cohort_runs(self) -> list[CohortRunRecord]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM cohort_runs ORDER BY started_at DESC"
+            ).fetchall()
+        return [self._cohort_run_from_row(row) for row in rows]
 
     def set_active_thread(self, case_id: str, thread_id: str) -> None:
         with self.connection() as conn:
@@ -495,6 +662,27 @@ class CaseRepository:
                 conn.rollback()
                 raise PermissionError("Only the assigned mentor may decide this case")
             version = row["latest_artifact_version"]
+            artifact_row = conn.execute(
+                "SELECT packet_json FROM artifacts WHERE case_id=? AND version=?",
+                (case_id, version),
+            ).fetchone()
+            if artifact_row is None:
+                conn.rollback()
+                raise KeyError(f"No artifact v{version} for {case_id}")
+            packet = CasePacket.model_validate_json(artifact_row["packet_json"])
+            creates_interventions = decision.decision in {
+                DecisionType.APPROVE,
+                DecisionType.EDIT_APPROVE,
+            }
+            support_items = (
+                [
+                    item
+                    for item in packet.proposed_support
+                    if item.catalogue_id != "SUP-07"
+                ]
+                if creates_interventions
+                else []
+            )
             decision_id = f"DEC-{uuid.uuid4().hex.upper()}"
             payload = decision.model_dump(mode="json")
             conn.execute(
@@ -525,6 +713,7 @@ class CaseRepository:
                     "decision": decision.decision.value,
                     "reason": decision.reason,
                     "artifact_version": version,
+                    "interventions_created": len(support_items),
                 },
                 stable_hash({"case_id": case_id, "version": version}),
                 stable_hash(payload),
@@ -534,8 +723,217 @@ class CaseRepository:
                 "UPDATE cases SET status=?, closed_reason=?, updated_at=? WHERE case_id=?",
                 (CaseStatus.CLOSED.value, decision.decision.value, _now(), case_id),
             )
+            for item in support_items:
+                now = _now()
+                conn.execute(
+                    """INSERT OR IGNORE INTO interventions
+                    (intervention_id,case_id,artifact_version,catalogue_id,rationale,status,owner_id,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        f"INT-{uuid.uuid4().hex[:12].upper()}",
+                        case_id,
+                        version,
+                        item.catalogue_id,
+                        item.rationale,
+                        InterventionStatus.PLANNED.value,
+                        decision.mentor_id,
+                        now,
+                        now,
+                    ),
+                )
             conn.commit()
         return self.get_case(case_id)
+
+    @staticmethod
+    def _intervention_from_row(row: sqlite3.Row) -> InterventionRecord:
+        return InterventionRecord(
+            intervention_id=row["intervention_id"],
+            case_id=row["case_id"],
+            artifact_version=row["artifact_version"],
+            catalogue_id=row["catalogue_id"],
+            rationale=row["rationale"],
+            status=InterventionStatus(row["status"]),
+            owner_id=row["owner_id"],
+            due_at=datetime.fromisoformat(row["due_at"]) if row["due_at"] else None,
+            outcome=row["outcome"],
+            latest_note=row["latest_note"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def get_intervention(self, intervention_id: str) -> InterventionRecord:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM interventions WHERE intervention_id=?",
+                (intervention_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown intervention {intervention_id}")
+        return self._intervention_from_row(row)
+
+    def list_interventions(
+        self,
+        *,
+        case_id: str | None = None,
+        owner_id: str | None = None,
+        student_ref: str | None = None,
+    ) -> list[InterventionRecord]:
+        clauses: list[str] = []
+        values: list[str] = []
+        if case_id:
+            clauses.append("i.case_id=?")
+            values.append(case_id)
+        if owner_id:
+            clauses.append("i.owner_id=?")
+            values.append(owner_id)
+        if student_ref:
+            clauses.append("c.student_ref=?")
+            values.append(student_ref)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"""SELECT i.* FROM interventions i
+                JOIN cases c ON c.case_id=i.case_id
+                {where} ORDER BY i.updated_at DESC""",
+                values,
+            ).fetchall()
+        return [self._intervention_from_row(row) for row in rows]
+
+    def reconcile_approved_interventions(self) -> int:
+        """Backfill the intervention ledger for databases created before it existed."""
+        inserted = 0
+        touched: set[str] = set()
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT d.case_id,d.artifact_version,d.mentor_id,a.packet_json
+                FROM decisions d
+                JOIN artifacts a ON a.case_id=d.case_id
+                    AND a.version=d.artifact_version
+                WHERE d.decision_type IN (?,?)
+                ORDER BY d.created_at""",
+                (DecisionType.APPROVE.value, DecisionType.EDIT_APPROVE.value),
+            ).fetchall()
+            for row in rows:
+                packet = CasePacket.model_validate_json(row["packet_json"])
+                for item in packet.proposed_support:
+                    if item.catalogue_id == "SUP-07":
+                        continue
+                    now = _now()
+                    result = conn.execute(
+                        """INSERT OR IGNORE INTO interventions
+                        (intervention_id,case_id,artifact_version,catalogue_id,rationale,status,owner_id,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (
+                            f"INT-{uuid.uuid4().hex[:12].upper()}",
+                            row["case_id"],
+                            row["artifact_version"],
+                            item.catalogue_id,
+                            item.rationale,
+                            InterventionStatus.PLANNED.value,
+                            row["mentor_id"],
+                            now,
+                            now,
+                        ),
+                    )
+                    if result.rowcount:
+                        inserted += 1
+                        touched.add(row["case_id"])
+            for case_id in touched:
+                if conn.execute(
+                    "SELECT 1 FROM events WHERE case_id=? AND idempotency_key=?",
+                    (case_id, "ecosystem:intervention-reconcile:v1"),
+                ).fetchone():
+                    continue
+                status = CaseStatus(
+                    conn.execute(
+                        "SELECT status FROM cases WHERE case_id=?", (case_id,)
+                    ).fetchone()[0]
+                )
+                self._insert_event(
+                    conn,
+                    case_id,
+                    "INTERVENTION_LEDGER_RECONCILED",
+                    status,
+                    status,
+                    ActorRole.ADMIN,
+                    "ecosystem-migration",
+                    {"reason": "Backfilled approved support into intervention ledger"},
+                    None,
+                    None,
+                    "ecosystem:intervention-reconcile:v1",
+                )
+            conn.commit()
+        return inserted
+
+    def update_intervention(
+        self,
+        intervention_id: str,
+        owner_id: str,
+        status: InterventionStatus,
+        *,
+        note: str | None = None,
+        outcome: str | None = None,
+        due_at: datetime | None = None,
+    ) -> InterventionRecord:
+        if note is not None and not note.strip():
+            raise ValueError("Intervention note cannot be blank")
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM interventions WHERE intervention_id=?",
+                (intervention_id,),
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                raise KeyError(f"Unknown intervention {intervention_id}")
+            if row["owner_id"] != owner_id:
+                conn.rollback()
+                raise PermissionError(
+                    "Only the assigned intervention owner may update it"
+                )
+            previous = InterventionStatus(row["status"])
+            if status not in allowed_intervention_statuses(previous):
+                conn.rollback()
+                raise InvalidTransition(
+                    f"Intervention {previous.value} cannot transition to {status.value}"
+                )
+            now = _now()
+            conn.execute(
+                """UPDATE interventions
+                SET status=?, due_at=?, outcome=?, latest_note=?, updated_at=?
+                WHERE intervention_id=?""",
+                (
+                    status.value,
+                    due_at.isoformat() if due_at else row["due_at"],
+                    outcome if outcome is not None else row["outcome"],
+                    note if note is not None else row["latest_note"],
+                    now,
+                    intervention_id,
+                ),
+            )
+            self._insert_event(
+                conn,
+                row["case_id"],
+                "INTERVENTION_STATUS_UPDATED",
+                CaseStatus.CLOSED,
+                CaseStatus.CLOSED,
+                ActorRole.MENTOR,
+                owner_id,
+                {
+                    "intervention_id": intervention_id,
+                    "from_status": previous.value,
+                    "to_status": status.value,
+                    "note": note,
+                    "outcome": outcome,
+                    "due_at": due_at.isoformat() if due_at else row["due_at"],
+                },
+                stable_hash({"status": previous.value}),
+                stable_hash({"status": status.value, "outcome": outcome}),
+                f"intervention:{intervention_id}:{uuid.uuid4().hex}",
+            )
+            conn.commit()
+        return self.get_intervention(intervention_id)
 
     def list_decisions(self, case_id: str) -> list[dict[str, Any]]:
         with self.connection() as conn:

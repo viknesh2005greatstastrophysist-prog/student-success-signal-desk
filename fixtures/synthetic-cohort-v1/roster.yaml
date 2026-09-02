@@ -1,0 +1,29 @@
+cohort_id: CSE-AI-SEM6-DEMO
+department: Computer Science and Engineering
+programme: B.E. Computer Science and Engineering (AI)
+term: Semester VI
+students:
+  - student_ref: SYN-0001
+    display_name: Synthetic Student 0001
+    section: A
+    mentor_id: mentor-01
+  - student_ref: SYN-0002
+    display_name: Synthetic Student 0002
+    section: A
+    mentor_id: mentor-01
+  - student_ref: SYN-0003
+    display_name: Synthetic Student 0003
+    section: A
+    mentor_id: mentor-01
+  - student_ref: SYN-0004
+    display_name: Synthetic Student 0004
+    section: B
+    mentor_id: mentor-02
+  - student_ref: SYN-0005
+    display_name: Synthetic Student 0005
+    section: B
+    mentor_id: mentor-02
+  - student_ref: SYN-0006
+    display_name: Synthetic Student 0006
+    section: B
+    mentor_id: mentor-02

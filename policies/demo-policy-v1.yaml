@@ -24,6 +24,11 @@ priority_rules:
   high: two_or_more_concerning_signals_or_one_critical_signal
   medium: one_concerning_signal
   low: no_concerning_signals
+concern_index:
+  signal_points: 15
+  critical_bonus: 20
+  cap: 100
+  meaning: triage_sorting_aid_not_probability
 mentor_required: true
 direct_student_contact: false
 max_repair_attempts: 2

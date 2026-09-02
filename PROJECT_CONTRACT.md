@@ -7,7 +7,7 @@
 
 ## Product sentence
 
-For a faculty mentor reviewing a synthetic student-support case, the system collects four authorised signal groups, identifies incomplete or concerning records using a transparent fictional policy, assembles a source-linked case packet, proposes only approved support actions, pauses for mentor judgement, and preserves a replayable audit trail.
+For a synthetic student-support programme, the system collects four authorised signal groups, identifies incomplete or concerning records using a transparent fictional policy, assembles source-linked case packets, proposes only approved support actions, pauses for mentor judgement, creates an intervention ledger only after approval, presents a self-scoped student view, provides aggregate-only leadership intelligence, and preserves a replayable audit trail.
 
 ## Non-goals
 
@@ -18,6 +18,9 @@ The system does not predict failure, diagnose wellbeing, contact students, alter
 - Runtime: collect scoped fixtures, calculate priority, validate, checkpoint, and emit events.
 - Case Packet Agent: explain supplied evidence and select catalogue actions. It cannot score, approve, contact, or mutate.
 - Assigned mentor: approve, edit and approve, reject, revoke, or reopen an assigned case.
+- Assigned intervention owner: schedule, progress, complete, cancel, and record a synthetic outcome for approved support.
+- Synthetic student: view only that identity's published support plan and source-update status.
+- HoD/Dean: view aggregate operational trends without student-level records.
 - Demo administrator: create synthetic cases, apply bundled fixture corrections, and change policy through versioned files.
 
 ## Data contract
@@ -37,6 +40,15 @@ Only these business states exist:
 - `AWAITING_MENTOR -> CLOSED` requires the assigned mentor and an idempotent decision nonce.
 - `CLOSED -> AWAITING_MENTOR` requires an assigned mentor, a reason, a new artifact version, and a new review checkpoint.
 - Duplicate idempotency keys return the existing result and do not repeat effects.
+- Approved catalogue actions are written to the intervention ledger in the same transaction as the mentor decision. Rejected cases create no interventions.
+
+Intervention delivery is separately guarded:
+
+`PLANNED -> SCHEDULED -> IN_PROGRESS -> COMPLETED`
+
+`PLANNED | SCHEDULED | IN_PROGRESS -> CANCELLED`
+
+Completed and cancelled records are terminal. Only the assigned intervention owner may update them, and every update is appended to the case audit trail.
 
 ## Generation and validation
 

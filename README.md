@@ -1,10 +1,19 @@
-# Student Success Case Manager
+# AURA Student Success Ecosystem
 
-A mentor-governed agentic AI capstone built from Chapter 11 of the *Agentic AI: 15 Worklets / 14-Lab Build Book*.
+A governed agentic AI capstone built from Chapter 11 of the *Agentic AI: 15 Worklets / 14-Lab Build Book* and the supplied *Student Success and Early Warning System* brief.
 
 ![Signal Desk queue](artifacts/screenshots/signal-desk-home.png)
 
-This is a **synthetic-data educational demonstration**. It prioritises cases for human review under a fictional policy. It does not predict student failure, diagnose wellbeing, contact students, or alter institutional records.
+This is a **synthetic-data educational demonstration**. It joins source operations, cohort triage, mentor casework, intervention tracking, a self-scoped student portal, aggregate leadership analytics, agent operations, and governance. It does not predict student failure, diagnose wellbeing, contact students, or alter institutional records.
+
+## Ecosystem surfaces
+
+- **AURA Coordinator:** ecosystem map, cohort command centre, connector and agent operations, policy, permissions, and audit.
+- **Faculty Mentor:** assigned worklist, evidence, validated recommendations, human decisions, correction/replay, and intervention delivery.
+- **Synthetic Student:** only that identity's approved support and source-update status, with no peer comparison or predictive label.
+- **HoD / Dean:** aggregate trends and outcomes with no student-level drill-down.
+
+The sidebar identity switcher demonstrates role rules. It is not authentication.
 
 ## Run
 
@@ -43,6 +52,6 @@ uv run student-success export CASE-XXXXXXXXXX
 uv run student-success evaluate
 ```
 
-`PROJECT_CONTRACT.md` is the authority for scope, lifecycle, evaluation, and acceptance criteria. `docs/ADR-001-governed-agentic-runtime.md` records why the implementation uses a deterministic spine and only one optional LLM composer.
+`PROJECT_CONTRACT.md` is the authority for the case workflow. `docs/ECOSYSTEM_CONTRACT.md` defines the role surfaces, intervention lifecycle, aggregate boundaries, and ecosystem acceptance criteria. `docs/ADR-001-governed-agentic-runtime.md` records why the implementation uses a deterministic spine and only one optional LLM composer.
 
 The build evidence is in `artifacts/reports/BUILD_EVIDENCE.md`; the lab-by-lab map is in `docs/REQUIREMENTS_TRACEABILITY.md`.

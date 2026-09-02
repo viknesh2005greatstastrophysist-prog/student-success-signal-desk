@@ -1,3 +1,3 @@
-"""Mentor-governed student support case manager."""
+"""Governed, multi-stakeholder student-success ecosystem."""
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"

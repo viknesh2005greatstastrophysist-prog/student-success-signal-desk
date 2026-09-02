@@ -51,12 +51,60 @@ class ActorRole(str, Enum):
     RUNTIME = "runtime"
     MENTOR = "mentor"
     ADMIN = "admin"
+    STUDENT = "student"
+    LEADERSHIP = "leadership"
 
 
 class DecisionType(str, Enum):
     APPROVE = "approve"
     EDIT_APPROVE = "edit_approve"
     REJECT = "reject"
+
+
+class InterventionStatus(str, Enum):
+    PLANNED = "PLANNED"
+    SCHEDULED = "SCHEDULED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class CohortRunStatus(str, Enum):
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    COMPLETED_WITH_BLOCKS = "COMPLETED_WITH_BLOCKS"
+    FAILED = "FAILED"
+
+
+INTERVENTION_TRANSITIONS = {
+    InterventionStatus.PLANNED: {
+        InterventionStatus.PLANNED,
+        InterventionStatus.SCHEDULED,
+        InterventionStatus.CANCELLED,
+    },
+    InterventionStatus.SCHEDULED: {
+        InterventionStatus.SCHEDULED,
+        InterventionStatus.IN_PROGRESS,
+        InterventionStatus.CANCELLED,
+    },
+    InterventionStatus.IN_PROGRESS: {
+        InterventionStatus.IN_PROGRESS,
+        InterventionStatus.COMPLETED,
+        InterventionStatus.CANCELLED,
+    },
+    InterventionStatus.COMPLETED: {InterventionStatus.COMPLETED},
+    InterventionStatus.CANCELLED: {InterventionStatus.CANCELLED},
+}
+
+
+def allowed_intervention_statuses(
+    current: InterventionStatus,
+) -> tuple[InterventionStatus, ...]:
+    return tuple(
+        status
+        for status in InterventionStatus
+        if status in INTERVENTION_TRANSITIONS[current]
+    )
 
 
 class SourceEnvelope(StrictModel):
@@ -117,6 +165,7 @@ class NormalizedSnapshot(StrictModel):
 
 class PriorityAssessment(StrictModel):
     priority: Priority
+    concern_index: int = Field(default=0, ge=0, le=100)
     reason_codes: list[str]
     signals: list[Signal]
     policy_version: str
@@ -206,6 +255,34 @@ class MentorDecision(StrictModel):
     edited_packet: CasePacket | None = None
 
 
+class InterventionRecord(StrictModel):
+    intervention_id: str
+    case_id: str
+    artifact_version: int
+    catalogue_id: str
+    rationale: str
+    status: InterventionStatus
+    owner_id: str
+    due_at: datetime | None = None
+    outcome: str | None = None
+    latest_note: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CohortRunRecord(StrictModel):
+    run_id: str
+    cohort_id: str
+    requested_by: str
+    status: CohortRunStatus
+    total_cases: int
+    completed_cases: int
+    blocked_cases: int
+    failure_reason: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+
+
 class AuditEvent(StrictModel):
     event_id: str
     case_id: str
@@ -234,6 +311,13 @@ class InterventionCatalogue(StrictModel):
     items: list[InterventionItem]
 
 
+class ConcernIndexPolicy(StrictModel):
+    signal_points: int = Field(ge=0, le=100)
+    critical_bonus: int = Field(ge=0, le=100)
+    cap: int = Field(ge=1, le=100)
+    meaning: Literal["triage_sorting_aid_not_probability"]
+
+
 class DemoPolicy(StrictModel):
     policy_version: str
     scope: Literal["synthetic_demo_only"]
@@ -242,6 +326,7 @@ class DemoPolicy(StrictModel):
     windows_days: dict[SourceName, int]
     thresholds: dict[str, dict[str, float]]
     priority_rules: dict[str, str]
+    concern_index: ConcernIndexPolicy
     mentor_required: bool
     direct_student_contact: bool
     max_repair_attempts: int = Field(ge=0, le=5)
