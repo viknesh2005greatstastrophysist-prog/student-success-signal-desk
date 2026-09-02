@@ -1,1 +1,1 @@
-{ "id": "hod", "localOrigin": "http://127.0.0.1:3104", "vercelProject": "aura-hod-portal", "oidcClientId": "kqiOIOfbMBtlcIqJxIjHmIHinbBQsnCX", "coreApiAudience": "aura-core-api" }
+{ "id": "hod", "localOrigin": "http://127.0.0.1:3104", "vercelProject": "aura-hod-portal", "oidcClientId": "kqiOIOfbMBtlcIqJxIjHmIHinbBQsnCX", "coreApiAudience": "urn:aura:core-api" }

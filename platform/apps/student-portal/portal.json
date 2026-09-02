@@ -1,1 +1,1 @@
-{ "id": "student", "localOrigin": "http://127.0.0.1:3101", "vercelProject": "aura-student-portal", "oidcClientId": "lmRWsqnSAcDGRngoatHbmwjkejdiXBLl", "coreApiAudience": "aura-core-api" }
+{ "id": "student", "localOrigin": "http://127.0.0.1:3101", "vercelProject": "aura-student-portal", "oidcClientId": "lmRWsqnSAcDGRngoatHbmwjkejdiXBLl", "coreApiAudience": "urn:aura:core-api" }

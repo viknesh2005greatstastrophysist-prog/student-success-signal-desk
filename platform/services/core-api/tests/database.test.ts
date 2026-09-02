@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
+import type { ActorContext } from "@aura/contracts";
+import { publishAndAssignOffering } from "../lib/commands";
 import { closePool, getPool } from "../lib/db";
 import { migrateCoreDatabase } from "../lib/migrations";
 import { readCurrentSeedStats, resetSyntheticSeed } from "../lib/reset";
+import { AuthorizationError } from "../lib/security";
 
 const runDatabaseTests = process.env.RUN_DB_TESTS === "1";
 
@@ -47,6 +51,41 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
     [schema],
   );
   assert.equal(Number(triggerCount.rows[0]?.count), 8);
+
+  const fixtures = await pool.query<{
+    generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;
+  }>(
+    `SELECT ir.current_generation_id AS generation_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'hod.cse@aura.invalid') AS hod_person_id,
+      (SELECT d.id FROM "${schema}".departments d WHERE d.generation_id = ir.current_generation_id AND d.code = 'CSE') AS cse_department_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'faculty1@aura.invalid') AS faculty_person_id,
+      (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'CS401') AS cse_offering_id,
+      (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'EC401') AS ece_offering_id
+     FROM "${schema}".institution_revisions ir WHERE ir.singleton = true`,
+  );
+  const fixture = fixtures.rows[0]!;
+  const hod: ActorContext = {
+    subject: "database-test-hod",
+    role: "hod",
+    personId: fixture.hod_person_id,
+    departmentId: fixture.cse_department_id,
+  };
+  const commandId = randomUUID();
+  const first = await publishAndAssignOffering(hod, fixture.cse_offering_id, commandId, {
+    facultyPersonId: fixture.faculty_person_id,
+    expectedRevision: 0,
+  });
+  const duplicate = await publishAndAssignOffering(hod, fixture.cse_offering_id, commandId, {
+    facultyPersonId: fixture.faculty_person_id,
+    expectedRevision: 0,
+  });
+  assert.equal(first.duplicate, false);
+  assert.equal(duplicate.duplicate, true);
+  assert.deepEqual(duplicate.receipt, first.receipt);
+  await assert.rejects(
+    publishAndAssignOffering(hod, fixture.ece_offering_id, randomUUID(), { facultyPersonId: fixture.faculty_person_id, expectedRevision: 0 }),
+    AuthorizationError,
+  );
 });
 
 test.after(async () => {

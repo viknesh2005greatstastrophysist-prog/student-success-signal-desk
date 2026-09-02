@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { coreApiAudience, portalOidcClients } from "@aura/contracts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const expected = ["student", "parent", "faculty", "hod", "governance"];
@@ -29,7 +30,8 @@ test("every portal carries an independent client and release contract", async ()
     assert.match(contract.localOrigin, /^http:\/\/127\.0\.0\.1:\d+$/);
     assert.match(contract.vercelProject, /^aura-/);
     assert.match(contract.oidcClientId, /^[A-Za-z0-9]{24,}$/);
-    assert.equal(contract.coreApiAudience, "aura-core-api");
+    assert.equal(contract.coreApiAudience, coreApiAudience);
+    assert.equal(contract.oidcClientId, portalOidcClients[portal]);
     clientIds.push(contract.oidcClientId);
   }
   assert.equal(new Set(clientIds).size, 5);

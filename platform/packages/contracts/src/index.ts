@@ -15,6 +15,16 @@ export const actorContextSchema = z.object({
 });
 export type ActorContext = z.infer<typeof actorContextSchema>;
 
+export const coreApiAudience = "urn:aura:core-api" as const;
+
+export const portalOidcClients: Record<PortalId, string> = {
+  student: "lmRWsqnSAcDGRngoatHbmwjkejdiXBLl",
+  parent: "ZtyvYAeWCEUxfDNSSnkUjsNtJybzQHHg",
+  faculty: "uSidVDdjNoQCabBMghhPkIXdRBFvPRDw",
+  hod: "kqiOIOfbMBtlcIqJxIjHmIHinbBQsnCX",
+  governance: "jnDmKEJpxPXzqcwskyxaPJReUkAEWXLE",
+};
+
 export const causalReceiptSchema = z.object({
   commandId: z.string().uuid(),
   eventId: z.string().uuid(),

@@ -25,7 +25,7 @@ export function loadCoreConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig
     resetConfirmation: env.CORE_RESET_CONFIRMATION ?? "AURA-SYNTHETIC-SEED-V1",
     oidcIssuer: env.CORE_OIDC_ISSUER ?? "http://localhost:3200/api/auth",
     oidcJwksUrl: env.CORE_OIDC_JWKS_URL ?? "http://localhost:3200/api/auth/jwks",
-    oidcAudience: env.CORE_API_AUDIENCE ?? "aura-core-api",
+    oidcAudience: env.CORE_API_AUDIENCE ?? "urn:aura:core-api",
   };
 }
 

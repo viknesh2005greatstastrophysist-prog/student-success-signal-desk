@@ -3,6 +3,8 @@ import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
 import { Pool } from "pg";
 
+import { coreApiAudience } from "@aura/contracts";
+
 const databaseUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
 const baseURL = process.env.BETTER_AUTH_URL ?? "http://localhost:3200";
 const databaseSchema = process.env.AUTH_DATABASE_SCHEMA ?? "aura_identity";
@@ -21,12 +23,28 @@ export const auth = betterAuth({
   baseURL,
   database: pool,
   secret: process.env.BETTER_AUTH_SECRET,
+  trustedOrigins: [
+    baseURL,
+    "http://127.0.0.1:3101",
+    "http://127.0.0.1:3102",
+    "http://127.0.0.1:3103",
+    "http://127.0.0.1:3104",
+    "http://127.0.0.1:3105",
+    "https://aura-student-portal.vercel.app",
+    "https://aura-parent-portal.vercel.app",
+    "https://aura-faculty-portal.vercel.app",
+    "https://aura-hod-portal.vercel.app",
+    "https://aura-ai-governance.vercel.app",
+  ],
   emailAndPassword: { enabled: true, minPasswordLength: 10 },
   plugins: [
     jwt(),
     oauthProvider({
       loginPage: "/sign-in",
       consentPage: "/consent",
+      scopes: ["openid", "profile", "email", "offline_access"],
+      resources: [{ identifier: coreApiAudience, allowedScopes: ["openid", "profile", "email", "offline_access"] }],
+      enforcePerClientResources: false,
     }),
   ],
 });

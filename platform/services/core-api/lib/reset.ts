@@ -33,6 +33,14 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
   }
 
   return withCoreTransaction(async (client) => {
+    const identityEmails = ["student1@aura.invalid", "parent1@aura.invalid", "faculty1@aura.invalid", "hod.cse@aura.invalid", "governance@aura.invalid"];
+    const priorSubjects = await client.query<{ email: string; external_subject: string }>(
+      `SELECT p.email, p.external_subject FROM people p
+       JOIN institution_revisions ir ON ir.current_generation_id = p.generation_id AND ir.singleton = true
+       WHERE p.email = ANY($1::text[])`,
+      [identityEmails],
+    );
+    const subjectByEmail = new Map(priorSubjects.rows.map((row) => [row.email, row.external_subject]));
     const generationId = randomUUID();
     const resetId = randomUUID();
     await client.query(
@@ -75,7 +83,7 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
     ];
     const students: SeedPerson[] = studentNames.map((name, index) => ({
       id: randomUUID(),
-      subject: index === 0 ? "aura-demo-student" : `aura-student-${String(index + 1).padStart(2, "0")}`,
+      subject: index === 0 ? subjectByEmail.get("student1@aura.invalid") ?? "aura-demo-student" : `aura-student-${String(index + 1).padStart(2, "0")}`,
       name,
       email: `student${index + 1}@aura.invalid`,
       role: "student",
@@ -84,14 +92,14 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
 
     const parents: SeedPerson[] = Array.from({ length: 9 }, (_, index) => ({
       id: randomUUID(),
-      subject: index === 0 ? "aura-demo-parent" : `aura-parent-${String(index + 1).padStart(2, "0")}`,
+      subject: index === 0 ? subjectByEmail.get("parent1@aura.invalid") ?? "aura-demo-parent" : `aura-parent-${String(index + 1).padStart(2, "0")}`,
       name: ["Lakshmi Rao", "Harish Patel", "Neha Shah", "Gopal Nair", "Suma Iyer", "Mohan Kumar", "Deepa Das", "Arun Menon", "Farah Ali"][index]!,
       email: `parent${index + 1}@aura.invalid`,
       role: "parent",
     }));
 
     const faculty: SeedPerson[] = [
-      ["aura-demo-faculty", "Dr Mira Sen", cseId],
+      [subjectByEmail.get("faculty1@aura.invalid") ?? "aura-demo-faculty", "Dr Mira Sen", cseId],
       ["aura-faculty-02", "Prof Arjun Bhat", cseId],
       ["aura-faculty-03", "Dr Leena Thomas", cseId],
       ["aura-faculty-04", "Prof Kiran Rao", eceId],
@@ -105,12 +113,12 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
     }));
 
     const hods: SeedPerson[] = [
-      { id: randomUUID(), subject: "aura-demo-hod", name: "Dr Sahana Krishnan", email: "hod.cse@aura.invalid", role: "hod", departmentId: cseId },
+      { id: randomUUID(), subject: subjectByEmail.get("hod.cse@aura.invalid") ?? "aura-demo-hod", name: "Dr Sahana Krishnan", email: "hod.cse@aura.invalid", role: "hod", departmentId: cseId },
       { id: randomUUID(), subject: "aura-hod-ece", name: "Dr Ramesh Iqbal", email: "hod.ece@aura.invalid", role: "hod", departmentId: eceId },
     ];
     const governance: SeedPerson = {
       id: randomUUID(),
-      subject: "aura-demo-governance",
+      subject: subjectByEmail.get("governance@aura.invalid") ?? "aura-demo-governance",
       name: "AURA Governance Operator",
       email: "governance@aura.invalid",
       role: "governance",
