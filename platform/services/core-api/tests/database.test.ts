@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import type { ActorContext } from "@aura/contracts";
+import { portalOidcClients, type ActorContext } from "@aura/contracts";
+import { publishMarks, submitAttendance } from "../lib/academic-commands";
+import type { AuthenticatedActor } from "../lib/authentication";
 import { publishAndAssignOffering } from "../lib/commands";
 import { closePool, getPool } from "../lib/db";
 import { ConflictError } from "../lib/http";
 import { migrateCoreDatabase } from "../lib/migrations";
+import { loadPortalSnapshot } from "../lib/projections";
 import { registerForOffering, withdrawRegistration } from "../lib/registration-commands";
 import { readCurrentSeedStats, resetSyntheticSeed } from "../lib/reset";
 import { AuthorizationError } from "../lib/security";
@@ -57,11 +60,14 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   const fixtures = await pool.query<{
     generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;
     student_person_id: string; student_profile_id: string; student2_person_id: string; student2_profile_id: string; student10_person_id: string; student10_profile_id: string;
+    faculty2_person_id: string; parent_person_id: string; attendance_session_id: string; assessment_id: string;
   }>(
     `SELECT ir.current_generation_id AS generation_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'hod.cse@aura.invalid') AS hod_person_id,
       (SELECT d.id FROM "${schema}".departments d WHERE d.generation_id = ir.current_generation_id AND d.code = 'CSE') AS cse_department_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'faculty1@aura.invalid') AS faculty_person_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'faculty2@aura.invalid') AS faculty2_person_id,
+      (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'parent1@aura.invalid') AS parent_person_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student1@aura.invalid') AS student_person_id,
       (SELECT sp.id FROM "${schema}".student_profiles sp WHERE sp.generation_id = ir.current_generation_id AND sp.register_number = 'SYN-CSE-001') AS student_profile_id,
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student2@aura.invalid') AS student2_person_id,
@@ -69,6 +75,8 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
       (SELECT p.id FROM "${schema}".people p WHERE p.generation_id = ir.current_generation_id AND p.email = 'student10@aura.invalid') AS student10_person_id,
       (SELECT sp.id FROM "${schema}".student_profiles sp WHERE sp.generation_id = ir.current_generation_id AND sp.register_number = 'SYN-CSE-010') AS student10_profile_id,
       (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'CS401') AS cse_offering_id,
+      (SELECT attendance.id FROM "${schema}".attendance_sessions attendance JOIN "${schema}".course_offerings o ON o.id = attendance.course_offering_id JOIN "${schema}".courses c ON c.id = o.course_id WHERE attendance.generation_id = ir.current_generation_id AND c.code = 'CS401') AS attendance_session_id,
+      (SELECT assessment.id FROM "${schema}".assessments assessment JOIN "${schema}".course_offerings o ON o.id = assessment.course_offering_id JOIN "${schema}".courses c ON c.id = o.course_id WHERE assessment.generation_id = ir.current_generation_id AND c.code = 'CS401') AS assessment_id,
       (SELECT o.id FROM "${schema}".course_offerings o JOIN "${schema}".courses c ON c.id = o.course_id WHERE o.generation_id = ir.current_generation_id AND c.code = 'EC401') AS ece_offering_id
      FROM "${schema}".institution_revisions ir WHERE ir.singleton = true`,
   );
@@ -112,6 +120,43 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
   assert.deepEqual(registeredDuplicate.receipt, registered.receipt);
   const registrationId = (registered.registration as { id: string }).id;
   await assert.rejects(withdrawRegistration(student2, registrationId, randomUUID()), AuthorizationError);
+
+  const faculty: ActorContext = { subject: "database-test-faculty", role: "faculty", personId: fixture.faculty_person_id, departmentId: fixture.cse_department_id };
+  const unassignedFaculty: ActorContext = { subject: "database-test-unassigned-faculty", role: "faculty", personId: fixture.faculty2_person_id, departmentId: fixture.cse_department_id };
+  await assert.rejects(
+    submitAttendance(unassignedFaculty, fixture.attendance_session_id, randomUUID(), { expectedRevision: 0, records: [{ studentId: fixture.student_profile_id, status: "present" }] }),
+    (error: unknown) => error instanceof Error && "status" in error && error.status === 404,
+  );
+  const attendanceCommand = randomUUID();
+  const attendance = await submitAttendance(faculty, fixture.attendance_session_id, attendanceCommand, { expectedRevision: 0, records: [{ studentId: fixture.student_profile_id, status: "present" }] });
+  const attendanceDuplicate = await submitAttendance(faculty, fixture.attendance_session_id, attendanceCommand, { expectedRevision: 0, records: [{ studentId: fixture.student_profile_id, status: "present" }] });
+  assert.equal(attendance.duplicate, false);
+  assert.equal(attendanceDuplicate.duplicate, true);
+  assert.deepEqual(attendanceDuplicate.receipt, attendance.receipt);
+
+  await assert.rejects(
+    publishMarks(faculty, fixture.assessment_id, randomUUID(), { expectedRevision: 0, marks: [{ studentId: fixture.student_profile_id, score: 101, feedback: "invalid" }] }),
+    (error: unknown) => error instanceof ConflictError && error.code === "SCORE_OUT_OF_RANGE",
+  );
+  const marksCommand = randomUUID();
+  const marks = await publishMarks(faculty, fixture.assessment_id, marksCommand, { expectedRevision: 0, marks: [{ studentId: fixture.student_profile_id, score: 82, feedback: "Clear reasoning." }] });
+  const marksDuplicate = await publishMarks(faculty, fixture.assessment_id, marksCommand, { expectedRevision: 0, marks: [{ studentId: fixture.student_profile_id, score: 82, feedback: "Clear reasoning." }] });
+  assert.equal(marks.duplicate, false);
+  assert.equal(marksDuplicate.duplicate, true);
+  assert.deepEqual(marksDuplicate.receipt, marks.receipt);
+
+  const parent: AuthenticatedActor = { subject: "database-test-parent", role: "parent", personId: fixture.parent_person_id, displayName: "Lakshmi Rao", email: "parent1@aura.invalid", clientId: portalOidcClients.parent };
+  const granted = await loadPortalSnapshot(parent) as { childAcademics?: { marks?: unknown[]; attendance?: unknown[] } };
+  assert.ok((granted.childAcademics?.marks?.length ?? 0) >= 2);
+  assert.ok((granted.childAcademics?.attendance?.length ?? 0) >= 2);
+  await pool.query(
+    `UPDATE "${schema}".parent_field_grants grant_row SET granted = false
+     FROM "${schema}".parent_links link
+     WHERE grant_row.parent_link_id = link.id AND grant_row.generation_id = $1 AND link.parent_person_id = $2 AND grant_row.field_group = 'marks'`,
+    [fixture.generation_id, fixture.parent_person_id],
+  );
+  const revoked = await loadPortalSnapshot(parent) as { childAcademics?: { marks?: unknown[] } };
+  assert.equal(revoked.childAcademics?.marks, undefined);
 
   await pool.query(`UPDATE "${schema}".student_profiles SET completed_course_codes = '["CS301"]'::jsonb WHERE id IN ($1, $2)`, [fixture.student2_profile_id, fixture.student10_profile_id]);
   await assert.rejects(

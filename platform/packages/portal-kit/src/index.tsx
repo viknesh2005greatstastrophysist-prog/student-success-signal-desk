@@ -26,6 +26,12 @@ type CatalogueOffering = {
   reasons: string[];
 };
 type RosterStudent = { id: string; register_number: string; display_name: string; registered_at: string };
+type AttendanceView = { code: string; title?: string; session_date: string; topic: string; status: string; revision?: number };
+type MarkView = { code: string; title?: string; assessment: string; maximum_score: string; score: string; feedback: string; revision?: number };
+type Classroom = {
+  attendanceSession: { id: string; session_date: string; topic: string; status: string; revision: number } | null;
+  assessment: { id: string; title: string; category: string; maximum_score: string; weight_percent: string; published: boolean; revision: number } | null;
+};
 type Snapshot = {
   actor: { role: PortalId; displayName: string; email: string };
   institutionRevision: number;
@@ -38,6 +44,10 @@ type Snapshot = {
   assignableOffering?: Offering | null;
   registrationCatalogue?: CatalogueOffering[];
   roster?: RosterStudent[];
+  classroom?: Classroom;
+  academics?: { attendance: AttendanceView[]; marks: MarkView[] };
+  childAcademics?: { studentId: string; grantedFields: string[]; attendance?: AttendanceView[]; marks?: MarkView[] };
+  academicSummary?: { submitted_attendance: number; published_assessments: number };
 };
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } };
 
@@ -58,6 +68,8 @@ function ActivityRail({ activity }: { activity: Activity[] }) {
     "offering.published": "Offering published and faculty assigned",
     "registration.created": "Student registered and roster updated",
     "registration.withdrawn": "Student withdrew and seat was released",
+    "attendance.submitted": "Faculty submitted the attendance register",
+    "marks.published": "Faculty published assessed marks",
   };
   return (
     <aside className="activity-rail" aria-label="Causal activity">
@@ -78,8 +90,9 @@ function PortalMasthead({ portal, snapshot, refresh, signOut, refreshing, active
   portal: PortalDefinition; snapshot: Snapshot; refresh: () => void; signOut: () => void; refreshing: boolean; activeView: string; navigate: (view: string) => void;
 }) {
   const enabledViews: Partial<Record<PortalId, string[]>> = {
-    student: ["Today", "Registration"],
-    faculty: ["Today", "Classrooms"],
+    student: ["Today", "Registration", "Academics"],
+    parent: ["Overview", "Children"],
+    faculty: ["Today", "Classrooms", "Gradebook"],
     hod: ["Department", "Offerings"],
   };
   return (
@@ -169,6 +182,19 @@ function StudentRegistrationSurface({ snapshot, refresh }: { snapshot: Snapshot;
   );
 }
 
+function StudentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
+  const academics = snapshot.academics ?? { attendance: [], marks: [] };
+  return (
+    <section className="role-surface academic-surface">
+      <div className="registration-heading"><div><p className="kicker">Published academic record</p><h1>Your work, in view.</h1></div><p>Attendance appears after faculty submission. Marks appear only after publication. Drafts and internal notes remain outside this portal.</p></div>
+      <div className="academic-columns">
+        <section><div className="section-heading"><span>Attendance record</span><b>{academics.attendance.length}</b></div>{academics.attendance.length ? academics.attendance.map((item) => <article key={`${item.code}-${item.session_date}`}><div><b>{item.code}</b><small>{item.topic}</small></div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>) : <p>No submitted attendance yet.</p>}</section>
+        <section><div className="section-heading"><span>Published marks</span><b>{academics.marks.length}</b></div>{academics.marks.length ? academics.marks.map((item) => <article key={`${item.code}-${item.assessment}`}><div><b>{item.code}</b><small>{item.assessment}</small></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}</p></article>) : <p>No marks have been published yet.</p>}</section>
+      </div>
+    </section>
+  );
+}
+
 function ParentSurface({ snapshot }: { snapshot: Snapshot }) {
   const child = snapshot.children?.[0];
   return (
@@ -180,9 +206,59 @@ function ParentSurface({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-function FacultySurface({ snapshot, showRoster }: { snapshot: Snapshot; showRoster: boolean }) {
+function ParentAcademicsSurface({ snapshot }: { snapshot: Snapshot }) {
+  const child = snapshot.children?.[0];
+  const academics = snapshot.childAcademics;
+  return (
+    <section className="role-surface parent-record-surface">
+      <div className="registration-heading"><div><p className="kicker">Granted child record</p><h1>{child?.display_name ?? "No active link"}</h1></div><p>This view is assembled from the active parent link on every request. Revoking a field removes it on the next refresh.</p></div>
+      <div className="grant-grid parent-record-grants">{academics?.grantedFields.map((grant) => <span key={grant}><i aria-hidden="true">✓</i>{grant}</span>)}</div>
+      <div className="academic-columns">
+        {academics?.attendance ? <section><div className="section-heading"><span>Granted attendance</span><b>{academics.attendance.length}</b></div>{academics.attendance.map((item) => <article key={`${item.code}-${item.session_date}`}><div><b>{item.code}</b><small>{item.topic}</small></div><time>{new Date(item.session_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</time><span className={`academic-status status-${item.status}`}>{item.status}</span></article>)}</section> : <section className="revoked-panel"><p>Attendance access is not granted.</p></section>}
+        {academics?.marks ? <section><div className="section-heading"><span>Granted marks</span><b>{academics.marks.length}</b></div>{academics.marks.map((item) => <article key={`${item.code}-${item.assessment}`}><div><b>{item.code}</b><small>{item.assessment}</small></div><strong>{item.score}<i>/{item.maximum_score}</i></strong><p>{item.feedback}</p></article>)}</section> : <section className="revoked-panel"><p>Marks access is not granted.</p></section>}
+      </div>
+    </section>
+  );
+}
+
+function FacultySurface({ snapshot, activeView, refresh }: { snapshot: Snapshot; activeView: string; refresh: () => Promise<void> | void }) {
   const offering = snapshot.assignableOffering;
   const roster = snapshot.roster ?? [];
+  const attendanceSession = snapshot.classroom?.attendanceSession;
+  const assessment = snapshot.classroom?.assessment;
+  const [attendance, setAttendance] = useState<Record<string, "present" | "absent" | "late" | "excused">>({});
+  const [scores, setScores] = useState<Record<string, string>>({});
+  const [pending, setPending] = useState<"attendance" | "marks" | null>(null);
+  const [message, setMessage] = useState("");
+
+  async function submitRegister() {
+    if (!attendanceSession || !roster.length) return;
+    setPending("attendance"); setMessage("");
+    const response = await fetch(`/api/bff/attendance-sessions/${attendanceSession.id}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ expectedRevision: attendanceSession.revision, records: roster.map((student) => ({ studentId: student.id, status: attendance[student.id] ?? "present" })) }),
+    });
+    const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
+    if (result.ok) { setMessage(`Attendance submitted. Receipt ${result.data.receipt.eventId.slice(0, 8)}.`); await refresh(); }
+    else setMessage(result.error.message);
+    setPending(null);
+  }
+
+  async function submitMarks() {
+    if (!assessment || !roster.length) return;
+    setPending("marks"); setMessage("");
+    const response = await fetch(`/api/bff/assessments/${assessment.id}/marks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ expectedRevision: assessment.revision, marks: roster.map((student) => ({ studentId: student.id, score: Number(scores[student.id] ?? 82), feedback: "Clear reasoning and a well-bounded design." })) }),
+    });
+    const result = await response.json() as ApiResult<{ receipt: { eventId: string } }>;
+    if (result.ok) { setMessage(`Marks published. Receipt ${result.data.receipt.eventId.slice(0, 8)}.`); await refresh(); }
+    else setMessage(result.error.message);
+    setPending(null);
+  }
+
   return (
     <section className="role-surface faculty-surface">
       <div className="hero-copy"><p className="kicker">Faculty operations / 03 Sep</p><h1>Teaching desk.</h1><p>Assigned work only. Everything else stays behind the Core boundary.</p></div>
@@ -190,7 +266,9 @@ function FacultySurface({ snapshot, showRoster }: { snapshot: Snapshot; showRost
         <article><small>09:00 · assigned section</small><h2>{offering ? `${offering.code} ${offering.title}` : "Awaiting HOD assignment"}</h2><p>{offering ? `${offering.enrolment} students · CSE-401` : "The CS401 publication event will place the section here."}</p><span className={offering ? "signal-live" : "signal-waiting"}>{offering ? "ready" : "waiting"}</span></article>
         <article className="queue-card"><small>Registered students</small><strong>{String(roster.length).padStart(2, "0")}</strong><p>{offering ? "Live from the authoritative registration ledger." : "Nothing can be marked before assignment."}</p></article>
       </div>
-      {showRoster && offering ? <section className="roster-register"><div className="section-heading"><span>{offering.code} / section roster</span><b>{roster.length}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{student.display_name}</b><code>{student.register_number}</code><small>registered</small></article>) : <p>No students have registered yet.</p>}</section> : null}
+      {message ? <p className="command-message" role="status">{message}</p> : null}
+      {activeView === "Classrooms" && offering ? <section className="roster-register attendance-register"><div className="section-heading"><span>{offering.code} / {attendanceSession?.topic ?? "attendance sheet"}</span><b>v{attendanceSession?.revision ?? 0}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code></div><label><span className="sr-only">Attendance for {student.display_name}</span><select value={attendance[student.id] ?? "present"} onChange={(event) => setAttendance((current) => ({ ...current, [student.id]: event.target.value as "present" | "absent" | "late" | "excused" }))} data-action-id="faculty-set-attendance"><option value="present">Present</option><option value="absent">Absent</option><option value="late">Late</option><option value="excused">Excused</option></select></label><small>{attendanceSession?.status ?? "open"}</small></article>) : <p>No students have registered yet.</p>}<div className="register-toolbar"><p>Submitting increments the sheet version and publishes the result to authorized views.</p><button type="button" onClick={() => void submitRegister()} disabled={!roster.length || !attendanceSession || pending === "attendance"} data-action-id="faculty-submit-attendance">{pending === "attendance" ? "Submitting…" : attendanceSession?.status === "submitted" ? "Submit correction" : "Submit attendance"}</button></div></section> : null}
+      {activeView === "Gradebook" && offering ? <section className="roster-register gradebook-register"><div className="section-heading"><span>{assessment?.title ?? "gradebook"} / maximum {assessment?.maximum_score ?? 0}</span><b>v{assessment?.revision ?? 0}</b></div>{roster.length ? roster.map((student, index) => <article key={student.id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{student.display_name}</b><code>{student.register_number}</code></div><label><span className="sr-only">Score for {student.display_name}</span><input type="number" min="0" max={assessment?.maximum_score} value={scores[student.id] ?? "82"} onChange={(event) => setScores((current) => ({ ...current, [student.id]: event.target.value }))} data-action-id="faculty-enter-mark" /></label><small>{assessment?.published ? "published" : "draft"}</small></article>) : <p>No students have registered yet.</p>}<div className="register-toolbar"><p>Publishing makes these marks visible to the student and to parents with an active marks grant.</p><button type="button" onClick={() => void submitMarks()} disabled={!roster.length || !assessment || pending === "marks"} data-action-id="faculty-publish-marks">{pending === "marks" ? "Publishing…" : assessment?.published ? "Publish correction" : "Publish marks"}</button></div></section> : null}
     </section>
   );
 }
@@ -233,6 +311,7 @@ function HodSurface({ snapshot, refresh }: { snapshot: Snapshot; refresh: () => 
           </button>
         </div>
       </article>
+      <div className="hod-academic-strip"><article><small>Submitted attendance sheets</small><strong>{snapshot.academicSummary?.submitted_attendance ?? 0}</strong></article><article><small>Published assessments</small><strong>{snapshot.academicSummary?.published_assessments ?? 0}</strong></article><article><small>Current enrolment</small><strong>{offering?.enrolment ?? 0}</strong></article></div>
       {message ? <p className="command-message" role="status">{message}</p> : null}
     </section>
   );
@@ -304,8 +383,10 @@ export function PortalHome({ portal }: { portal: PortalDefinition }) {
           <div className="portal-workspace">
             {portal.id === "student" && activeView === "Today" ? <StudentSurface snapshot={snapshot} /> : null}
             {portal.id === "student" && activeView === "Registration" ? <StudentRegistrationSurface snapshot={snapshot} refresh={load} /> : null}
-            {portal.id === "parent" ? <ParentSurface snapshot={snapshot} /> : null}
-            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} showRoster={activeView === "Classrooms"} /> : null}
+            {portal.id === "student" && activeView === "Academics" ? <StudentAcademicsSurface snapshot={snapshot} /> : null}
+            {portal.id === "parent" && activeView === "Overview" ? <ParentSurface snapshot={snapshot} /> : null}
+            {portal.id === "parent" && activeView === "Children" ? <ParentAcademicsSurface snapshot={snapshot} /> : null}
+            {portal.id === "faculty" ? <FacultySurface snapshot={snapshot} activeView={activeView} refresh={load} /> : null}
             {portal.id === "hod" ? <HodSurface snapshot={snapshot} refresh={load} /> : null}
             {portal.id === "governance" ? <GovernanceSurface snapshot={snapshot} /> : null}
             <ActivityRail activity={snapshot.activity} />

@@ -59,7 +59,10 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
       if (actor.role === "governance") return true;
       if (actor.role === "hod") return event.payload.departmentId === actor.departmentId;
       if (actor.role === "faculty") return event.payload.facultyPersonId === actor.personId;
-      if (actor.role === "student") return event.event_type === "offering.published" || event.payload.studentId === actor.studentId;
+      if (actor.role === "student") {
+        const studentIds = Array.isArray(event.payload.studentIds) ? event.payload.studentIds : [];
+        return event.event_type === "offering.published" || event.payload.studentId === actor.studentId || studentIds.includes(actor.studentId);
+      }
       return false;
     });
 
@@ -146,9 +149,31 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         }
         return { ...item, prerequisites: item.prerequisites ?? [], schedule: item.schedule ?? [], eligible: reasons.length === 0, reasons };
       });
+      const attendance = await client.query(
+        `SELECT course.code, course.title, session.session_date, session.topic, record.status, session.revision
+         FROM attendance_records record
+         JOIN attendance_sessions session ON session.id = record.attendance_session_id
+         JOIN course_offerings offering ON offering.id = session.course_offering_id
+         JOIN courses course ON course.id = offering.course_id
+         WHERE record.generation_id = $1 AND record.student_id = $2 AND session.status IN ('submitted', 'locked')
+         ORDER BY session.session_date DESC`,
+        [generationId, actor.studentId],
+      );
+      const marks = await client.query(
+        `SELECT course.code, course.title, assessment.title AS assessment, assessment.maximum_score::text,
+                mark.score::text, mark.feedback, assessment.revision
+         FROM marks mark
+         JOIN assessments assessment ON assessment.id = mark.assessment_id
+         JOIN course_offerings offering ON offering.id = assessment.course_offering_id
+         JOIN courses course ON course.id = offering.course_id
+         WHERE mark.generation_id = $1 AND mark.student_id = $2 AND assessment.published
+         ORDER BY course.code, assessment.title`,
+        [generationId, actor.studentId],
+      );
+      roleData.academics = { attendance: attendance.rows, marks: marks.rows };
     }
     if (actor.role === "parent") {
-      const children = await client.query(
+      const children = await client.query<{ id: string; display_name: string; register_number: string; grants: string[] | null }>(
         `SELECT sp.id, p.display_name, sp.register_number, array_agg(pfg.field_group ORDER BY pfg.field_group) FILTER (WHERE pfg.granted) AS grants
          FROM parent_links pl
          JOIN student_profiles sp ON sp.id = pl.student_id
@@ -160,6 +185,36 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
         [generationId, actor.personId],
       );
       roleData.children = children.rows;
+      const child = children.rows[0];
+      if (child) {
+        const grants = child.grants ?? [];
+        const attendance = grants.includes("attendance") ? await client.query(
+          `SELECT course.code, session.session_date, session.topic, record.status
+           FROM attendance_records record
+           JOIN attendance_sessions session ON session.id = record.attendance_session_id
+           JOIN course_offerings offering ON offering.id = session.course_offering_id
+           JOIN courses course ON course.id = offering.course_id
+           WHERE record.generation_id = $1 AND record.student_id = $2 AND session.status IN ('submitted', 'locked')
+           ORDER BY session.session_date DESC`,
+          [generationId, child.id],
+        ) : undefined;
+        const marks = grants.includes("marks") ? await client.query(
+          `SELECT course.code, assessment.title AS assessment, assessment.maximum_score::text, mark.score::text, mark.feedback
+           FROM marks mark
+           JOIN assessments assessment ON assessment.id = mark.assessment_id
+           JOIN course_offerings offering ON offering.id = assessment.course_offering_id
+           JOIN courses course ON course.id = offering.course_id
+           WHERE mark.generation_id = $1 AND mark.student_id = $2 AND assessment.published
+           ORDER BY course.code, assessment.title`,
+          [generationId, child.id],
+        ) : undefined;
+        roleData.childAcademics = {
+          studentId: child.id,
+          grantedFields: grants,
+          attendance: attendance?.rows,
+          marks: marks?.rows,
+        };
+      }
     }
     if (actor.role === "faculty") {
       roleData.assignableOffering = offering.rows[0]?.faculty_person_id === actor.personId ? offering.rows[0] : null;
@@ -174,11 +229,37 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor) {
           [generationId, offering.rows[0].id],
         );
         roleData.roster = roster.rows;
+        const attendanceSession = await client.query(
+          `SELECT id, session_date, topic, status, revision
+           FROM attendance_sessions WHERE generation_id = $1 AND course_offering_id = $2
+           ORDER BY session_date DESC LIMIT 1`,
+          [generationId, offering.rows[0].id],
+        );
+        const assessment = await client.query(
+          `SELECT id, title, category, maximum_score::text, weight_percent::text, published, revision
+           FROM assessments WHERE generation_id = $1 AND course_offering_id = $2
+           ORDER BY title LIMIT 1`,
+          [generationId, offering.rows[0].id],
+        );
+        roleData.classroom = { attendanceSession: attendanceSession.rows[0] ?? null, assessment: assessment.rows[0] ?? null };
       } else roleData.roster = [];
     }
     if (actor.role === "hod") {
       roleData.departmentPeople = people.rows.filter((person) => person.department_id === actor.departmentId);
       roleData.availableFaculty = people.rows.filter((person) => person.department_id === actor.departmentId && person.role === "faculty");
+      const academicSummary = await client.query<{ submitted_attendance: number; published_assessments: number }>(
+        `SELECT
+          (SELECT count(*)::int FROM attendance_sessions attendance
+           JOIN course_offerings offering ON offering.id = attendance.course_offering_id
+           JOIN courses course ON course.id = offering.course_id
+           WHERE attendance.generation_id = $1 AND course.department_id = $2 AND attendance.status IN ('submitted', 'locked')) AS submitted_attendance,
+          (SELECT count(*)::int FROM assessments assessment
+           JOIN course_offerings offering ON offering.id = assessment.course_offering_id
+           JOIN courses course ON course.id = offering.course_id
+           WHERE assessment.generation_id = $1 AND course.department_id = $2 AND assessment.published) AS published_assessments`,
+        [generationId, actor.departmentId],
+      );
+      roleData.academicSummary = academicSummary.rows[0];
     }
 
     return {

@@ -250,6 +250,10 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
       "INSERT INTO attendance_records (id, generation_id, attendance_session_id, student_id, status, recorded_by_person_id) VALUES ($1, $2, $3, $4, 'present', $5)",
       [randomUUID(), generationId, sessionId, studentProfileIds[0], faculty[0]!.id],
     );
+    await client.query(
+      "INSERT INTO attendance_sessions (id, generation_id, course_offering_id, session_date, topic, status) VALUES ($1, $2, $3, '2026-09-03', 'Agent workflow design', 'open')",
+      [randomUUID(), generationId, offeringIds.get("CS401")],
+    );
 
     const assessmentId = randomUUID();
     await client.query(
@@ -259,6 +263,10 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
     await client.query(
       "INSERT INTO marks (id, generation_id, assessment_id, student_id, score, feedback, recorded_by_person_id) VALUES ($1, $2, $3, $4, 82, 'Strong foundations. Show more working in the next review.', $5)",
       [randomUUID(), generationId, assessmentId, studentProfileIds[0], faculty[0]!.id],
+    );
+    await client.query(
+      "INSERT INTO assessments (id, generation_id, course_offering_id, title, category, maximum_score, weight_percent, published) VALUES ($1, $2, $3, 'Agent design review', 'internal', 100, 25, false)",
+      [randomUUID(), generationId, offeringIds.get("CS401")],
     );
 
     await client.query(

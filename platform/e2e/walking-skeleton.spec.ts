@@ -18,7 +18,7 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
 }
 
-test("J01-J02 cross independent role sessions through the authoritative Core", async ({ browser }) => {
+test("J01-J05 cross independent role sessions through the authoritative Core", async ({ browser }) => {
   test.skip(!process.env.DEMO_ACCESS_PIN, "DEMO_ACCESS_PIN is required");
   const context = await browser.newContext();
   const hod = await context.newPage();
@@ -49,24 +49,41 @@ test("J01-J02 cross independent role sessions through the authoritative Core", a
   await expect(faculty.getByText("ready", { exact: true })).toBeVisible();
   await faculty.getByRole("button", { name: "Classrooms", exact: true }).click();
   await expect(faculty.getByText("Ananya Rao", { exact: true })).toBeVisible();
+  await faculty.getByRole("button", { name: "Submit attendance", exact: true }).click();
+  await expect(faculty.getByText(/Attendance submitted\. Receipt/i)).toBeVisible();
+  await faculty.getByRole("button", { name: "Gradebook", exact: true }).click();
+  await faculty.getByRole("button", { name: "Publish marks", exact: true }).click();
+  await expect(faculty.getByText(/Marks published\. Receipt/i)).toBeVisible();
 
   await hod.getByRole("button", { name: "Refresh portal data" }).click();
   await expect(hod.getByText(/1 enrolled/i)).toBeVisible();
+  await expect(hod.locator(".hod-academic-strip article").nth(0)).toContainText("2");
+  await expect(hod.locator(".hod-academic-strip article").nth(1)).toContainText("2");
+
+  await student.getByRole("button", { name: "Refresh portal data" }).click();
+  await student.getByRole("button", { name: "Academics", exact: true }).click();
+  await expect(student.getByText("Agent workflow design", { exact: true })).toBeVisible();
+  await expect(student.getByText("Agent design review", { exact: true })).toBeVisible();
 
   await enterPortal(parent, "parent");
   await expect(parent.getByText("Ananya Rao", { exact: true })).toBeVisible();
   await expect(parent.locator(".grant-count")).toContainText("4");
+  await parent.getByRole("button", { name: "Children", exact: true }).click();
+  await expect(parent.getByText("Agent workflow design", { exact: true })).toBeVisible();
+  await expect(parent.getByText("Agent design review", { exact: true })).toBeVisible();
 
   await enterPortal(governance, "governance");
   await expect(governance.getByText(/Offering published and faculty assigned/i)).toBeVisible();
   await expect(governance.getByText(/Student registered and roster updated/i)).toBeVisible();
+  await expect(governance.getByText(/Faculty submitted the attendance register/i)).toBeVisible();
+  await expect(governance.getByText(/Faculty published assessed marks/i)).toBeVisible();
   await expect(governance.getByText("NONE", { exact: true })).toBeVisible();
 
   await parent.getByTitle("Sign out").click();
   await expect(parent.getByRole("link", { name: /Enter as/i })).toBeVisible();
   await student.getByRole("button", { name: "Refresh portal data" }).click();
   await expect(student.getByTitle("Sign out")).toBeVisible();
-  await expect(student.getByText("Active registration", { exact: true })).toBeVisible();
+  await expect(student.getByText("Agent design review", { exact: true })).toBeVisible();
 
   await expect(student.locator('a[href="#"]')).toHaveCount(0);
   await expect(parent.locator('a[href="#"]')).toHaveCount(0);

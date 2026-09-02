@@ -220,6 +220,14 @@ export function portalWithdrawRegistration(request: Request, portal: PortalId, r
   return portalCoreCommand(request, portal, `/api/v1/registrations/${encodeURIComponent(registrationId)}/withdraw`);
 }
 
+export function portalSubmitAttendance(request: Request, portal: PortalId, sessionId: string) {
+  return portalCoreCommand(request, portal, `/api/v1/attendance-sessions/${encodeURIComponent(sessionId)}/submit`);
+}
+
+export function portalPublishMarks(request: Request, portal: PortalId, assessmentId: string) {
+  return portalCoreCommand(request, portal, `/api/v1/assessments/${encodeURIComponent(assessmentId)}/marks`);
+}
+
 export async function endPortalSession(request: Request, portal: PortalId) {
   const config = settings(portal);
   if (!sameOrigin(request, portal)) return new Response("Request origin rejected", { status: 403 });
