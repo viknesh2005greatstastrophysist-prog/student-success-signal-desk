@@ -7,7 +7,7 @@ export function GET() {
     {
       ok: true,
       data: {
-        service: "aura-student-portal",
+        service: "aura-identity-service",
         release: process.env.RELEASE_SHA ?? process.env.COMMIT_REF ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "local",
       },
     },

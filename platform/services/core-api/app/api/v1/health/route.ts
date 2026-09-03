@@ -9,7 +9,7 @@ export function GET() {
       data: {
         service: "aura-core-api",
         version: "0.1.0",
-        release: process.env.VERCEL_GIT_COMMIT_SHA ?? "local",
+        release: process.env.RELEASE_SHA ?? process.env.COMMIT_REF ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "local",
         database: "not-probed",
       },
     },

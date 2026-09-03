@@ -1,21 +1,11 @@
 import type { NextConfig } from "next";
+import { resolvePortalOrigins } from "@aura/contracts";
 
 const scriptPolicy = process.env.NODE_ENV === "production"
   ? "'self' 'unsafe-inline'"
   : "'self' 'unsafe-inline' 'unsafe-eval'";
 
-const portalFormTargets = [
-  "http://127.0.0.1:3101",
-  "http://127.0.0.1:3102",
-  "http://127.0.0.1:3103",
-  "http://127.0.0.1:3104",
-  "http://127.0.0.1:3105",
-  "https://aura-student-portal.vercel.app",
-  "https://aura-parent-portal.vercel.app",
-  "https://aura-faculty-portal.vercel.app",
-  "https://aura-hod-portal.vercel.app",
-  "https://aura-ai-governance.vercel.app",
-].join(" ");
+const portalFormTargets = Object.values(resolvePortalOrigins(process.env.AURA_PORTAL_ORIGINS_JSON)).flat().join(" ");
 
 function headers(formTargets = "'self'") {
   const contentSecurityPolicy = [

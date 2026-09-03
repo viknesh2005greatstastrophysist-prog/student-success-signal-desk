@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
-import { portalOidcClients } from "@aura/contracts";
+import { portalOidcClients, resolvePortalOrigins } from "@aura/contracts";
 
 import { auth } from "../lib/auth";
 
@@ -10,12 +10,13 @@ const databaseSchema = process.env.AUTH_DATABASE_SCHEMA ?? "aura_identity";
 if (!databaseUrl) throw new Error("Database URL is required");
 
 const clients = [
-  { id: "student", name: "AURA Student Portal", port: 3101, domain: "aura-student-portal.vercel.app" },
-  { id: "parent", name: "AURA Parent Portal", port: 3102, domain: "aura-parent-portal.vercel.app" },
-  { id: "faculty", name: "AURA Faculty Portal", port: 3103, domain: "aura-faculty-portal.vercel.app" },
-  { id: "hod", name: "AURA HOD Portal", port: 3104, domain: "aura-hod-portal.vercel.app" },
-  { id: "governance", name: "AURA AI Governance", port: 3105, domain: "aura-ai-governance.vercel.app" },
+  { id: "student", name: "AURA Student Portal" },
+  { id: "parent", name: "AURA Parent Portal" },
+  { id: "faculty", name: "AURA Faculty Portal" },
+  { id: "hod", name: "AURA HOD Portal" },
+  { id: "governance", name: "AURA AI Governance" },
 ] as const;
+const portalOrigins = resolvePortalOrigins(process.env.AURA_PORTAL_ORIGINS_JSON);
 
 const pool = new Pool({
   connectionString: databaseUrl,
@@ -40,8 +41,8 @@ try {
          WHERE "clientId" = $1`,
         [
           existing.rows[0].clientId,
-          JSON.stringify([`https://${client.domain}/api/auth/callback/aura`, `http://127.0.0.1:${client.port}/api/auth/callback/aura`]),
-          JSON.stringify([`https://${client.domain}/`, `http://127.0.0.1:${client.port}/`]),
+          JSON.stringify(portalOrigins[client.id].map((origin) => `${origin}/api/auth/callback/aura`)),
+          JSON.stringify(portalOrigins[client.id].map((origin) => `${origin}/`)),
         ],
       );
       result[client.id] = existing.rows[0].clientId;
@@ -71,14 +72,8 @@ try {
         headers,
         body: {
           client_name: client.name,
-          redirect_uris: [
-            `https://${client.domain}/api/auth/callback/aura`,
-            `http://127.0.0.1:${client.port}/api/auth/callback/aura`,
-          ],
-          post_logout_redirect_uris: [
-            `https://${client.domain}/`,
-            `http://127.0.0.1:${client.port}/`,
-          ],
+          redirect_uris: portalOrigins[client.id].map((origin) => `${origin}/api/auth/callback/aura`),
+          post_logout_redirect_uris: portalOrigins[client.id].map((origin) => `${origin}/`),
           token_endpoint_auth_method: "none",
           application_type: "web",
           grant_types: ["authorization_code", "refresh_token"],

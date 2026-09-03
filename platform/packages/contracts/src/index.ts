@@ -25,6 +25,49 @@ export const portalOidcClients: Record<PortalId, string> = {
   governance: "jnDmKEJpxPXzqcwskyxaPJReUkAEWXLE",
 };
 
+const productionPortalOrigins: Record<PortalId, string> = {
+  student: "https://aura-student-portal.vercel.app",
+  parent: "https://aura-parent-portal.vercel.app",
+  faculty: "https://aura-faculty-portal.vercel.app",
+  hod: "https://aura-hod-portal.vercel.app",
+  governance: "https://aura-ai-governance.vercel.app",
+};
+
+const localPortalOrigins: Record<PortalId, string> = {
+  student: "http://127.0.0.1:3101",
+  parent: "http://127.0.0.1:3102",
+  faculty: "http://127.0.0.1:3103",
+  hod: "http://127.0.0.1:3104",
+  governance: "http://127.0.0.1:3105",
+};
+
+export function resolvePortalOrigins(configuredJson?: string): Record<PortalId, string[]> {
+  const configured = configuredJson ? JSON.parse(configuredJson) as unknown : {};
+  if (!configured || typeof configured !== "object" || Array.isArray(configured)) {
+    throw new Error("AURA_PORTAL_ORIGINS_JSON must be a portal-to-origin object");
+  }
+
+  const result = {} as Record<PortalId, string[]>;
+  const configuredRecord = configured as Record<string, unknown>;
+  for (const portal of portalIdSchema.options) {
+    const raw = configuredRecord[portal];
+    const additions = raw === undefined ? [] : Array.isArray(raw) ? raw : [raw];
+    const normalized = additions.map((candidate) => {
+      if (typeof candidate !== "string") throw new Error(`${portal} portal origin must be a string`);
+      const url = new URL(candidate);
+      if (url.protocol !== "https:" || url.origin !== candidate.replace(/\/$/, "")) {
+        throw new Error(`${portal} portal origin must be an HTTPS origin without a path`);
+      }
+      return url.origin;
+    });
+    result[portal] = [...new Set([productionPortalOrigins[portal], localPortalOrigins[portal], ...normalized])];
+  }
+
+  const unknownPortals = Object.keys(configuredRecord).filter((portal) => !portalIdSchema.options.includes(portal as PortalId));
+  if (unknownPortals.length) throw new Error(`Unknown portal origin keys: ${unknownPortals.join(", ")}`);
+  return result;
+}
+
 export const causalReceiptSchema = z.object({
   commandId: z.string().uuid(),
   eventId: z.string().uuid(),

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { coreApiAudience, portalOidcClients } from "@aura/contracts";
+import { coreApiAudience, portalOidcClients, resolvePortalOrigins } from "@aura/contracts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const expected = ["student", "parent", "faculty", "hod", "governance"];
@@ -35,6 +35,18 @@ test("every portal carries an independent client and release contract", async ()
     clientIds.push(contract.oidcClientId);
   }
   assert.equal(new Set(clientIds).size, 5);
+});
+
+test("alternate deployment origins remain role-mapped and HTTPS-only", () => {
+  const origins = resolvePortalOrigins(JSON.stringify({
+    student: "https://student.example.test",
+    governance: ["https://governance.example.test/"],
+  }));
+  assert.ok(origins.student.includes("https://student.example.test"));
+  assert.ok(origins.governance.includes("https://governance.example.test"));
+  assert.ok(origins.parent.includes("https://aura-parent-portal.vercel.app"));
+  assert.throws(() => resolvePortalOrigins('{"student":"http://student.example.test"}'), /HTTPS origin/);
+  assert.throws(() => resolvePortalOrigins('{"admin":"https://admin.example.test"}'), /Unknown portal/);
 });
 
 test("every public surface uses the shared browser security policy", async () => {
