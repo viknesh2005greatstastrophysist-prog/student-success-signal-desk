@@ -17,9 +17,28 @@ test("exactly five independent portal workspaces are declared", async () => {
     const pkg = JSON.parse(await readFile(join(root, "apps", `${portal}-portal`, "package.json"), "utf8"));
     assert.equal(pkg.private, true);
     assert.ok(pkg.scripts.build);
+    assert.equal(pkg.scripts.start, "next start");
     names.push(pkg.name);
   }
   assert.equal(new Set(names).size, 5);
+});
+
+test("the five-service Railway topology preserves the independent portals and control-plane boundaries", async () => {
+  const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  assert.equal(rootPackage.scripts["start:railway-control-plane"], "node scripts/railway-control-plane.mjs");
+  for (const service of ["auth-server", "core-api"]) {
+    const pkg = JSON.parse(await readFile(join(root, "services", service, "package.json"), "utf8"));
+    assert.equal(pkg.scripts.start, "next start");
+  }
+
+  const gateway = await readFile(join(root, "scripts/railway-control-plane.mjs"), "utf8");
+  assert.match(gateway, /pathname === "\/api\/auth\/callback\/aura"/);
+  assert.match(gateway, /pathname\.startsWith\("\/api\/auth\/"\)/);
+  assert.match(gateway, /pathname\.startsWith\("\/api\/v1\/"\)/);
+  assert.ok(
+    gateway.indexOf('pathname === "/api/auth/callback/aura"') < gateway.indexOf('pathname.startsWith("/api/auth/")'),
+    "the portal callback must win before the Identity catch-all",
+  );
 });
 
 test("every portal carries an independent client and release contract", async () => {
