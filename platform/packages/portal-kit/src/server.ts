@@ -58,6 +58,25 @@ function redirect(location: string | URL, status = 302) {
   return new Response(null, { status, headers: { Location: location.toString() } });
 }
 
+function completeBrowserNavigation(location: URL) {
+  // Some serverless adapters preserve the callback request's query string on
+  // same-origin 3xx responses. Complete the navigation in a no-referrer HTML
+  // document so authorization codes never reach the destination URL, browser
+  // history, or same-origin subresource requests.
+  const target = location.toString()
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  const response = new Response(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=${target}"><title>Completing sign-in</title></head><body><p>Completing sign-in…</p></body></html>`,
+    { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } },
+  );
+  response.headers.set("Cache-Control", "no-store");
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
+}
+
 async function seal(payload: object, secret: string, audience: string, expiresIn: string) {
   return new EncryptJWT({ ...payload }).setProtectedHeader({ alg: "dir", enc: "A256GCM" }).setIssuedAt().setAudience(audience).setExpirationTime(expiresIn).encrypt(key(secret));
 }
@@ -148,10 +167,9 @@ export async function finishPortalLogin(request: Request, portal: PortalId) {
     `${expiresIn}s`,
   );
   const destination = new URL(transaction.returnTo, config.origin);
-  const response = redirect(destination, 303);
+  const response = completeBrowserNavigation(destination);
   response.headers.append("Set-Cookie", cookie(cookieName(portal, "session", config.secure), session, config.secure, expiresIn));
   response.headers.append("Set-Cookie", cookie(cookieName(portal, "tx", config.secure), "", config.secure, 0));
-  response.headers.set("Cache-Control", "no-store");
   return response;
 }
 

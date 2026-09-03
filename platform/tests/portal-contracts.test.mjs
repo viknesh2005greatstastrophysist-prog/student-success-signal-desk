@@ -74,3 +74,11 @@ test("every public surface uses the shared browser security policy", async () =>
     "X-Frame-Options",
   ]) assert.match(policy, new RegExp(header), `${header} is missing from the shared policy`);
 });
+
+test("the OAuth callback finishes through a no-referrer navigation document", async () => {
+  const source = await readFile(join(root, "packages/portal-kit/src/server.ts"), "utf8");
+  assert.match(source, /completeBrowserNavigation\(destination\)/);
+  assert.match(source, /<meta name="referrer" content="no-referrer">/);
+  assert.match(source, /<meta http-equiv="refresh"/);
+  assert.match(source, /response\.headers\.set\("Referrer-Policy", "no-referrer"\)/);
+});
