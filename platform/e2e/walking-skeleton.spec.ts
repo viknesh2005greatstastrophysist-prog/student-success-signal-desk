@@ -300,7 +300,7 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await governance.getByLabel(/Type AURA-SYNTHETIC-SEED-V1 to confirm/i).fill("AURA-SYNTHETIC-SEED-V1");
   await expect(resetButton).toBeEnabled();
   await resetButton.click();
-  await expect(governance.getByText(/New synthetic generation active/i)).toBeVisible();
+  await expect(governance.getByText(/New synthetic generation active/i)).toBeVisible({ timeout: 60_000 });
   await student.getByRole("button", { name: "Refresh portal data" }).click();
   await student.getByRole("button", { name: "Today", exact: true }).click();
   await expect(student.getByText("draft", { exact: true }).first()).toBeVisible();

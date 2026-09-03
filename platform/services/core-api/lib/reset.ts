@@ -15,15 +15,21 @@ type SeedPerson = {
 
 const seedVersion = "AURA-SYNTHETIC-SEED-V1" as const;
 
-async function insertPerson(client: PoolClient, generationId: string, person: SeedPerson): Promise<void> {
-  await client.query(
-    "INSERT INTO people (id, generation_id, external_subject, display_name, email) VALUES ($1, $2, $3, $4, $5)",
-    [person.id, generationId, person.subject, person.name, person.email],
-  );
-  await client.query(
-    "INSERT INTO role_assignments (id, generation_id, person_id, role, department_id) VALUES ($1, $2, $3, $4, $5)",
-    [randomUUID(), generationId, person.id, person.role, person.departmentId ?? null],
-  );
+type SqlValue = string | number | boolean | null;
+
+async function insertRows(
+  client: PoolClient,
+  table: string,
+  columns: readonly string[],
+  rows: readonly (readonly SqlValue[])[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const values = rows.flat();
+  const tuples = rows.map((row, rowIndex) => {
+    const offset = rowIndex * columns.length;
+    return `(${row.map((_, columnIndex) => `$${offset + columnIndex + 1}`).join(", ")})`;
+  });
+  await client.query(`INSERT INTO ${table} (${columns.join(", ")}) VALUES ${tuples.join(", ")}`, values);
 }
 
 export async function resetSyntheticSeed(confirmation: string, requestedBy = "local-operator"): Promise<SeedManifest> {
@@ -124,40 +130,50 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
       role: "governance",
     };
 
-    for (const person of [...students, ...parents, ...faculty, ...hods, governance]) {
-      await insertPerson(client, generationId, person);
-    }
+    const people = [...students, ...parents, ...faculty, ...hods, governance];
+    await insertRows(
+      client,
+      "people",
+      ["id", "generation_id", "external_subject", "display_name", "email"],
+      people.map((person) => [person.id, generationId, person.subject, person.name, person.email]),
+    );
+    await insertRows(
+      client,
+      "role_assignments",
+      ["id", "generation_id", "person_id", "role", "department_id"],
+      people.map((person) => [randomUUID(), generationId, person.id, person.role, person.departmentId ?? null]),
+    );
 
-    const studentProfileIds: string[] = [];
-    for (let index = 0; index < students.length; index += 1) {
-      const profileId = randomUUID();
-      studentProfileIds.push(profileId);
-      await client.query(
-        "INSERT INTO student_profiles (id, generation_id, person_id, department_id, register_number, cohort_year, semester, completed_course_codes) VALUES ($1, $2, $3, $4, $5, 2023, 7, $6::jsonb)",
-        [
-          profileId,
-          generationId,
-          students[index]!.id,
-          students[index]!.departmentId,
-          `SYN-${index < 10 ? "CSE" : "ECE"}-${String(index + 1).padStart(3, "0")}`,
-          JSON.stringify(index === 0 ? ["CS301"] : []),
-        ],
-      );
-    }
+    const studentProfileIds = students.map(() => randomUUID());
+    await insertRows(
+      client,
+      "student_profiles",
+      ["id", "generation_id", "person_id", "department_id", "register_number", "cohort_year", "semester", "completed_course_codes"],
+      students.map((student, index) => [
+        studentProfileIds[index]!,
+        generationId,
+        student.id,
+        student.departmentId ?? null,
+        `SYN-${index < 10 ? "CSE" : "ECE"}-${String(index + 1).padStart(3, "0")}`,
+        2023,
+        7,
+        JSON.stringify(index === 0 ? ["CS301"] : []),
+      ]),
+    );
 
-    for (let index = 0; index < studentProfileIds.length; index += 1) {
-      const linkId = randomUUID();
-      await client.query(
-        "INSERT INTO parent_links (id, generation_id, parent_person_id, student_id, relationship) VALUES ($1, $2, $3, $4, 'Guardian')",
-        [linkId, generationId, parents[index % parents.length]!.id, studentProfileIds[index]],
-      );
-      for (const fieldGroup of ["attendance", "marks", "fees", "support"]) {
-        await client.query(
-          "INSERT INTO parent_field_grants (id, generation_id, parent_link_id, field_group) VALUES ($1, $2, $3, $4)",
-          [randomUUID(), generationId, linkId, fieldGroup],
-        );
-      }
-    }
+    const parentLinkIds = studentProfileIds.map(() => randomUUID());
+    await insertRows(
+      client,
+      "parent_links",
+      ["id", "generation_id", "parent_person_id", "student_id", "relationship"],
+      studentProfileIds.map((studentId, index) => [parentLinkIds[index]!, generationId, parents[index % parents.length]!.id, studentId, "Guardian"]),
+    );
+    await insertRows(
+      client,
+      "parent_field_grants",
+      ["id", "generation_id", "parent_link_id", "field_group"],
+      parentLinkIds.flatMap((linkId) => ["attendance", "marks", "fees", "support"].map((fieldGroup) => [randomUUID(), generationId, linkId, fieldGroup])),
+    );
 
     const courseSpecs = [
       ["CS301", "Machine Learning Foundations", cseId, 4],
@@ -167,30 +183,36 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
       ["EC301", "Digital Signal Processing", eceId, 4],
       ["EC401", "Embedded Intelligence", eceId, 4],
     ] as const;
-    const courseIds = new Map<string, string>();
-    for (const [code, title, departmentId, credits] of courseSpecs) {
-      const courseId = randomUUID();
-      courseIds.set(code, courseId);
-      await client.query(
-        "INSERT INTO courses (id, generation_id, department_id, code, title, credits, description) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        [courseId, generationId, departmentId, code, title, credits, `${title} in the synthetic AURA curriculum.`],
-      );
-    }
+    const courseIds = new Map(courseSpecs.map(([code]) => [code, randomUUID()]));
+    await insertRows(
+      client,
+      "courses",
+      ["id", "generation_id", "department_id", "code", "title", "credits", "description"],
+      courseSpecs.map(([code, title, departmentId, credits]) => [
+        courseIds.get(code)!,
+        generationId,
+        departmentId,
+        code,
+        title,
+        credits,
+        `${title} in the synthetic AURA curriculum.`,
+      ]),
+    );
     await client.query(
       "INSERT INTO course_prerequisites (id, generation_id, course_id, prerequisite_course_id) VALUES ($1, $2, $3, $4)",
       [randomUUID(), generationId, courseIds.get("CS401"), courseIds.get("CS301")],
     );
 
-    const offeringIds = new Map<string, string>();
-    for (const [code] of courseSpecs) {
-      const offeringId = randomUUID();
-      offeringIds.set(code, offeringId);
-      const draft = code === "CS401";
-      await client.query(
-        "INSERT INTO course_offerings (id, generation_id, course_id, term_id, section, capacity, status, published_at) VALUES ($1, $2, $3, $4, 'A', 30, $5, $6)",
-        [offeringId, generationId, courseIds.get(code), termId, draft ? "draft" : "published", draft ? null : "2026-08-10T09:00:00Z"],
-      );
-    }
+    const offeringIds = new Map(courseSpecs.map(([code]) => [code, randomUUID()]));
+    await insertRows(
+      client,
+      "course_offerings",
+      ["id", "generation_id", "course_id", "term_id", "section", "capacity", "status", "published_at"],
+      courseSpecs.map(([code]) => {
+        const draft = code === "CS401";
+        return [offeringIds.get(code)!, generationId, courseIds.get(code)!, termId, "A", 30, draft ? "draft" : "published", draft ? null : "2026-08-10T09:00:00Z"];
+      }),
+    );
 
     await client.query(
       "INSERT INTO registration_windows (id, generation_id, term_id, department_id, opens_at, closes_at, status) VALUES ($1, $2, $3, $4, '2026-08-01T00:00:00Z', '2026-09-30T23:59:59Z', 'open'), ($5, $2, $3, $6, '2026-08-01T00:00:00Z', '2026-09-30T23:59:59Z', 'open')",
@@ -205,25 +227,32 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
       ["EC301", 2, "10:00", "11:00", "ECE-210"],
       ["EC401", 4, "13:00", "14:00", "ECE-410"],
     ] as const;
-    for (const [code, weekday, startsAt, endsAt, room] of timetable) {
-      await client.query(
-        "INSERT INTO timetable_slots (id, generation_id, course_offering_id, weekday, starts_at, ends_at, room) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        [randomUUID(), generationId, offeringIds.get(code), weekday, startsAt, endsAt, room],
-      );
-    }
+    await insertRows(
+      client,
+      "timetable_slots",
+      ["id", "generation_id", "course_offering_id", "weekday", "starts_at", "ends_at", "room"],
+      timetable.map(([code, weekday, startsAt, endsAt, room]) => [randomUUID(), generationId, offeringIds.get(code)!, weekday, startsAt, endsAt, room]),
+    );
 
-    for (const [facultyIndex, code] of [
+    const facultyOfferingAssignments = [
       [0, "CS301"],
       [1, "CS402"],
       [2, "CS403"],
       [3, "EC301"],
       [3, "EC401"],
-    ] as const) {
-      await client.query(
-        "INSERT INTO faculty_assignments (id, generation_id, faculty_person_id, course_offering_id, assigned_by_person_id) VALUES ($1, $2, $3, $4, $5)",
-        [randomUUID(), generationId, faculty[facultyIndex]!.id, offeringIds.get(code), hods[facultyIndex === 3 ? 1 : 0]!.id],
-      );
-    }
+    ] as const;
+    await insertRows(
+      client,
+      "faculty_assignments",
+      ["id", "generation_id", "faculty_person_id", "course_offering_id", "assigned_by_person_id"],
+      facultyOfferingAssignments.map(([facultyIndex, code]) => [
+        randomUUID(),
+        generationId,
+        faculty[facultyIndex]!.id,
+        offeringIds.get(code)!,
+        hods[facultyIndex === 3 ? 1 : 0]!.id,
+      ]),
+    );
 
     await client.query(
       "INSERT INTO registrations (id, generation_id, student_id, course_offering_id, status, grade) VALUES ($1, $2, $3, $4, 'completed', 'A'), ($5, $2, $6, $7, 'registered', NULL), ($8, $2, $9, $10, 'registered', NULL)",
