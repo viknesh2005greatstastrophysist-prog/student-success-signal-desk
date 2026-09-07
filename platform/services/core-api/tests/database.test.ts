@@ -18,7 +18,7 @@ import { composeValidatedRecommendation, decideSupportCase, loadGovernanceRun, p
 
 const runDatabaseTests = process.env.RUN_DB_TESTS === "1";
 
-test("isolated Core schema migrates to exactly 34 domain tables and resets serially", { skip: !runDatabaseTests }, async () => {
+test("isolated Core schema includes the Chapter 11 tables and resets serially", { skip: !runDatabaseTests }, async () => {
   assert.notEqual(process.env.CORE_DATABASE_SCHEMA, "aura_core", "Database tests must not target the deployed Core schema");
   assert.match(process.env.CORE_DATABASE_SCHEMA ?? "", /^aura_core_test/);
 
@@ -47,7 +47,7 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
     "SELECT count(*)::text AS count FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations'",
     [schema],
   );
-  assert.equal(Number(tableCount.rows[0]?.count), 34);
+  assert.equal(Number(tableCount.rows[0]?.count), 40);
 
   const completedResets = await pool.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM "${schema}".simulation_resets WHERE completed_at IS NOT NULL`,
@@ -58,7 +58,7 @@ test("isolated Core schema migrates to exactly 34 domain tables and resets seria
     "SELECT count(DISTINCT trigger_name)::text AS count FROM information_schema.triggers WHERE trigger_schema = $1 AND trigger_name LIKE '%_append_only'",
     [schema],
   );
-  assert.equal(Number(triggerCount.rows[0]?.count), 8);
+  assert.equal(Number(triggerCount.rows[0]?.count), 10);
 
   const fixtures = await pool.query<{
     generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;

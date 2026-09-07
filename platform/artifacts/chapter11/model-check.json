@@ -1,0 +1,113 @@
+{
+  "verifiedAt": "2026-09-07T16:56:43.134Z",
+  "synthetic": true,
+  "elapsedMs": 16002,
+  "packet": {
+    "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+    "actions": [
+      {
+        "code": "faculty-check-in",
+        "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+        "owner": "assigned_faculty",
+        "dueInDays": 7
+      },
+      {
+        "code": "student-study-plan",
+        "label": "Agree a weekly study plan with the assigned mentor",
+        "owner": "assigned_faculty",
+        "dueInDays": 7
+      },
+      {
+        "code": "lms-catch-up",
+        "label": "Agree a catch-up schedule for overdue learning activities",
+        "owner": "assigned_faculty",
+        "dueInDays": 7
+      }
+    ],
+    "citations": [
+      {
+        "evidencePath": "evidence.academic.values.attendancePct",
+        "statement": "attendancePct is 65; policy threshold is below 75."
+      },
+      {
+        "evidencePath": "evidence.academic.values.markPct",
+        "statement": "markPct is 55; policy threshold is below 60."
+      },
+      {
+        "evidencePath": "evidence.lms.values.inactivityDays",
+        "statement": "inactivityDays is 9; policy threshold is at least 7."
+      },
+      {
+        "evidencePath": "evidence.lms.values.overdueAssignments",
+        "statement": "overdueAssignments is 2; policy threshold is at least 1."
+      }
+    ],
+    "prohibited": []
+  },
+  "mode": "model",
+  "modelId": "qwen3.8:27b-mlx",
+  "validation": {
+    "valid": true,
+    "failures": [],
+    "repairs": [],
+    "fallback": false,
+    "providerError": null,
+    "modelAttempts": [
+      {
+        "attempt": 0,
+        "inputHash": "7184564e58aeb44f5f91adf33db3e4785b9d0c9690bf53bbbf11db4e2707735e",
+        "output": {
+          "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+          "actions": [
+            {
+              "code": "faculty-check-in",
+              "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+              "owner": "assigned_faculty",
+              "dueInDays": 7
+            },
+            {
+              "code": "student-study-plan",
+              "label": "Agree a weekly study plan with the assigned mentor",
+              "owner": "assigned_faculty",
+              "dueInDays": 7
+            },
+            {
+              "code": "lms-catch-up",
+              "label": "Agree a catch-up schedule for overdue learning activities",
+              "owner": "assigned_faculty",
+              "dueInDays": 7
+            }
+          ],
+          "citations": [
+            {
+              "evidencePath": "evidence.academic.values.attendancePct",
+              "statement": "attendancePct is 65; policy threshold is below 75."
+            },
+            {
+              "evidencePath": "evidence.academic.values.markPct",
+              "statement": "markPct is 55; policy threshold is below 60."
+            },
+            {
+              "evidencePath": "evidence.lms.values.inactivityDays",
+              "statement": "inactivityDays is 9; policy threshold is at least 7."
+            },
+            {
+              "evidencePath": "evidence.lms.values.overdueAssignments",
+              "statement": "overdueAssignments is 2; policy threshold is at least 1."
+            }
+          ],
+          "prohibited": []
+        },
+        "outputHash": "d0d349bf9c0564614a6171583e76e09093833828a701945847ef2f5a3110c880"
+      }
+    ],
+    "selection": {
+      "candidates": [
+        "validated-baseline",
+        "model-candidate"
+      ],
+      "selected": "model-candidate",
+      "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+    }
+  }
+}

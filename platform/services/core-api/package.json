@@ -12,7 +12,8 @@
     "test": "tsx --test tests/*.test.ts",
     "test:db": "RUN_DB_TESTS=1 tsx --test tests/database.test.ts",
     "db:migrate": "tsx scripts/migrate.ts",
-    "db:reset": "tsx scripts/reset-seed.ts"
+    "db:reset": "tsx scripts/reset-seed.ts",
+    "chapter11:build": "tsx scripts/chapter11-build.ts"
   },
   "dependencies": {
     "@aura/contracts": "*",

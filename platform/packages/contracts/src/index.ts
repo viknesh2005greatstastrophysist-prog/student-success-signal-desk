@@ -125,7 +125,14 @@ export const portalViewRoutes = {
   governance: { Operations: "/dashboard", Runs: "/runs/current", Evidence: "/runs/current/evidence", Simulation: "/simulation" },
 } as const satisfies Record<PortalId, Record<string, string>>;
 
+const chapter11PlanningActions = ["refresh", "request", "domain", "policy", "mode", "student", "feedback", "save", "new", "revise", "lock", "execute", "export"];
+export const chapter11ActionNames = {
+  faculty: [...chapter11PlanningActions, "policy-open", "policy-field", "policy-reason", "policy-approve", "edit-summary", "edit-due", "edit-reason", "edit-save", "outcome-status", "outcome-note", "outcome-save"],
+  governance: [...chapter11PlanningActions, "seed"],
+  hod: ["refresh", "export"],
+};
 export const actionManifest: readonly ActionContract[] = [
+  ...(["faculty", "governance", "hod"] as const).flatMap(portal => chapter11ActionNames[portal].map(name => ({ id: `${portal}-ch11-${name}`, portal, type: "form" as const, destination: "/api/bff/chapter11" }))),
   { id: "identity-open-discovery", portal: "identity", type: "navigate", destination: "/api/auth/.well-known/openid-configuration" },
   { id: "identity-access-pin", portal: "identity", type: "form", destination: "/api/demo/sign-in" },
   { id: "identity-enter-portal", portal: "identity", type: "form", destination: "/api/demo/sign-in" },

@@ -12,6 +12,7 @@ export function getPool(): Pool {
       idleTimeoutMillis: 20_000,
       connectionTimeoutMillis: 10_000,
     });
+    pool.on("error", () => { console.error("An idle database connection closed; the pool will replace it."); });
   }
   return pool;
 }

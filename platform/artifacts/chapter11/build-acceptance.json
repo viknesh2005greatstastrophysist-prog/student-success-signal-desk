@@ -1,0 +1,2015 @@
+{
+  "generatedAt": "2026-09-07T16:58:13.273Z",
+  "synthetic": true,
+  "accepted": true,
+  "plans": [
+    {
+      "body": {
+        "request": "Build a synthetic cohort acceptance artifact",
+        "studentIds": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000002",
+          "00000000-0000-4000-8000-000000000003",
+          "00000000-0000-4000-8000-000000000004",
+          "00000000-0000-4000-8000-000000000005",
+          "00000000-0000-4000-8000-000000000006",
+          "00000000-0000-4000-8000-000000000007",
+          "00000000-0000-4000-8000-000000000008"
+        ],
+        "domain": "academic",
+        "policyId": "00000000-0000-4000-8000-000000000099",
+        "feedback": "",
+        "mode": "deterministic",
+        "questions": [],
+        "ready": true,
+        "steps": [
+          "Collect four scoped sources in parallel",
+          "Check freshness and completeness",
+          "Compute approved risk policy",
+          "Retrieve tagged references",
+          "Draft and validate a plan",
+          "Wait for mentor approval",
+          "Publish and track approved interventions"
+        ],
+        "budget": {
+          "maxStudents": 50,
+          "concurrency": 4,
+          "maxRepairs": 2,
+          "modelTimeoutMs": 45000
+        }
+      },
+      "planHash": "ff7e4db4f67e1300535cf9d7f1f32def0407f178f67870e73f787e63c7f9e52b",
+      "locked": true,
+      "policyAuthority": "Synthetic fixture only; no institutional approval claimed"
+    },
+    {
+      "body": {
+        "request": "Build a synthetic cohort acceptance artifact",
+        "studentIds": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000002",
+          "00000000-0000-4000-8000-000000000003",
+          "00000000-0000-4000-8000-000000000004",
+          "00000000-0000-4000-8000-000000000005",
+          "00000000-0000-4000-8000-000000000006",
+          "00000000-0000-4000-8000-000000000007",
+          "00000000-0000-4000-8000-000000000008"
+        ],
+        "domain": "attendance",
+        "policyId": "00000000-0000-4000-8000-000000000099",
+        "feedback": "",
+        "mode": "deterministic",
+        "questions": [],
+        "ready": true,
+        "steps": [
+          "Collect four scoped sources in parallel",
+          "Check freshness and completeness",
+          "Compute approved risk policy",
+          "Retrieve tagged references",
+          "Draft and validate a plan",
+          "Wait for mentor approval",
+          "Publish and track approved interventions"
+        ],
+        "budget": {
+          "maxStudents": 50,
+          "concurrency": 4,
+          "maxRepairs": 2,
+          "modelTimeoutMs": 45000
+        }
+      },
+      "planHash": "dc8ab2fe609b6b14d4a96a257758549545dda865b368d4134f58c1fa0d093625",
+      "locked": true,
+      "policyAuthority": "Synthetic fixture only; no institutional approval claimed"
+    },
+    {
+      "body": {
+        "request": "Build a synthetic cohort acceptance artifact",
+        "studentIds": [
+          "00000000-0000-4000-8000-000000000001",
+          "00000000-0000-4000-8000-000000000002",
+          "00000000-0000-4000-8000-000000000003",
+          "00000000-0000-4000-8000-000000000004",
+          "00000000-0000-4000-8000-000000000005",
+          "00000000-0000-4000-8000-000000000006",
+          "00000000-0000-4000-8000-000000000007",
+          "00000000-0000-4000-8000-000000000008"
+        ],
+        "domain": "wellbeing-referral",
+        "policyId": "00000000-0000-4000-8000-000000000099",
+        "feedback": "",
+        "mode": "deterministic",
+        "questions": [],
+        "ready": true,
+        "steps": [
+          "Collect four scoped sources in parallel",
+          "Check freshness and completeness",
+          "Compute approved risk policy",
+          "Retrieve tagged references",
+          "Draft and validate a plan",
+          "Wait for mentor approval",
+          "Publish and track approved interventions"
+        ],
+        "budget": {
+          "maxStudents": 50,
+          "concurrency": 4,
+          "maxRepairs": 2,
+          "modelTimeoutMs": 45000
+        }
+      },
+      "planHash": "0ffccfa955a06d930b394933969e68e12f7d7cc25cac8af8cb596d7dfb3ab1e6",
+      "locked": true,
+      "policyAuthority": "Synthetic fixture only; no institutional approval claimed"
+    }
+  ],
+  "policy": {
+    "version": "CH11-DEMO-1",
+    "attendanceMinimum": 75,
+    "markMinimum": 60,
+    "inactivityMaximum": 7,
+    "mediumScore": 20,
+    "highScore": 50,
+    "freshnessDays": 30
+  },
+  "inputHash": "0dcc702219e88e14a8330286b07da8429ab31eb70fb99ed8643efa4a762d489b",
+  "outputHash": "1ef7a4650bf90f62697b6866fc5392c1c971df07e6ceb13f7900c4760c510d2a",
+  "benchmark": {
+    "kind": "controlled 20ms source I/O; not production latency",
+    "sequentialMs": 210.460375,
+    "parallelMs": 63.97000000000003,
+    "sameQuality": true,
+    "students": 8,
+    "concurrency": 4
+  },
+  "liveModel": null,
+  "results": [
+    {
+      "studentId": "00000000-0000-4000-8000-000000000001",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000001",
+          "recordId": "SYNTHETIC-BUILD-0-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 65,
+            "markPct": 55
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000001",
+          "recordId": "SYNTHETIC-BUILD-0-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 9,
+            "overdueAssignments": 2
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000001",
+          "recordId": "SYNTHETIC-BUILD-0-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000001",
+          "recordId": "SYNTHETIC-BUILD-0-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 70,
+        "band": "high",
+        "flagged": true,
+        "signals": [
+          {
+            "code": "ATTENDANCE_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.attendancePct",
+            "value": 65,
+            "threshold": 75,
+            "points": 20,
+            "explanation": "attendancePct is 65; policy threshold is below 75."
+          },
+          {
+            "code": "MARK_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.markPct",
+            "value": 55,
+            "threshold": 60,
+            "points": 20,
+            "explanation": "markPct is 55; policy threshold is below 60."
+          },
+          {
+            "code": "LMS_INACTIVE",
+            "source": "lms",
+            "path": "evidence.lms.values.inactivityDays",
+            "value": 9,
+            "threshold": 7,
+            "points": 20,
+            "explanation": "inactivityDays is 9; policy threshold is at least 7."
+          },
+          {
+            "code": "ASSIGNMENT_OVERDUE",
+            "source": "lms",
+            "path": "evidence.lms.values.overdueAssignments",
+            "value": 2,
+            "threshold": 1,
+            "points": 10,
+            "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+          }
+        ],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "student-study-plan",
+                "label": "Agree a weekly study plan with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "lms-catch-up",
+                "label": "Agree a catch-up schedule for overdue learning activities",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "studentId": "00000000-0000-4000-8000-000000000002",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000002",
+          "recordId": "SYNTHETIC-BUILD-1-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 90,
+            "markPct": 80
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000002",
+          "recordId": "SYNTHETIC-BUILD-1-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 2,
+            "overdueAssignments": 0
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000002",
+          "recordId": "SYNTHETIC-BUILD-1-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000002",
+          "recordId": "SYNTHETIC-BUILD-1-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 0,
+        "band": "low",
+        "flagged": false,
+        "signals": [],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "studentId": "00000000-0000-4000-8000-000000000003",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000003",
+          "recordId": "SYNTHETIC-BUILD-2-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 65,
+            "markPct": 55
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000003",
+          "recordId": "SYNTHETIC-BUILD-2-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 9,
+            "overdueAssignments": 2
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000003",
+          "recordId": "SYNTHETIC-BUILD-2-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000003",
+          "recordId": "SYNTHETIC-BUILD-2-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 70,
+        "band": "high",
+        "flagged": true,
+        "signals": [
+          {
+            "code": "ATTENDANCE_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.attendancePct",
+            "value": 65,
+            "threshold": 75,
+            "points": 20,
+            "explanation": "attendancePct is 65; policy threshold is below 75."
+          },
+          {
+            "code": "MARK_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.markPct",
+            "value": 55,
+            "threshold": 60,
+            "points": 20,
+            "explanation": "markPct is 55; policy threshold is below 60."
+          },
+          {
+            "code": "LMS_INACTIVE",
+            "source": "lms",
+            "path": "evidence.lms.values.inactivityDays",
+            "value": 9,
+            "threshold": 7,
+            "points": 20,
+            "explanation": "inactivityDays is 9; policy threshold is at least 7."
+          },
+          {
+            "code": "ASSIGNMENT_OVERDUE",
+            "source": "lms",
+            "path": "evidence.lms.values.overdueAssignments",
+            "value": 2,
+            "threshold": 1,
+            "points": 10,
+            "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+          }
+        ],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "student-study-plan",
+                "label": "Agree a weekly study plan with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "lms-catch-up",
+                "label": "Agree a catch-up schedule for overdue learning activities",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "studentId": "00000000-0000-4000-8000-000000000004",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000004",
+          "recordId": "SYNTHETIC-BUILD-3-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 90,
+            "markPct": 80
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000004",
+          "recordId": "SYNTHETIC-BUILD-3-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 2,
+            "overdueAssignments": 0
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000004",
+          "recordId": "SYNTHETIC-BUILD-3-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000004",
+          "recordId": "SYNTHETIC-BUILD-3-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 0,
+        "band": "low",
+        "flagged": false,
+        "signals": [],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "studentId": "00000000-0000-4000-8000-000000000005",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000005",
+          "recordId": "SYNTHETIC-BUILD-4-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 65,
+            "markPct": 55
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000005",
+          "recordId": "SYNTHETIC-BUILD-4-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 9,
+            "overdueAssignments": 2
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000005",
+          "recordId": "SYNTHETIC-BUILD-4-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000005",
+          "recordId": "SYNTHETIC-BUILD-4-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 70,
+        "band": "high",
+        "flagged": true,
+        "signals": [
+          {
+            "code": "ATTENDANCE_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.attendancePct",
+            "value": 65,
+            "threshold": 75,
+            "points": 20,
+            "explanation": "attendancePct is 65; policy threshold is below 75."
+          },
+          {
+            "code": "MARK_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.markPct",
+            "value": 55,
+            "threshold": 60,
+            "points": 20,
+            "explanation": "markPct is 55; policy threshold is below 60."
+          },
+          {
+            "code": "LMS_INACTIVE",
+            "source": "lms",
+            "path": "evidence.lms.values.inactivityDays",
+            "value": 9,
+            "threshold": 7,
+            "points": 20,
+            "explanation": "inactivityDays is 9; policy threshold is at least 7."
+          },
+          {
+            "code": "ASSIGNMENT_OVERDUE",
+            "source": "lms",
+            "path": "evidence.lms.values.overdueAssignments",
+            "value": 2,
+            "threshold": 1,
+            "points": 10,
+            "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+          }
+        ],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "student-study-plan",
+                "label": "Agree a weekly study plan with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "lms-catch-up",
+                "label": "Agree a catch-up schedule for overdue learning activities",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "studentId": "00000000-0000-4000-8000-000000000006",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000006",
+          "recordId": "SYNTHETIC-BUILD-5-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 90,
+            "markPct": 80
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000006",
+          "recordId": "SYNTHETIC-BUILD-5-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 2,
+            "overdueAssignments": 0
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000006",
+          "recordId": "SYNTHETIC-BUILD-5-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000006",
+          "recordId": "SYNTHETIC-BUILD-5-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 0,
+        "band": "low",
+        "flagged": false,
+        "signals": [],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "studentId": "00000000-0000-4000-8000-000000000007",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000007",
+          "recordId": "SYNTHETIC-BUILD-6-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 65,
+            "markPct": 55
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000007",
+          "recordId": "SYNTHETIC-BUILD-6-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 9,
+            "overdueAssignments": 2
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000007",
+          "recordId": "SYNTHETIC-BUILD-6-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000007",
+          "recordId": "SYNTHETIC-BUILD-6-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 70,
+        "band": "high",
+        "flagged": true,
+        "signals": [
+          {
+            "code": "ATTENDANCE_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.attendancePct",
+            "value": 65,
+            "threshold": 75,
+            "points": 20,
+            "explanation": "attendancePct is 65; policy threshold is below 75."
+          },
+          {
+            "code": "MARK_LOW",
+            "source": "academic",
+            "path": "evidence.academic.values.markPct",
+            "value": 55,
+            "threshold": 60,
+            "points": 20,
+            "explanation": "markPct is 55; policy threshold is below 60."
+          },
+          {
+            "code": "LMS_INACTIVE",
+            "source": "lms",
+            "path": "evidence.lms.values.inactivityDays",
+            "value": 9,
+            "threshold": 7,
+            "points": 20,
+            "explanation": "inactivityDays is 9; policy threshold is at least 7."
+          },
+          {
+            "code": "ASSIGNMENT_OVERDUE",
+            "source": "lms",
+            "path": "evidence.lms.values.overdueAssignments",
+            "value": 2,
+            "threshold": 1,
+            "points": 10,
+            "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+          }
+        ],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "student-study-plan",
+                "label": "Agree a weekly study plan with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "lms-catch-up",
+                "label": "Agree a catch-up schedule for overdue learning activities",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: attendance low, mark low, lms inactive, assignment overdue.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "attendancePct is 65; policy threshold is below 75."
+              },
+              {
+                "evidencePath": "evidence.academic.values.markPct",
+                "statement": "markPct is 55; policy threshold is below 60."
+              },
+              {
+                "evidencePath": "evidence.lms.values.inactivityDays",
+                "statement": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "evidencePath": "evidence.lms.values.overdueAssignments",
+                "statement": "overdueAssignments is 2; policy threshold is at least 1."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "studentId": "00000000-0000-4000-8000-000000000008",
+      "evidence": {
+        "academic": {
+          "source": "academic",
+          "studentId": "00000000-0000-4000-8000-000000000008",
+          "recordId": "SYNTHETIC-BUILD-7-academic",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "attendancePct": 90,
+            "markPct": 80
+          }
+        },
+        "lms": {
+          "source": "lms",
+          "studentId": "00000000-0000-4000-8000-000000000008",
+          "recordId": "SYNTHETIC-BUILD-7-lms",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "inactivityDays": 2,
+            "overdueAssignments": 0
+          }
+        },
+        "internship": {
+          "source": "internship",
+          "studentId": "00000000-0000-4000-8000-000000000008",
+          "recordId": "SYNTHETIC-BUILD-7-internship",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedMilestones": 0
+          }
+        },
+        "placement": {
+          "source": "placement",
+          "studentId": "00000000-0000-4000-8000-000000000008",
+          "recordId": "SYNTHETIC-BUILD-7-placement",
+          "observedAt": "2026-09-07T16:58:13.273Z",
+          "semester": "2026-ODD",
+          "state": "present",
+          "synthetic": true,
+          "values": {
+            "missedActivities": 0
+          }
+        }
+      },
+      "risk": {
+        "score": 0,
+        "band": "low",
+        "flagged": false,
+        "signals": [],
+        "policyVersion": "CH11-DEMO-1",
+        "reviewRequired": true
+      },
+      "outputs": [
+        {
+          "domain": "academic",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "attendance",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "attendance-review",
+                "label": "Review attendance barriers and agree an attendance plan with the mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        },
+        {
+          "domain": "wellbeing-referral",
+          "packet": {
+            "summary": "Mentor review requested: routine evidence review.",
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "wellbeing-referral",
+                "label": "Ask the mentor whether an optional support-service referral is appropriate",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "citations": [
+              {
+                "evidencePath": "evidence.academic.values.attendancePct",
+                "statement": "The academic record is available for routine review."
+              }
+            ],
+            "prohibited": []
+          },
+          "mode": "deterministic",
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "failures": [],
+            "repairs": [],
+            "fallback": false,
+            "providerError": null,
+            "modelAttempts": [],
+            "selection": {
+              "candidates": [
+                "validated-baseline"
+              ],
+              "selected": "validated-baseline",
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage."
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "publication": "No publication. A passing artifact still requires authenticated mentor approval."
+}

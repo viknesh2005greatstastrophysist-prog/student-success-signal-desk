@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { actionManifest } from "@aura/contracts";
+import { actionManifest, chapter11ActionNames } from "@aura/contracts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -12,6 +12,7 @@ test("every interactive control is named and every action contract is rendered",
   assert.equal(new Set(ids).size, ids.length);
   const sources = await Promise.all([
     "packages/portal-kit/src/index.tsx",
+    "packages/portal-kit/src/chapter11.tsx",
     "services/auth-server/app/page.tsx",
     "services/auth-server/app/sign-in/page.tsx",
     "services/auth-server/app/consent/consent-client.tsx",
@@ -34,6 +35,13 @@ test("every interactive control is named and every action contract is rendered",
     ...Object.entries(dynamicViews).flatMap(([portal, views]) => views.map((view) => `${portal}-open-${view}`)),
   ]);
   const allRendered = new Set([...rendered, ...dynamicRendered]);
+  const chapterSource = sources[1];
+  for (const [portal, names] of Object.entries(chapter11ActionNames)) {
+    for (const name of names) {
+      assert.ok(chapterSource.includes(`action("${name}")`), `Chapter 11 control ${name} is not rendered`);
+      allRendered.add(`${portal}-ch11-${name}`);
+    }
+  }
   for (const actionId of ids) assert.ok(allRendered.has(actionId), `${actionId} is declared but never rendered`);
   assert.doesNotMatch(source, /href=["']#["']/);
   assert.doesNotMatch(source, /onClick=\{\(\) => \{\s*\}\}/);

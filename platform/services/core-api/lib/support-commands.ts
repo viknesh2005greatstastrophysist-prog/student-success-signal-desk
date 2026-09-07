@@ -6,6 +6,7 @@ import { assertCommandId, findDuplicateCommand, getCurrentGeneration, writeComma
 import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
 import { requireRole } from "./security";
+import { validatePacket, riskAnalysis, digest, type Evidence, type Risk, type Policy, type domainNames } from "./chapter11/engine";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
 export const supportDecisionInput = z.object({
@@ -345,8 +346,8 @@ export async function replayAgentRun(actor: ActorContext, runId: string, command
       if (row.original_agent_run_id !== runId) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This idempotency key was already used for another replay");
       return { replay: { id: row.id, originalRunId: row.original_agent_run_id, inputHash: row.input_hash, outputHash: row.output_hash, matched: row.matched, createdAt: row.created_at.toISOString() }, duplicate: true };
     }
-    const result = await client.query<{ input_hash: string; evidence: Record<string, unknown>; content_hash: string }>(
-      `SELECT evidence.input_hash, evidence.evidence, artifact.content_hash
+    const result = await client.query<{ input_hash: string; evidence: Record<string, unknown>; content_hash: string; recommendation: unknown }>(
+      `SELECT evidence.input_hash, evidence.evidence, artifact.content_hash, artifact.recommendation
        FROM agent_runs run JOIN evidence_snapshots evidence ON evidence.id = run.evidence_snapshot_id
        JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id
        WHERE run.generation_id = $1 AND run.id = $2 AND run.status IN ('validated', 'repaired')
@@ -355,11 +356,13 @@ export async function replayAgentRun(actor: ActorContext, runId: string, command
     );
     if (!result.rowCount) throw new NotFoundError("Replayable agent run not found");
     const original = result.rows[0]!;
-    const replayed = composeValidatedRecommendation(original.evidence);
+    const chapter = original.evidence.chapterJobId ? original.evidence as unknown as Evidence & { risk: Risk; policy: Policy; domain: typeof domainNames[number] } : null;
+    const replayed = chapter ? { recommendation: original.recommendation } : composeValidatedRecommendation(original.evidence);
     const inputHash = hashJson(original.evidence);
     const outputHash = hashJson(replayed.recommendation);
     const replayId = randomUUID();
-    const matched = inputHash === original.input_hash && outputHash === original.content_hash;
+    const chapterValid = !chapter || (validatePacket(original.recommendation, chapter, chapter.risk, chapter.domain).valid && digest(riskAnalysis(chapter, chapter.policy)) === digest(chapter.risk));
+    const matched = inputHash === original.input_hash && outputHash === original.content_hash && chapterValid;
     const inserted = await client.query<{ created_at: Date }>(
       `INSERT INTO replay_receipts
        (id, generation_id, original_agent_run_id, replay_agent_run_id, requested_by_person_id, input_hash, output_hash, matched, command_id)
@@ -386,6 +389,7 @@ export async function loadGovernanceRun(actor: ActorContext, runId: string) {
        JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id
        LEFT JOIN replay_receipts replay ON replay.original_agent_run_id = run.id AND replay.generation_id = run.generation_id
        WHERE run.generation_id = $1 AND run.id = $2
+         AND artifact.artifact_version = (SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id = run.id)
        GROUP BY run.id, support_case.id, evidence.id, artifact.id`,
       [generationId, runId],
     );

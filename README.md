@@ -21,6 +21,21 @@ This repository contains no real student data and performs no real payment.
 Governance may propose support, but it cannot alter academic records or approve
 its own artifacts.
 
+## Chapter 11 agentic worklet
+
+The connected worklet now includes four source collectors, a clarifying coordinator,
+locked plans, risk calculation, scoped retrieval, three recommendation specialists,
+validation and bounded repair, saved checkpoints, mentor edits and approval,
+intervention tracking, and reversible publication. A configured local model can
+make bounded recommendation choices; fallback is always labelled.
+
+Start with the [submission guide](submission/README.md),
+[project report](submission/PROJECT_REPORT.md), and
+[14-lab acceptance ledger](docs/CHAPTER11_COMPLETION.md).
+Run `cd platform && npm run chapter11:build` for the credential-free lab build.
+The professor's real-case and actual mentor-approval requirements remain separate
+from the included synthetic demonstration.
+
 ## Architecture
 
 ```text

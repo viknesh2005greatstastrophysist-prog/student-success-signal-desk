@@ -271,6 +271,16 @@ export function portalProcessAcademicEvent(request: Request, portal: PortalId) {
   return portalCoreCommand(request, portal, "/api/v1/governance/runs");
 }
 
+export async function portalChapter11(request: Request, portal: PortalId, path: string[]) {
+  if (!path.length || path.some(segment => !/^[a-zA-Z0-9-]+$/.test(segment))) return Response.json({ ok: false }, { status: 404 });
+  const destination = `/api/v1/chapter11/${path.map(encodeURIComponent).join("/")}`;
+  if (request.method === "POST") return portalCoreCommand(request, portal, destination);
+  const session = await readSession(request, portal);
+  if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  const response = await fetch(`${settings(portal).coreUrl}${destination}`, { headers: { Authorization: `Bearer ${session.accessToken}` }, cache: "no-store" });
+  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+}
+
 export function portalReplayAgentRun(request: Request, portal: PortalId, runId: string) {
   return portalCoreCommand(request, portal, `/api/v1/governance/runs/${encodeURIComponent(runId)}/replay`);
 }

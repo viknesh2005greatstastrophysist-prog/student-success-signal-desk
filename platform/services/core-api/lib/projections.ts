@@ -345,6 +345,7 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChil
          JOIN agent_runs run ON run.evidence_snapshot_id = evidence.id AND run.generation_id = support_case.generation_id
          JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id AND artifact.generation_id = support_case.generation_id
          WHERE support_case.generation_id = $1 AND evidence.evidence->>'assignedFacultyPersonId' = $2
+         AND artifact.artifact_version = (SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id = run.id)
          ORDER BY support_case.opened_at DESC, artifact.artifact_version DESC`,
         [generationId, actor.personId],
       );
@@ -449,6 +450,7 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChil
          JOIN evidence_snapshots evidence ON evidence.id = run.evidence_snapshot_id
          JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id
          WHERE run.generation_id = $1
+         AND artifact.artifact_version = (SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id = run.id)
          ORDER BY run.started_at DESC, artifact.artifact_version DESC`,
         [generationId],
       );

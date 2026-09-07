@@ -1,0 +1,17 @@
+.git
+**/node_modules
+**/.next
+**/.turbo
+**/*.tsbuildinfo
+.env*
+**/.env*
+.venv
+**/__pycache__
+**/*.sqlite*
+platform/test-results
+platform/playwright-report
+platform/blob-report
+platform/artifacts
+submission
+docs/release-evidence/local*
+runtime

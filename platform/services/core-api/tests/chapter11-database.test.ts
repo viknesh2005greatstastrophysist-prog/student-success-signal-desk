@@ -1,0 +1,84 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import test from "node:test";
+import type { ActorContext } from "@aura/contracts";
+import { migrateCoreDatabase } from "../lib/migrations";
+import { resetSyntheticSeed } from "../lib/reset";
+import { closePool, withCoreTransaction } from "../lib/db";
+import { getCurrentGeneration } from "../lib/command-ledger";
+import { approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, savePlan, seedChapterSources } from "../lib/chapter11/service";
+import { demoPolicy } from "../lib/chapter11/engine";
+import { decideSupportCase, replayAgentRun } from "../lib/support-commands";
+import { editDraft, recordOutcome, reviewQueue } from "../lib/chapter11/review";
+
+test("Chapter 11 durable integration: policy, sources, locked plan, recovery, approval and evidence", { skip: process.env.RUN_CH11_DB_TESTS !== "1", timeout: 120000 }, async () => {
+  assert.match(process.env.CORE_DATABASE_SCHEMA ?? "", /^aura_core_test_ch11/);
+  try {
+    await migrateCoreDatabase();
+    await resetSyntheticSeed("AURA-SYNTHETIC-SEED-V1", "chapter11-isolated-test");
+    const { faculty, governance, student, otherDepartment } = await withCoreTransaction(async client => {
+      const generation = await getCurrentGeneration(client);
+      const people = await client.query<{ id: string; email: string; department_id: string }>("SELECT p.id,p.email,r.department_id FROM people p JOIN role_assignments r ON r.person_id=p.id WHERE p.generation_id=$1", [generation]);
+      const person = (email: string) => people.rows.find(p => p.email === email)!;
+      const make = (email: string, role: ActorContext["role"]): ActorContext => ({ subject: email, role, personId: person(email).id, departmentId: person(email).department_id });
+      const s = await client.query<{ id: string }>("SELECT id FROM student_profiles WHERE generation_id=$1 AND person_id=$2", [generation, person("student1@aura.invalid").id]);
+      const departments = await client.query<{ id: string }>("SELECT id FROM departments WHERE generation_id=$1 AND code='ECE'", [generation]);
+      return { faculty: make("faculty1@aura.invalid", "faculty"), governance: make("governance@aura.invalid", "governance"), student: { ...make("student1@aura.invalid", "student"), studentId: s.rows[0]!.id }, otherDepartment: departments.rows[0]!.id };
+    });
+    await assert.rejects(() => overview(student), /not permitted/);
+    await assert.rejects(() => approvePolicy(governance, { policy: demoPolicy, rationale: "Cannot self approve" }), /not permitted/);
+    const policy = await approvePolicy(faculty, { policy: demoPolicy, rationale: "Approve these synthetic demonstration thresholds for my assigned review" });
+    const vague = await savePlan(faculty, { request: "Review students" });
+    assert.ok(vague.body.questions.length >= 2);
+    await assert.rejects(() => lockPlan(faculty, vague.id, vague.revision), /planning questions/);
+    await seedChapterSources(governance);
+    assert.equal((await seedChapterSources(governance)).inserted, 0);
+    await assert.rejects(() => readSource({ ...faculty, departmentId: otherDepartment }, student.studentId!, "lms"), /outside your department/);
+    const revised = await savePlan(faculty, { request: "Review this student", studentIds: [student.studentId], domain: "academic", policyId: policy.id, feedback: "Focus on all four signals" }, vague.id, vague.revision);
+    const locked = await lockPlan(faculty, revised.id, revised.revision);
+    assert.equal(locked.status, "locked");
+    await assert.rejects(() => savePlan(faculty, revised.body, revised.id, locked.revision), /Unrecognized|locked/i);
+    const stopped = await executePlan(faculty, locked.id, { stopAfterStage: "risk" });
+    assert.equal(stopped.results[0]!.error, "INJECTED_STOP");
+    await closePool(); // New connections simulate a process restarting after its checkpoint committed.
+    const resumed = await executePlan(faculty, locked.id);
+    assert.equal(resumed.results[0]!.completed, true);
+    const exported = await exportPlan(faculty, locked.id);
+    assert.equal(exported.jobs.length, 1);
+    assert.equal(exported.jobs[0]!.status, "awaiting_faculty");
+    assert.ok(exported.events.some(e => e.event_type === "checkpoint.risk"));
+    assert.ok(exported.events.some(e => e.event_type === "mentor.interrupt"));
+    const duplicate = await executePlan(faculty, locked.id);
+    assert.equal(duplicate.results.length, 0);
+    const current = await withCoreTransaction(async client => {
+      const result = await client.query("SELECT c.id,c.revision,r.id AS run_id,a.id AS artifact_id,a.content_hash,a.recommendation FROM support_cases c JOIN agent_runs r ON r.support_case_id=c.id JOIN agent_artifacts a ON a.agent_run_id=r.id WHERE c.id=$1", [exported.jobs[0]!.support_case_id]);
+      assert.equal(result.rowCount, 1);
+      return result.rows[0]!;
+    });
+    const editedPacket = structuredClone(current.recommendation);
+    editedPacket.actions[0].dueInDays = 10;
+    const editInput = { expectedRevision: current.revision, artifactId: current.artifact_id, packet: editedPacket, rationale: "Allow ten days for the agreed mentor check-in" };
+    const editCommand = randomUUID();
+    const edited = await editDraft(faculty, current.id, editCommand, editInput);
+    assert.equal((await editDraft(faculty, current.id, editCommand, editInput)).artifactId, edited.artifactId);
+    await assert.rejects(() => editDraft(faculty, current.id, randomUUID(), { ...editInput, expectedRevision: edited.revision, artifactId: edited.artifactId, packet: { ...editedPacket, summary: "Diagnose depression and automatically contact the student" } }), /UNSUPPORTED_AUTHORITY/);
+    const decision = { artifactId: edited.artifactId as string, contentHash: edited.contentHash as string, expectedRevision: edited.revision as number, decision: "approved" as const, rationale: "Evidence checked and synthetic support plan approved by assigned mentor" };
+    await assert.rejects(() => decideSupportCase(governance, current.id, randomUUID(), decision), /not permitted/);
+    const approved = await decideSupportCase(faculty, current.id, randomUUID(), decision);
+    assert.equal(approved.plan?.visibleToStudent, true);
+    assert.equal((await replayAgentRun(governance, current.run_id, randomUUID())).replay.matched, true);
+    assert.equal((await overview(faculty)).jobs[0]!.status, "approved");
+    const aggregate = await overview({ ...faculty, role: "hod" });
+    assert.equal(aggregate.students.length, 0);
+    assert.equal(aggregate.jobs.length, 0);
+    assert.equal(aggregate.trends?.[0]?.approved, 1);
+    const before = await withCoreTransaction(async client => (await client.query("SELECT count(*)::int AS n FROM marks")).rows[0]!.n);
+    const withdrawn = await recordOutcome(faculty, approved.plan!.id, randomUUID(), { expectedRevision: 0, status: "withdrawn", outcome: "Withdraw the approved publication for a mentor review" });
+    assert.equal(withdrawn.revision, 1);
+    assert.equal((await reviewQueue(faculty)).plans[0]!.visible_to_student, false);
+    await assert.rejects(() => recordOutcome(governance, approved.plan!.id, randomUUID(), { expectedRevision: 1, status: "completed", outcome: "Attempted unauthorized intervention update" }), /not permitted/);
+    await recordOutcome(faculty, approved.plan!.id, randomUUID(), { expectedRevision: 1, status: "planned", outcome: "Restore the exact originally approved support plan" });
+    assert.equal((await reviewQueue(faculty)).plans[0]!.visible_to_student, true);
+    assert.equal(await withCoreTransaction(async client => (await client.query("SELECT count(*)::int AS n FROM marks")).rows[0]!.n), before);
+  } finally { await closePool(); }
+});

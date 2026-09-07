@@ -32,6 +32,13 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   const parent = await context.newPage();
   const governance = await context.newPage();
 
+  await enterPortal(governance, "governance");
+  const resetStatus = await governance.evaluate(async () => {
+    const snapshot = await fetch("/api/bff/dashboard", { cache: "no-store" });
+    const response = await fetch("/api/bff/governance/simulation/reset", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": snapshot.headers.get("x-csrf-token") ?? "", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ confirmation: "AURA-SYNTHETIC-SEED-V1" }) });
+    return response.status;
+  });
+  expect(resetStatus).toBe(201);
   await enterPortal(hod, "hod");
   await hod.getByRole("button", { name: "Offerings", exact: true }).click();
   await expect.poll(() => new URL(hod.url()).pathname).toBe("/offerings/current");
@@ -182,7 +189,7 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await expect(parent.getByText("Marks access is not granted.", { exact: true })).toBeVisible();
   await expect(parent.getByText("Agent design review", { exact: true })).toHaveCount(0);
 
-  await enterPortal(governance, "governance");
+  await governance.reload();
   await expect(governance.getByText(/Offering published and faculty assigned/i)).toBeVisible();
   await expect(governance.getByText(/Student registered and roster updated/i).first()).toBeVisible();
   await expect(governance.getByText(/Faculty submitted the attendance register/i)).toBeVisible();
@@ -250,7 +257,7 @@ test("J01-J10 cross independent role sessions through the authoritative Core", a
   await expect(hod.getByText(/one active term/i)).toBeVisible();
 
   await governance.getByRole("button", { name: "Runs", exact: true }).click();
-  await expect(governance.getByText(/Validated deterministic runs/i)).toBeVisible();
+  await expect(governance.getByText(/Validated agent runs/i)).toBeVisible();
   await expect(governance.getByRole("button", { name: "Compare latest runs", exact: true })).toBeEnabled();
   await governance.getByRole("button", { name: "Compare latest runs", exact: true }).click();
   await expect(governance.locator(".run-comparison article")).toHaveCount(2);
