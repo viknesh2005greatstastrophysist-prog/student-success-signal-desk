@@ -1,0 +1,126 @@
+{
+  "checkedAt": "2026-09-07T17:11:18.075637+00:00",
+  "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+  "passed": true,
+  "services": [
+    {
+      "service": "aura-core-api",
+      "url": "https://aura-core-api.vercel.app/api/v1/health",
+      "status": 200,
+      "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      },
+      "passed": true
+    },
+    {
+      "service": "aura-identity-service",
+      "url": "https://aura-identity-service.vercel.app/api/health",
+      "status": 200,
+      "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://aura-student-portal.vercel.app http://127.0.0.1:3101 https://aura-parent-portal.vercel.app http://127.0.0.1:3102 https://aura-faculty-portal.vercel.app http://127.0.0.1:3103 https://aura-hod-portal.vercel.app http://127.0.0.1:3104 https://aura-ai-governance.vercel.app http://127.0.0.1:3105; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      },
+      "passed": true
+    },
+    {
+      "service": "aura-student-portal",
+      "url": "https://aura-student-portal.vercel.app/api/health",
+      "status": 200,
+      "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      },
+      "passed": true
+    },
+    {
+      "service": "aura-parent-portal",
+      "url": "https://aura-parent-portal.vercel.app/api/health",
+      "status": 200,
+      "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      },
+      "passed": true
+    },
+    {
+      "service": "aura-faculty-portal",
+      "url": "https://aura-faculty-portal.vercel.app/api/health",
+      "status": 200,
+      "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      },
+      "passed": true
+    },
+    {
+      "service": "aura-hod-portal",
+      "url": "https://aura-hod-portal.vercel.app/api/health",
+      "status": 200,
+      "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      },
+      "passed": true
+    },
+    {
+      "service": "aura-ai-governance",
+      "url": "https://aura-ai-governance.vercel.app/api/health",
+      "status": 200,
+      "release": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-frame-options": "DENY",
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      },
+      "passed": true
+    }
+  ]
+}

@@ -62,25 +62,26 @@ Requirements: Node.js 20.9 or newer, npm, and a PostgreSQL database.
 
 ```bash
 cd platform
-npm install
+npm ci
 cp .env.example .env.local
-npm run prerequisites
-npm run db:migrate
-CORE_RESET_CONFIRMATION=AURA-SYNTHETIC-SEED-V1 npm run db:reset
-npx turbo run dev --parallel
+# Fill the private database connection, PIN and random secrets before continuing.
+npm run initialize:local
+npm run dev:local
 ```
+
+The initializer requires separate local or test schemas, creates missing identity and Core tables, provisions public PKCE clients, and links the synthetic logins. It preserves an existing institutional generation. Use Node 22.12 or newer. For a new setup, see [LOCAL_SETUP.md](submission/LOCAL_SETUP.md).
 
 Local services:
 
 | Surface | URL |
 | --- | --- |
-| Student | `http://localhost:3101` |
-| Parent | `http://localhost:3102` |
-| Faculty | `http://localhost:3103` |
-| HOD | `http://localhost:3104` |
-| Governance | `http://localhost:3105` |
-| Identity | `http://localhost:3200` |
-| Core API | `http://localhost:3300` |
+| Student | `http://127.0.0.1:3101` |
+| Parent | `http://127.0.0.1:3102` |
+| Faculty | `http://127.0.0.1:3103` |
+| HOD | `http://127.0.0.1:3104` |
+| Governance | `http://127.0.0.1:3105` |
+| Identity | `http://127.0.0.1:3200` |
+| Core API | `http://127.0.0.1:3300` |
 
 Keep secrets in ignored `.env.local` files. Never commit database URLs, OIDC
 client secrets, session secrets, or the private demonstration PIN.

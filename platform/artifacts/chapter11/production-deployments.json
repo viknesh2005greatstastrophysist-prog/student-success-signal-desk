@@ -1,0 +1,44 @@
+[
+  {
+    "uid": "dpl_DP3GvtpbbtTNg4dPbTCA6haCqNrY",
+    "name": "aura-ai-governance",
+    "url": "aura-ai-governance-kt40avvh4.vercel.app",
+    "readyState": "READY"
+  },
+  {
+    "uid": "dpl_3sXixoB5erHUFDR4NN8uXiNTfQ4X",
+    "name": "aura-hod-portal",
+    "url": "aura-hod-portal-9snirc151.vercel.app",
+    "readyState": "READY"
+  },
+  {
+    "uid": "dpl_4PsSFYkLkVfqLTKRc7Fk7KuAVgZK",
+    "name": "aura-faculty-portal",
+    "url": "aura-faculty-portal-fkzrx5ld5.vercel.app",
+    "readyState": "READY"
+  },
+  {
+    "uid": "dpl_6YhgS39MSNeE7Mfb5Q7YDHHugwcW",
+    "name": "aura-parent-portal",
+    "url": "aura-parent-portal-azklsjboh.vercel.app",
+    "readyState": "READY"
+  },
+  {
+    "uid": "dpl_BMQoJghk853BopJGqETXyRpUqxp4",
+    "name": "aura-student-portal",
+    "url": "aura-student-portal-9478es4d3.vercel.app",
+    "readyState": "READY"
+  },
+  {
+    "uid": "dpl_38kX5crhZJsCWK72STHfBUT9DXiw",
+    "name": "aura-identity-service",
+    "url": "aura-identity-service-prcrzmzem.vercel.app",
+    "readyState": "READY"
+  },
+  {
+    "uid": "dpl_BZQ4DHNtTD6uDDxaNMMtqEcY9HsG",
+    "name": "aura-core-api",
+    "url": "aura-core-jpyecq4kt.vercel.app",
+    "readyState": "READY"
+  }
+]

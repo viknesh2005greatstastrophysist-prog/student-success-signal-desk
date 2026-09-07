@@ -1,0 +1,18 @@
+{
+  "applicationRelease": "34424ecb136433a91d37fcafd1663ee637eaeedf",
+  "results": {
+    "production-journeys": {
+      "result": "3 passed (15.4m)",
+      "retries": 0
+    },
+    "production-quality": {
+      "result": "1 passed (1.5m)",
+      "retries": 0
+    },
+    "production-chapter11": {
+      "result": "1 passed (4.0m)",
+      "retries": 0
+    }
+  },
+  "manualScreenshotInspection": "Five desktop and five phone quality captures, plus final approved Chapter 11 faculty capture inspected."
+}

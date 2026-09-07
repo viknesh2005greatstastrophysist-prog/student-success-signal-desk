@@ -1,0 +1,5 @@
+{
+  "url": "https://aura-identity-service.vercel.app/api/auth/.well-known/openid-configuration",
+  "issuer": "https://aura-identity-service.vercel.app/api/auth",
+  "passed": true
+}

@@ -16,7 +16,13 @@ const clients = [
   { id: "hod", name: "AURA HOD Portal" },
   { id: "governance", name: "AURA AI Governance" },
 ] as const;
-const portalOrigins = resolvePortalOrigins(process.env.AURA_PORTAL_ORIGINS_JSON);
+const clientProfile = process.env.AURA_CLIENT_PROFILE ?? "production";
+if (!["local", "production"].includes(clientProfile)) throw new Error("AURA_CLIENT_PROFILE must be local or production");
+const allOrigins = resolvePortalOrigins(process.env.AURA_PORTAL_ORIGINS_JSON);
+const portalOrigins = Object.fromEntries(Object.entries(allOrigins).map(([id, origins]) => [id, origins.filter(origin => {
+  const url = new URL(origin);
+  return clientProfile === "local" ? url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) : url.protocol === "https:";
+})])) as typeof allOrigins;
 
 const pool = new Pool({
   connectionString: databaseUrl,
@@ -75,7 +81,7 @@ try {
           redirect_uris: portalOrigins[client.id].map((origin) => `${origin}/api/auth/callback/aura`),
           post_logout_redirect_uris: portalOrigins[client.id].map((origin) => `${origin}/`),
           token_endpoint_auth_method: "none",
-          application_type: "web",
+          application_type: clientProfile === "local" ? "native" : "web",
           grant_types: ["authorization_code", "refresh_token"],
           response_types: ["code"],
           require_pkce: true,
@@ -83,7 +89,13 @@ try {
           enable_end_session: true,
         },
       });
-      result[client.id] = created.client_id;
+      // Bind newly created public PKCE clients to the checked-in portal contract.
+      const normalized = await pool.query(
+        'UPDATE "oauthClient" SET "clientId" = $2 WHERE "clientId" = $1 RETURNING "clientId"',
+        [created.client_id, portalOidcClients[client.id]],
+      );
+      if (normalized.rowCount !== 1) throw new Error(`Could not bind ${client.name} to the portal contract`);
+      result[client.id] = portalOidcClients[client.id];
     }
   }
 } finally {

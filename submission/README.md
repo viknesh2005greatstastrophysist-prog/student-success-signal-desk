@@ -2,13 +2,26 @@
 
 AURA Student Success and Early Warning combines four evidence sources, applies a mentor-approved risk policy, produces a validated support draft, and publishes it only after the assigned mentor approves. The student, parent, faculty, department and governance portals share PostgreSQL state.
 
+## Live demonstration
+
+- Faculty: https://aura-faculty-portal.vercel.app
+- Governance: https://aura-ai-governance.vercel.app
+- Student: https://aura-student-portal.vercel.app
+- Parent: https://aura-parent-portal.vercel.app
+- Department: https://aura-hod-portal.vercel.app
+
+Sign in with the privately configured demo PIN. The hosted workflow uses the labelled deterministic mode. For the actual language-model demonstration, use the configured local installation and follow `DEMO_SCRIPT.md`. The local model execution is recorded separately from cloud execution.
+
+This Chapter 11 guide and `../docs/RELEASE_EVIDENCE.md` are the current handoff. Older prototype reports elsewhere in the source archive are historical evidence, not the current release status.
+
 ## Start here
 
 1. Read `PROJECT_REPORT.md` for the design and the distinction between implemented software and institutional approval.
 2. Run `Chapter11_Lab_Demonstration.ipynb` or `cd platform && npm run chapter11:build` for a reproducible, credential-free lab artifact.
 3. Use `DEMO_SCRIPT.md` to demonstrate the connected portals.
 4. Review `../docs/CHAPTER11_COMPLETION.md` and `../platform/artifacts/chapter11/` for acceptance evidence.
-5. See `../docs/DEPLOYMENT.md` for the seven-service deployment procedure and private environment setup.
+5. Use `LOCAL_SETUP.md` for a separate local installation and `VIVA_GUIDE.md` to prepare your explanation.
+6. See `../docs/DEPLOYMENT.md` for the seven-service deployment procedure and private environment setup.
 
 ## Important submission boundary
 

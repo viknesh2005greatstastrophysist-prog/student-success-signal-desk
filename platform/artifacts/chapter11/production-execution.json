@@ -1,0 +1,1338 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "plan": {
+    "id": "3c41427d-5a5a-4d16-8fb3-bc6c902374dd",
+    "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+    "created_by": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+    "department_id": "f582d7e6-af93-49c2-ba90-6010ecaeb5ad",
+    "revision": 2,
+    "status": "locked",
+    "body": {
+      "mode": "deterministic",
+      "ready": true,
+      "steps": [
+        "Collect four scoped sources in parallel",
+        "Check freshness and completeness",
+        "Compute approved risk policy",
+        "Retrieve tagged references",
+        "Draft and validate a plan",
+        "Wait for mentor approval",
+        "Publish and track approved interventions"
+      ],
+      "budget": {
+        "maxRepairs": 2,
+        "concurrency": 4,
+        "maxStudents": 50,
+        "modelTimeoutMs": 45000
+      },
+      "domain": "academic",
+      "request": "Review students who may need academic support",
+      "feedback": "Review this assigned student using all four signals",
+      "policyId": "15daa11c-e98e-403a-b461-fdc71d357b26",
+      "questions": [],
+      "studentIds": [
+        "a9bfedf9-96f8-4a22-a614-f838c930fc67"
+      ]
+    },
+    "plan_hash": "081846f44398829bbf7ff30f4da9ce7de7795e55f68b5cbba0d03ae88dfad5f5",
+    "created_at": "2026-09-07T17:32:30.506Z",
+    "locked_at": "2026-09-07T17:32:59.437Z"
+  },
+  "jobs": [
+    {
+      "id": "b0fcfa87-cb8d-4b52-8193-3c4892db0aa8",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "plan_id": "3c41427d-5a5a-4d16-8fb3-bc6c902374dd",
+      "student_id": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+      "faculty_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "status": "awaiting_faculty",
+      "stage": "complete",
+      "checkpoint": {
+        "risk": {
+          "band": "high",
+          "score": 60,
+          "flagged": true,
+          "signals": [
+            {
+              "code": "LMS_INACTIVE",
+              "path": "evidence.lms.values.inactivityDays",
+              "value": 9,
+              "points": 20,
+              "source": "lms",
+              "threshold": 7,
+              "explanation": "inactivityDays is 9; policy threshold is at least 7."
+            },
+            {
+              "code": "ASSIGNMENT_OVERDUE",
+              "path": "evidence.lms.values.overdueAssignments",
+              "value": 2,
+              "points": 10,
+              "source": "lms",
+              "threshold": 1,
+              "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+            },
+            {
+              "code": "INTERNSHIP_MILESTONE",
+              "path": "evidence.internship.values.missedMilestones",
+              "value": 1,
+              "points": 15,
+              "source": "internship",
+              "threshold": 1,
+              "explanation": "missedMilestones is 1; policy threshold is at least 1."
+            },
+            {
+              "code": "PLACEMENT_ACTIVITY",
+              "path": "evidence.placement.values.missedActivities",
+              "value": 1,
+              "points": 15,
+              "source": "placement",
+              "threshold": 1,
+              "explanation": "missedActivities is 1; policy threshold is at least 1."
+            }
+          ],
+          "policyVersion": "CH11-DEMO-1",
+          "reviewRequired": true
+        },
+        "policy": {
+          "version": "CH11-DEMO-1",
+          "highScore": 50,
+          "markMinimum": 60,
+          "mediumScore": 20,
+          "freshnessDays": 30,
+          "attendanceMinimum": 75,
+          "inactivityMaximum": 7
+        },
+        "composed": {
+          "mode": "deterministic",
+          "packet": {
+            "actions": [
+              {
+                "code": "faculty-check-in",
+                "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "lms-catch-up",
+                "label": "Agree a catch-up schedule for overdue learning activities",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "internship-review",
+                "label": "Review missed internship milestones with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              },
+              {
+                "code": "placement-review",
+                "label": "Review placement preparation activities with the assigned mentor",
+                "owner": "assigned_faculty",
+                "dueInDays": 7
+              }
+            ],
+            "summary": "Mentor review requested: lms inactive, assignment overdue, internship milestone, placement activity.",
+            "citations": [
+              {
+                "statement": "inactivityDays is 9; policy threshold is at least 7.",
+                "evidencePath": "evidence.lms.values.inactivityDays"
+              },
+              {
+                "statement": "overdueAssignments is 2; policy threshold is at least 1.",
+                "evidencePath": "evidence.lms.values.overdueAssignments"
+              },
+              {
+                "statement": "missedMilestones is 1; policy threshold is at least 1.",
+                "evidencePath": "evidence.internship.values.missedMilestones"
+              },
+              {
+                "statement": "missedActivities is 1; policy threshold is at least 1.",
+                "evidencePath": "evidence.placement.values.missedActivities"
+              }
+            ],
+            "prohibited": []
+          },
+          "modelId": null,
+          "validation": {
+            "valid": true,
+            "repairs": [],
+            "failures": [],
+            "fallback": false,
+            "selection": {
+              "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage.",
+              "selected": "validated-baseline",
+              "candidates": [
+                "validated-baseline"
+              ]
+            },
+            "modelAttempts": [],
+            "providerError": null
+          }
+        },
+        "evidence": {
+          "lms": {
+            "state": "present",
+            "source": "lms",
+            "values": {
+              "inactivityDays": 9,
+              "overdueAssignments": 2
+            },
+            "recordId": "CH11-SYNTHETIC-SYN-CSE-001-lms",
+            "semester": "2026-ODD",
+            "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+            "synthetic": true,
+            "observedAt": "2026-09-07T17:31:46.190Z"
+          },
+          "academic": {
+            "state": "present",
+            "source": "academic",
+            "values": {
+              "markPct": 82,
+              "attendancePct": 100
+            },
+            "recordId": "4052f14f-ef8c-4268-9adb-73e6e28408eb,ecd7ffab-63e5-46f8-ab05-9bb32d212d2d",
+            "semester": "2026-ODD",
+            "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+            "synthetic": true,
+            "observedAt": "2026-09-07T17:31:29.689Z"
+          },
+          "placement": {
+            "state": "present",
+            "source": "placement",
+            "values": {
+              "missedActivities": 1
+            },
+            "recordId": "CH11-SYNTHETIC-SYN-CSE-001-placement",
+            "semester": "2026-ODD",
+            "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+            "synthetic": true,
+            "observedAt": "2026-09-07T17:31:46.640Z"
+          },
+          "internship": {
+            "state": "present",
+            "source": "internship",
+            "values": {
+              "missedMilestones": 1
+            },
+            "recordId": "CH11-SYNTHETIC-SYN-CSE-001-internship",
+            "semester": "2026-ODD",
+            "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+            "synthetic": true,
+            "observedAt": "2026-09-07T17:31:46.418Z"
+          }
+        },
+        "retrieval": [
+          {
+            "id": "GUIDE-CAREER-1",
+            "tags": [
+              "academic"
+            ],
+            "text": "Internship placement missed milestones preparation mentor review",
+            "similarity": 0.13801311186847082,
+            "embeddingModel": "sha256-lexical-128-v1"
+          },
+          {
+            "id": "GUIDE-ACADEMIC-1",
+            "tags": [
+              "academic",
+              "attendance"
+            ],
+            "text": "Academic marks study plan attendance mentor review weekly catch-up",
+            "similarity": 0.11547005383792515,
+            "embeddingModel": "sha256-lexical-128-v1"
+          },
+          {
+            "id": "GUIDE-LMS-1",
+            "tags": [
+              "academic",
+              "attendance"
+            ],
+            "text": "LMS inactivity overdue assignments quiz learning catch-up schedule",
+            "similarity": 0,
+            "embeddingModel": "sha256-lexical-128-v1"
+          }
+        ],
+        "capturedAt": "2026-09-07T17:33:20.011Z"
+      },
+      "lease_until": null,
+      "lease_token": "3c7b4586-2bfc-4109-9bcf-d418b57c0adc",
+      "attempts": 1,
+      "support_case_id": "abc0f8d3-4936-4443-a096-cbf44af0e30c",
+      "error_code": null,
+      "created_at": "2026-09-07T17:32:59.437Z",
+      "updated_at": "2026-09-07T17:33:26.172Z"
+    }
+  ],
+  "events": [
+    {
+      "id": "23a8211e-b083-4b1f-b6be-1cc42787ed9b",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "3c41427d-5a5a-4d16-8fb3-bc6c902374dd",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "plan.created",
+      "input_hash": "c52b0002e0fe5c27386cc527656ba06dee7f1719e13e94d636a0d87de8fc70d1",
+      "output_hash": "b46b35f611d93c56086cf7d63ef88880b61d84a013b7454fcffe40c15d472271",
+      "detail": {
+        "input": {
+          "mode": "deterministic",
+          "request": "Review students who may need academic support",
+          "feedback": ""
+        },
+        "output": {
+          "mode": "deterministic",
+          "ready": false,
+          "steps": [
+            "Collect four scoped sources in parallel",
+            "Check freshness and completeness",
+            "Compute approved risk policy",
+            "Retrieve tagged references",
+            "Draft and validate a plan",
+            "Wait for mentor approval",
+            "Publish and track approved interventions"
+          ],
+          "budget": {
+            "maxRepairs": 2,
+            "concurrency": 4,
+            "maxStudents": 50,
+            "modelTimeoutMs": 45000
+          },
+          "request": "Review students who may need academic support",
+          "feedback": "",
+          "questions": [
+            "Which students should this review cover?",
+            "Should this review focus on academics, attendance, or a wellbeing referral?",
+            "Which mentor-approved threshold policy should this review use?"
+          ]
+        }
+      },
+      "created_at": "2026-09-07T17:32:30.506Z"
+    },
+    {
+      "id": "e05e5152-f0c5-4566-982b-e025245e28cf",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "3c41427d-5a5a-4d16-8fb3-bc6c902374dd",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "plan.revised",
+      "input_hash": "b46b35f611d93c56086cf7d63ef88880b61d84a013b7454fcffe40c15d472271",
+      "output_hash": "081846f44398829bbf7ff30f4da9ce7de7795e55f68b5cbba0d03ae88dfad5f5",
+      "detail": {
+        "input": {
+          "mode": "deterministic",
+          "ready": false,
+          "steps": [
+            "Collect four scoped sources in parallel",
+            "Check freshness and completeness",
+            "Compute approved risk policy",
+            "Retrieve tagged references",
+            "Draft and validate a plan",
+            "Wait for mentor approval",
+            "Publish and track approved interventions"
+          ],
+          "budget": {
+            "maxRepairs": 2,
+            "concurrency": 4,
+            "maxStudents": 50,
+            "modelTimeoutMs": 45000
+          },
+          "request": "Review students who may need academic support",
+          "feedback": "",
+          "questions": [
+            "Which students should this review cover?",
+            "Should this review focus on academics, attendance, or a wellbeing referral?",
+            "Which mentor-approved threshold policy should this review use?"
+          ]
+        },
+        "output": {
+          "mode": "deterministic",
+          "ready": true,
+          "steps": [
+            "Collect four scoped sources in parallel",
+            "Check freshness and completeness",
+            "Compute approved risk policy",
+            "Retrieve tagged references",
+            "Draft and validate a plan",
+            "Wait for mentor approval",
+            "Publish and track approved interventions"
+          ],
+          "budget": {
+            "maxRepairs": 2,
+            "concurrency": 4,
+            "maxStudents": 50,
+            "modelTimeoutMs": 45000
+          },
+          "domain": "academic",
+          "request": "Review students who may need academic support",
+          "feedback": "Review this assigned student using all four signals",
+          "policyId": "15daa11c-e98e-403a-b461-fdc71d357b26",
+          "questions": [],
+          "studentIds": [
+            "a9bfedf9-96f8-4a22-a614-f838c930fc67"
+          ]
+        }
+      },
+      "created_at": "2026-09-07T17:32:44.653Z"
+    },
+    {
+      "id": "fa198458-226e-45e8-ba3e-080eaff09b7e",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "3c41427d-5a5a-4d16-8fb3-bc6c902374dd",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "plan.locked",
+      "input_hash": "081846f44398829bbf7ff30f4da9ce7de7795e55f68b5cbba0d03ae88dfad5f5",
+      "output_hash": "016bafffc8e50f3be5fb1f219bb90684458431561969ac4e428978606f86890e",
+      "detail": {
+        "input": {
+          "mode": "deterministic",
+          "ready": true,
+          "steps": [
+            "Collect four scoped sources in parallel",
+            "Check freshness and completeness",
+            "Compute approved risk policy",
+            "Retrieve tagged references",
+            "Draft and validate a plan",
+            "Wait for mentor approval",
+            "Publish and track approved interventions"
+          ],
+          "budget": {
+            "maxRepairs": 2,
+            "concurrency": 4,
+            "maxStudents": 50,
+            "modelTimeoutMs": 45000
+          },
+          "domain": "academic",
+          "request": "Review students who may need academic support",
+          "feedback": "Review this assigned student using all four signals",
+          "policyId": "15daa11c-e98e-403a-b461-fdc71d357b26",
+          "questions": [],
+          "studentIds": [
+            "a9bfedf9-96f8-4a22-a614-f838c930fc67"
+          ]
+        },
+        "output": {
+          "hash": "081846f44398829bbf7ff30f4da9ce7de7795e55f68b5cbba0d03ae88dfad5f5",
+          "students": [
+            "a9bfedf9-96f8-4a22-a614-f838c930fc67"
+          ]
+        }
+      },
+      "created_at": "2026-09-07T17:32:59.437Z"
+    },
+    {
+      "id": "ae7b35ec-3a25-4adc-8d19-f067b7c0bd59",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "b0fcfa87-cb8d-4b52-8193-3c4892db0aa8",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "checkpoint.risk",
+      "input_hash": "575087c912df3bbf78e708e1d30c41a1d8e9e48485cb50eefc9fa72ff57a9ab9",
+      "output_hash": "3e98f0437497a1c81d916b0885100df3950e0c2222d96d2181c7e26605c8ee37",
+      "detail": {
+        "input": {
+          "stage": "collect",
+          "checkpoint": {}
+        },
+        "output": {
+          "policy": {
+            "version": "CH11-DEMO-1",
+            "highScore": 50,
+            "markMinimum": 60,
+            "mediumScore": 20,
+            "freshnessDays": 30,
+            "attendanceMinimum": 75,
+            "inactivityMaximum": 7
+          },
+          "evidence": {
+            "lms": {
+              "state": "present",
+              "source": "lms",
+              "values": {
+                "inactivityDays": 9,
+                "overdueAssignments": 2
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-lms",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.190Z"
+            },
+            "academic": {
+              "state": "present",
+              "source": "academic",
+              "values": {
+                "markPct": 82,
+                "attendancePct": 100
+              },
+              "recordId": "4052f14f-ef8c-4268-9adb-73e6e28408eb,ecd7ffab-63e5-46f8-ab05-9bb32d212d2d",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:29.689Z"
+            },
+            "placement": {
+              "state": "present",
+              "source": "placement",
+              "values": {
+                "missedActivities": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-placement",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.640Z"
+            },
+            "internship": {
+              "state": "present",
+              "source": "internship",
+              "values": {
+                "missedMilestones": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-internship",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.418Z"
+            }
+          },
+          "capturedAt": "2026-09-07T17:33:20.011Z"
+        }
+      },
+      "created_at": "2026-09-07T17:33:20.129Z"
+    },
+    {
+      "id": "d0196cfc-6c23-4fa6-833f-524bbb3141fc",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "b0fcfa87-cb8d-4b52-8193-3c4892db0aa8",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "checkpoint.recommend",
+      "input_hash": "f6127db5ceda14e1ac27597db4ef3d586047b334f5c8fa76f80695ac471a82c6",
+      "output_hash": "bda9446632a6fae92a2f66789fa4203f93826792f9eb98c55b01c3b17a55277d",
+      "detail": {
+        "input": {
+          "stage": "risk",
+          "checkpoint": {
+            "policy": {
+              "version": "CH11-DEMO-1",
+              "highScore": 50,
+              "markMinimum": 60,
+              "mediumScore": 20,
+              "freshnessDays": 30,
+              "attendanceMinimum": 75,
+              "inactivityMaximum": 7
+            },
+            "evidence": {
+              "lms": {
+                "state": "present",
+                "source": "lms",
+                "values": {
+                  "inactivityDays": 9,
+                  "overdueAssignments": 2
+                },
+                "recordId": "CH11-SYNTHETIC-SYN-CSE-001-lms",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:46.190Z"
+              },
+              "academic": {
+                "state": "present",
+                "source": "academic",
+                "values": {
+                  "markPct": 82,
+                  "attendancePct": 100
+                },
+                "recordId": "4052f14f-ef8c-4268-9adb-73e6e28408eb,ecd7ffab-63e5-46f8-ab05-9bb32d212d2d",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:29.689Z"
+              },
+              "placement": {
+                "state": "present",
+                "source": "placement",
+                "values": {
+                  "missedActivities": 1
+                },
+                "recordId": "CH11-SYNTHETIC-SYN-CSE-001-placement",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:46.640Z"
+              },
+              "internship": {
+                "state": "present",
+                "source": "internship",
+                "values": {
+                  "missedMilestones": 1
+                },
+                "recordId": "CH11-SYNTHETIC-SYN-CSE-001-internship",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:46.418Z"
+              }
+            },
+            "capturedAt": "2026-09-07T17:33:20.011Z"
+          }
+        },
+        "output": {
+          "risk": {
+            "band": "high",
+            "score": 60,
+            "flagged": true,
+            "signals": [
+              {
+                "code": "LMS_INACTIVE",
+                "path": "evidence.lms.values.inactivityDays",
+                "value": 9,
+                "points": 20,
+                "source": "lms",
+                "threshold": 7,
+                "explanation": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "code": "ASSIGNMENT_OVERDUE",
+                "path": "evidence.lms.values.overdueAssignments",
+                "value": 2,
+                "points": 10,
+                "source": "lms",
+                "threshold": 1,
+                "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+              },
+              {
+                "code": "INTERNSHIP_MILESTONE",
+                "path": "evidence.internship.values.missedMilestones",
+                "value": 1,
+                "points": 15,
+                "source": "internship",
+                "threshold": 1,
+                "explanation": "missedMilestones is 1; policy threshold is at least 1."
+              },
+              {
+                "code": "PLACEMENT_ACTIVITY",
+                "path": "evidence.placement.values.missedActivities",
+                "value": 1,
+                "points": 15,
+                "source": "placement",
+                "threshold": 1,
+                "explanation": "missedActivities is 1; policy threshold is at least 1."
+              }
+            ],
+            "policyVersion": "CH11-DEMO-1",
+            "reviewRequired": true
+          },
+          "policy": {
+            "version": "CH11-DEMO-1",
+            "highScore": 50,
+            "markMinimum": 60,
+            "mediumScore": 20,
+            "freshnessDays": 30,
+            "attendanceMinimum": 75,
+            "inactivityMaximum": 7
+          },
+          "evidence": {
+            "lms": {
+              "state": "present",
+              "source": "lms",
+              "values": {
+                "inactivityDays": 9,
+                "overdueAssignments": 2
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-lms",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.190Z"
+            },
+            "academic": {
+              "state": "present",
+              "source": "academic",
+              "values": {
+                "markPct": 82,
+                "attendancePct": 100
+              },
+              "recordId": "4052f14f-ef8c-4268-9adb-73e6e28408eb,ecd7ffab-63e5-46f8-ab05-9bb32d212d2d",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:29.689Z"
+            },
+            "placement": {
+              "state": "present",
+              "source": "placement",
+              "values": {
+                "missedActivities": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-placement",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.640Z"
+            },
+            "internship": {
+              "state": "present",
+              "source": "internship",
+              "values": {
+                "missedMilestones": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-internship",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.418Z"
+            }
+          },
+          "retrieval": [
+            {
+              "id": "GUIDE-CAREER-1",
+              "tags": [
+                "academic"
+              ],
+              "text": "Internship placement missed milestones preparation mentor review",
+              "similarity": 0.13801311186847082,
+              "embeddingModel": "sha256-lexical-128-v1"
+            },
+            {
+              "id": "GUIDE-ACADEMIC-1",
+              "tags": [
+                "academic",
+                "attendance"
+              ],
+              "text": "Academic marks study plan attendance mentor review weekly catch-up",
+              "similarity": 0.11547005383792515,
+              "embeddingModel": "sha256-lexical-128-v1"
+            },
+            {
+              "id": "GUIDE-LMS-1",
+              "tags": [
+                "academic",
+                "attendance"
+              ],
+              "text": "LMS inactivity overdue assignments quiz learning catch-up schedule",
+              "similarity": 0,
+              "embeddingModel": "sha256-lexical-128-v1"
+            }
+          ],
+          "capturedAt": "2026-09-07T17:33:20.011Z"
+        }
+      },
+      "created_at": "2026-09-07T17:33:22.929Z"
+    },
+    {
+      "id": "6d824c18-c981-4a84-b6b3-3c0b773e2ece",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "b0fcfa87-cb8d-4b52-8193-3c4892db0aa8",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "checkpoint.publish",
+      "input_hash": "eef41375d8c2074315630838b2a32f38c1d6aedf79708de5abab0944b39f1974",
+      "output_hash": "e6388700afbb072d103b2e4fa921b74f1bfe9196a361debf25f784a28c85521a",
+      "detail": {
+        "input": {
+          "stage": "recommend",
+          "checkpoint": {
+            "risk": {
+              "band": "high",
+              "score": 60,
+              "flagged": true,
+              "signals": [
+                {
+                  "code": "LMS_INACTIVE",
+                  "path": "evidence.lms.values.inactivityDays",
+                  "value": 9,
+                  "points": 20,
+                  "source": "lms",
+                  "threshold": 7,
+                  "explanation": "inactivityDays is 9; policy threshold is at least 7."
+                },
+                {
+                  "code": "ASSIGNMENT_OVERDUE",
+                  "path": "evidence.lms.values.overdueAssignments",
+                  "value": 2,
+                  "points": 10,
+                  "source": "lms",
+                  "threshold": 1,
+                  "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+                },
+                {
+                  "code": "INTERNSHIP_MILESTONE",
+                  "path": "evidence.internship.values.missedMilestones",
+                  "value": 1,
+                  "points": 15,
+                  "source": "internship",
+                  "threshold": 1,
+                  "explanation": "missedMilestones is 1; policy threshold is at least 1."
+                },
+                {
+                  "code": "PLACEMENT_ACTIVITY",
+                  "path": "evidence.placement.values.missedActivities",
+                  "value": 1,
+                  "points": 15,
+                  "source": "placement",
+                  "threshold": 1,
+                  "explanation": "missedActivities is 1; policy threshold is at least 1."
+                }
+              ],
+              "policyVersion": "CH11-DEMO-1",
+              "reviewRequired": true
+            },
+            "policy": {
+              "version": "CH11-DEMO-1",
+              "highScore": 50,
+              "markMinimum": 60,
+              "mediumScore": 20,
+              "freshnessDays": 30,
+              "attendanceMinimum": 75,
+              "inactivityMaximum": 7
+            },
+            "evidence": {
+              "lms": {
+                "state": "present",
+                "source": "lms",
+                "values": {
+                  "inactivityDays": 9,
+                  "overdueAssignments": 2
+                },
+                "recordId": "CH11-SYNTHETIC-SYN-CSE-001-lms",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:46.190Z"
+              },
+              "academic": {
+                "state": "present",
+                "source": "academic",
+                "values": {
+                  "markPct": 82,
+                  "attendancePct": 100
+                },
+                "recordId": "4052f14f-ef8c-4268-9adb-73e6e28408eb,ecd7ffab-63e5-46f8-ab05-9bb32d212d2d",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:29.689Z"
+              },
+              "placement": {
+                "state": "present",
+                "source": "placement",
+                "values": {
+                  "missedActivities": 1
+                },
+                "recordId": "CH11-SYNTHETIC-SYN-CSE-001-placement",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:46.640Z"
+              },
+              "internship": {
+                "state": "present",
+                "source": "internship",
+                "values": {
+                  "missedMilestones": 1
+                },
+                "recordId": "CH11-SYNTHETIC-SYN-CSE-001-internship",
+                "semester": "2026-ODD",
+                "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+                "synthetic": true,
+                "observedAt": "2026-09-07T17:31:46.418Z"
+              }
+            },
+            "retrieval": [
+              {
+                "id": "GUIDE-CAREER-1",
+                "tags": [
+                  "academic"
+                ],
+                "text": "Internship placement missed milestones preparation mentor review",
+                "similarity": 0.13801311186847082,
+                "embeddingModel": "sha256-lexical-128-v1"
+              },
+              {
+                "id": "GUIDE-ACADEMIC-1",
+                "tags": [
+                  "academic",
+                  "attendance"
+                ],
+                "text": "Academic marks study plan attendance mentor review weekly catch-up",
+                "similarity": 0.11547005383792515,
+                "embeddingModel": "sha256-lexical-128-v1"
+              },
+              {
+                "id": "GUIDE-LMS-1",
+                "tags": [
+                  "academic",
+                  "attendance"
+                ],
+                "text": "LMS inactivity overdue assignments quiz learning catch-up schedule",
+                "similarity": 0,
+                "embeddingModel": "sha256-lexical-128-v1"
+              }
+            ],
+            "capturedAt": "2026-09-07T17:33:20.011Z"
+          }
+        },
+        "output": {
+          "risk": {
+            "band": "high",
+            "score": 60,
+            "flagged": true,
+            "signals": [
+              {
+                "code": "LMS_INACTIVE",
+                "path": "evidence.lms.values.inactivityDays",
+                "value": 9,
+                "points": 20,
+                "source": "lms",
+                "threshold": 7,
+                "explanation": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "code": "ASSIGNMENT_OVERDUE",
+                "path": "evidence.lms.values.overdueAssignments",
+                "value": 2,
+                "points": 10,
+                "source": "lms",
+                "threshold": 1,
+                "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+              },
+              {
+                "code": "INTERNSHIP_MILESTONE",
+                "path": "evidence.internship.values.missedMilestones",
+                "value": 1,
+                "points": 15,
+                "source": "internship",
+                "threshold": 1,
+                "explanation": "missedMilestones is 1; policy threshold is at least 1."
+              },
+              {
+                "code": "PLACEMENT_ACTIVITY",
+                "path": "evidence.placement.values.missedActivities",
+                "value": 1,
+                "points": 15,
+                "source": "placement",
+                "threshold": 1,
+                "explanation": "missedActivities is 1; policy threshold is at least 1."
+              }
+            ],
+            "policyVersion": "CH11-DEMO-1",
+            "reviewRequired": true
+          },
+          "policy": {
+            "version": "CH11-DEMO-1",
+            "highScore": 50,
+            "markMinimum": 60,
+            "mediumScore": 20,
+            "freshnessDays": 30,
+            "attendanceMinimum": 75,
+            "inactivityMaximum": 7
+          },
+          "composed": {
+            "mode": "deterministic",
+            "packet": {
+              "actions": [
+                {
+                  "code": "faculty-check-in",
+                  "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                },
+                {
+                  "code": "lms-catch-up",
+                  "label": "Agree a catch-up schedule for overdue learning activities",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                },
+                {
+                  "code": "internship-review",
+                  "label": "Review missed internship milestones with the assigned mentor",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                },
+                {
+                  "code": "placement-review",
+                  "label": "Review placement preparation activities with the assigned mentor",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                }
+              ],
+              "summary": "Mentor review requested: lms inactive, assignment overdue, internship milestone, placement activity.",
+              "citations": [
+                {
+                  "statement": "inactivityDays is 9; policy threshold is at least 7.",
+                  "evidencePath": "evidence.lms.values.inactivityDays"
+                },
+                {
+                  "statement": "overdueAssignments is 2; policy threshold is at least 1.",
+                  "evidencePath": "evidence.lms.values.overdueAssignments"
+                },
+                {
+                  "statement": "missedMilestones is 1; policy threshold is at least 1.",
+                  "evidencePath": "evidence.internship.values.missedMilestones"
+                },
+                {
+                  "statement": "missedActivities is 1; policy threshold is at least 1.",
+                  "evidencePath": "evidence.placement.values.missedActivities"
+                }
+              ],
+              "prohibited": []
+            },
+            "modelId": null,
+            "validation": {
+              "valid": true,
+              "repairs": [],
+              "failures": [],
+              "fallback": false,
+              "selection": {
+                "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage.",
+                "selected": "validated-baseline",
+                "candidates": [
+                  "validated-baseline"
+                ]
+              },
+              "modelAttempts": [],
+              "providerError": null
+            }
+          },
+          "evidence": {
+            "lms": {
+              "state": "present",
+              "source": "lms",
+              "values": {
+                "inactivityDays": 9,
+                "overdueAssignments": 2
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-lms",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.190Z"
+            },
+            "academic": {
+              "state": "present",
+              "source": "academic",
+              "values": {
+                "markPct": 82,
+                "attendancePct": 100
+              },
+              "recordId": "4052f14f-ef8c-4268-9adb-73e6e28408eb,ecd7ffab-63e5-46f8-ab05-9bb32d212d2d",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:29.689Z"
+            },
+            "placement": {
+              "state": "present",
+              "source": "placement",
+              "values": {
+                "missedActivities": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-placement",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.640Z"
+            },
+            "internship": {
+              "state": "present",
+              "source": "internship",
+              "values": {
+                "missedMilestones": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-internship",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.418Z"
+            }
+          },
+          "retrieval": [
+            {
+              "id": "GUIDE-CAREER-1",
+              "tags": [
+                "academic"
+              ],
+              "text": "Internship placement missed milestones preparation mentor review",
+              "similarity": 0.13801311186847082,
+              "embeddingModel": "sha256-lexical-128-v1"
+            },
+            {
+              "id": "GUIDE-ACADEMIC-1",
+              "tags": [
+                "academic",
+                "attendance"
+              ],
+              "text": "Academic marks study plan attendance mentor review weekly catch-up",
+              "similarity": 0.11547005383792515,
+              "embeddingModel": "sha256-lexical-128-v1"
+            },
+            {
+              "id": "GUIDE-LMS-1",
+              "tags": [
+                "academic",
+                "attendance"
+              ],
+              "text": "LMS inactivity overdue assignments quiz learning catch-up schedule",
+              "similarity": 0,
+              "embeddingModel": "sha256-lexical-128-v1"
+            }
+          ],
+          "capturedAt": "2026-09-07T17:33:20.011Z"
+        }
+      },
+      "created_at": "2026-09-07T17:33:24.548Z"
+    },
+    {
+      "id": "fe0162e1-ecb8-4198-b1d8-0ef94bf20989",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "b0fcfa87-cb8d-4b52-8193-3c4892db0aa8",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "mentor.interrupt",
+      "input_hash": "e6388700afbb072d103b2e4fa921b74f1bfe9196a361debf25f784a28c85521a",
+      "output_hash": "56081c719a0baecbf2455045ab775c0394265fcfe1f2ef9b32fb002bcb26b0ad",
+      "detail": {
+        "input": {
+          "risk": {
+            "band": "high",
+            "score": 60,
+            "flagged": true,
+            "signals": [
+              {
+                "code": "LMS_INACTIVE",
+                "path": "evidence.lms.values.inactivityDays",
+                "value": 9,
+                "points": 20,
+                "source": "lms",
+                "threshold": 7,
+                "explanation": "inactivityDays is 9; policy threshold is at least 7."
+              },
+              {
+                "code": "ASSIGNMENT_OVERDUE",
+                "path": "evidence.lms.values.overdueAssignments",
+                "value": 2,
+                "points": 10,
+                "source": "lms",
+                "threshold": 1,
+                "explanation": "overdueAssignments is 2; policy threshold is at least 1."
+              },
+              {
+                "code": "INTERNSHIP_MILESTONE",
+                "path": "evidence.internship.values.missedMilestones",
+                "value": 1,
+                "points": 15,
+                "source": "internship",
+                "threshold": 1,
+                "explanation": "missedMilestones is 1; policy threshold is at least 1."
+              },
+              {
+                "code": "PLACEMENT_ACTIVITY",
+                "path": "evidence.placement.values.missedActivities",
+                "value": 1,
+                "points": 15,
+                "source": "placement",
+                "threshold": 1,
+                "explanation": "missedActivities is 1; policy threshold is at least 1."
+              }
+            ],
+            "policyVersion": "CH11-DEMO-1",
+            "reviewRequired": true
+          },
+          "policy": {
+            "version": "CH11-DEMO-1",
+            "highScore": 50,
+            "markMinimum": 60,
+            "mediumScore": 20,
+            "freshnessDays": 30,
+            "attendanceMinimum": 75,
+            "inactivityMaximum": 7
+          },
+          "composed": {
+            "mode": "deterministic",
+            "packet": {
+              "actions": [
+                {
+                  "code": "faculty-check-in",
+                  "label": "Schedule a 20-minute academic check-in with the assigned mentor",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                },
+                {
+                  "code": "lms-catch-up",
+                  "label": "Agree a catch-up schedule for overdue learning activities",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                },
+                {
+                  "code": "internship-review",
+                  "label": "Review missed internship milestones with the assigned mentor",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                },
+                {
+                  "code": "placement-review",
+                  "label": "Review placement preparation activities with the assigned mentor",
+                  "owner": "assigned_faculty",
+                  "dueInDays": 7
+                }
+              ],
+              "summary": "Mentor review requested: lms inactive, assignment overdue, internship milestone, placement activity.",
+              "citations": [
+                {
+                  "statement": "inactivityDays is 9; policy threshold is at least 7.",
+                  "evidencePath": "evidence.lms.values.inactivityDays"
+                },
+                {
+                  "statement": "overdueAssignments is 2; policy threshold is at least 1.",
+                  "evidencePath": "evidence.lms.values.overdueAssignments"
+                },
+                {
+                  "statement": "missedMilestones is 1; policy threshold is at least 1.",
+                  "evidencePath": "evidence.internship.values.missedMilestones"
+                },
+                {
+                  "statement": "missedActivities is 1; policy threshold is at least 1.",
+                  "evidencePath": "evidence.placement.values.missedActivities"
+                }
+              ],
+              "prohibited": []
+            },
+            "modelId": null,
+            "validation": {
+              "valid": true,
+              "repairs": [],
+              "failures": [],
+              "fallback": false,
+              "selection": {
+                "rule": "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage.",
+                "selected": "validated-baseline",
+                "candidates": [
+                  "validated-baseline"
+                ]
+              },
+              "modelAttempts": [],
+              "providerError": null
+            }
+          },
+          "evidence": {
+            "lms": {
+              "state": "present",
+              "source": "lms",
+              "values": {
+                "inactivityDays": 9,
+                "overdueAssignments": 2
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-lms",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.190Z"
+            },
+            "academic": {
+              "state": "present",
+              "source": "academic",
+              "values": {
+                "markPct": 82,
+                "attendancePct": 100
+              },
+              "recordId": "4052f14f-ef8c-4268-9adb-73e6e28408eb,ecd7ffab-63e5-46f8-ab05-9bb32d212d2d",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:29.689Z"
+            },
+            "placement": {
+              "state": "present",
+              "source": "placement",
+              "values": {
+                "missedActivities": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-placement",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.640Z"
+            },
+            "internship": {
+              "state": "present",
+              "source": "internship",
+              "values": {
+                "missedMilestones": 1
+              },
+              "recordId": "CH11-SYNTHETIC-SYN-CSE-001-internship",
+              "semester": "2026-ODD",
+              "studentId": "a9bfedf9-96f8-4a22-a614-f838c930fc67",
+              "synthetic": true,
+              "observedAt": "2026-09-07T17:31:46.418Z"
+            }
+          },
+          "retrieval": [
+            {
+              "id": "GUIDE-CAREER-1",
+              "tags": [
+                "academic"
+              ],
+              "text": "Internship placement missed milestones preparation mentor review",
+              "similarity": 0.13801311186847082,
+              "embeddingModel": "sha256-lexical-128-v1"
+            },
+            {
+              "id": "GUIDE-ACADEMIC-1",
+              "tags": [
+                "academic",
+                "attendance"
+              ],
+              "text": "Academic marks study plan attendance mentor review weekly catch-up",
+              "similarity": 0.11547005383792515,
+              "embeddingModel": "sha256-lexical-128-v1"
+            },
+            {
+              "id": "GUIDE-LMS-1",
+              "tags": [
+                "academic",
+                "attendance"
+              ],
+              "text": "LMS inactivity overdue assignments quiz learning catch-up schedule",
+              "similarity": 0,
+              "embeddingModel": "sha256-lexical-128-v1"
+            }
+          ],
+          "capturedAt": "2026-09-07T17:33:20.011Z"
+        },
+        "output": {
+          "runId": "b57d16ff-b69b-4b25-9194-10d811db1e67",
+          "caseId": "abc0f8d3-4936-4443-a096-cbf44af0e30c",
+          "artifactId": "c0641d95-20b3-4310-ac8c-595dbbbc34f1",
+          "contentHash": "7e9a513a3b049b8b3d6dd941ddf6eb5c43c59f98b22c6bddfa2af5ccce905efd"
+        }
+      },
+      "created_at": "2026-09-07T17:33:26.172Z"
+    },
+    {
+      "id": "3d1158d5-277d-40ac-8635-1350639ddf6f",
+      "generation_id": "62475b30-55ab-469b-8bee-d90342b39824",
+      "subject_id": "3c41427d-5a5a-4d16-8fb3-bc6c902374dd",
+      "actor_person_id": "911b4f94-8ac1-49c9-a5e1-802d194afc9f",
+      "event_type": "execution.merged",
+      "input_hash": "35d477a0f8404b06954bedeb9751edc6f1fc930dee31dbb80fd71123d23df6c8",
+      "output_hash": "47d98bb961b024e065e4f562834ef5de2740e153ad88365e59887f71672f696c",
+      "detail": {
+        "input": {
+          "planHash": "081846f44398829bbf7ff30f4da9ce7de7795e55f68b5cbba0d03ae88dfad5f5",
+          "studentIds": [
+            "a9bfedf9-96f8-4a22-a614-f838c930fc67"
+          ]
+        },
+        "output": {
+          "planId": "3c41427d-5a5a-4d16-8fb3-bc6c902374dd",
+          "results": [
+            {
+              "id": "b0fcfa87-cb8d-4b52-8193-3c4892db0aa8",
+              "completed": true
+            }
+          ],
+          "elapsedMs": 16774,
+          "concurrency": 4
+        }
+      },
+      "created_at": "2026-09-07T17:33:30.564Z"
+    }
+  ],
+  "exportedAt": "2026-09-07T17:33:38.407Z"
+}

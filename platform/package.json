@@ -21,7 +21,9 @@
     "start:railway-control-plane": "node scripts/railway-control-plane.mjs",
     "prerequisites": "node scripts/check-prerequisites.mjs",
     "check": "turbo run lint typecheck build && node --test tests/*.test.mjs && npm run test:core && node scripts/check-prerequisites.mjs",
-    "chapter11:build": "npm run chapter11:build --workspace=@aura/core-api"
+    "chapter11:build": "npm run chapter11:build --workspace=@aura/core-api",
+    "initialize:local": "node --env-file=.env.local scripts/initialize-local.mjs",
+    "dev:local": "node --env-file=.env.local node_modules/turbo/bin/turbo run dev --parallel --env-mode=loose"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",

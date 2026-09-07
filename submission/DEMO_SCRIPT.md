@@ -17,14 +17,15 @@ For the lab failure demonstration, run the Chapter 11 unit and database tests. E
 
 ## Local commands
 
-From `platform`, configure the private environment using `.env.example`, migrate the database, seed the simulation, and link the demo identities using the auth service's existing seed command. Use an isolated schema beginning `aura_core_test_ch11` for destructive acceptance tests.
+Follow `LOCAL_SETUP.md` to initialize a separate local installation. From `platform`, after configuring the private root environment:
 
 ```sh
-npm ci
-npm run check
+npm run initialize:local
 npm run chapter11:build
-CORE_DATABASE_SCHEMA=aura_core_test_ch11_browser npx turbo run dev --parallel --env-mode=loose
+npm run dev:local
 ```
+
+For the already configured project owner's machine, the private per-service environments are used by `npx turbo run dev --parallel --env-mode=loose`. Do not change its schema to an empty test schema without initializing and linking identities first.
 
 Local portal ports: Student 3101, Parent 3102, Faculty 3103, HoD 3104, Governance 3105, Identity 3200, Core 3300. PostgreSQL and private identity configuration are required for the connected portals. The credential-free lab build works independently.
 

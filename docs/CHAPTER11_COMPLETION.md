@@ -32,7 +32,7 @@ One deployed, connected student-support workflow: clarify and lock a plan; colle
 | 11 | `npm run chapter11:build` emits artifact, hashes and acceptance report; publish hard gate | Credential-free build does not publish |
 | 12 | Assigned mentor edits, exact-version approval, outcomes, withdrawal/restoration, role and browser tests | Test identities are not actual faculty approval |
 | 13 | Academic, attendance and wellbeing-referral registry; all three validated in cohort build | Approved action catalogue intentionally bounds model freedom |
-| 14 | Five connected portals and complete local model journey implemented; hosted release verification in progress | Real-case demonstration and actual mentor approval remain external |
+| 14 | Five connected portals, complete local model journey and hosted publication/rollback journey verified | Real-case demonstration and actual mentor approval remain external |
 
 ## Claim boundaries
 
@@ -66,3 +66,9 @@ Final local acceptance:
 - Model transport follows the distinction between thinking and final content described in https://docs.ollama.com/capabilities/thinking; the observed local compatibility response included a closing thinking delimiter, now decoded before packet validation.
 
 - Final `npm run check` after all fixes: 25 tasks passed, 7 platform tests passed, 16 Core tests passed; 2 database-only tests skipped there and exercised separately.
+
+Deployment and reproducibility:
+- Release `34424ecb136433a91d37fcafd1663ee637eaeedf` has the identical application tree to tested commit `dc98bd4db2de6dac795bda4c051c11dbc6803733`. Its verified GitHub author identity resolved Vercel's initial deployment block without rewriting history.
+- All seven public health endpoints report that release and all checked security headers. Production acceptance passed: three consecutive J01–J10 journeys, the 22-view quality suite and the Chapter 11 publication/rollback journey. See `RELEASE_EVIDENCE.md`.
+- Added local initialization and corrected new-client provisioning: local loopback clients and production HTTPS clients use separate profiles; fixed public PKCE IDs match the checked-in portal contract.
+- Initialized isolated identity/Core schemas successfully, linked five demo identities, and reran initialization with zero new identities while preserving the institutional generation. Auth provisioning passed lint and type checks.
