@@ -17,12 +17,13 @@ This Chapter 11 guide and `../docs/RELEASE_EVIDENCE.md` are the current handoff.
 
 ## Start here
 
-1. Read `PROJECT_REPORT.md` for the design and the distinction between implemented software and institutional approval.
-2. Run `Chapter11_Lab_Demonstration.ipynb` or `cd platform && npm run chapter11:build` for a reproducible, credential-free lab artifact.
-3. Use `DEMO_SCRIPT.md` to demonstrate the connected portals.
-4. Review `../docs/CHAPTER11_COMPLETION.md` and `../platform/artifacts/chapter11/` for acceptance evidence.
-5. Use `LOCAL_SETUP.md` for a separate local installation and `VIVA_GUIDE.md` to prepare your explanation.
-6. See `../docs/DEPLOYMENT.md` for the eight-service deployment procedure and private environment setup.
+1. Read [AURA_Team_Walkthrough.pdf](AURA_Team_Walkthrough.pdf) for the simple-English team guide: latest changes, ten students and three mentors, all six portals, agents, a guided tour, practice steps and remaining submission needs. Its editable source is [AURA_Team_Walkthrough.md](AURA_Team_Walkthrough.md).
+2. Read `PROJECT_REPORT.md` for the design and the distinction between implemented software and institutional approval.
+3. Run `Chapter11_Lab_Demonstration.ipynb` or `cd platform && npm run chapter11:build` for a reproducible, credential-free lab artifact.
+4. Use `DEMO_SCRIPT.md` to demonstrate the connected portals.
+5. Review `../docs/CHAPTER11_COMPLETION.md` and `../platform/artifacts/chapter11/` for acceptance evidence.
+6. Use `LOCAL_SETUP.md` for a separate local installation and `VIVA_GUIDE.md` to prepare your explanation.
+7. See `../docs/DEPLOYMENT.md` for the eight-service deployment procedure and private environment setup.
 
 ## Important submission boundary
 
