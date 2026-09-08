@@ -1,6 +1,49 @@
-# Six-portal rebuild release candidate, 8 September 2026
+# Six-portal rebuild release evidence
 
-The six-portal implementation and updated documentation are being prepared for release. The records below describe earlier deployments. They do not establish that the new LMS or rebuilt interfaces are live. Current hosted evidence will be added after deployment.
+Verified 8 September 2026. This section is the current handoff. Earlier release records below are historical.
+
+## Deployed components
+
+The six-portal backend release is `7243e5664b7de9d0b5d1ce950f93e1921470b5db`. All eight services were deployed and their health responses/security headers verified. A subsequent UI-only patch, `8b2677a92ae7ef04fc2f5b6bea44b11955f10e38`, updates the Mentor, HoD and AI Activity sites: review execution controls appear only for faculty/HoD with unfinished work. The AI viewing screen retains status and evidence controls. Student, Parent, LMS, Core and Identity retain the tested backend release. Their data/authentication contracts are unchanged by the UI patch.
+
+Exact stable URLs, immutable deployment URLs and per-component commits are recorded in `platform/artifacts/rebuild/production-deployments.json`. Current health/header evidence is in `production-health.json`. The source/evidence commit in the submission manifest may be newer because it includes documentation and screenshots.
+
+## Implemented experience
+
+- Student: one final course selection per semester, timetable, attendance/results/GPA and confirmed support. HoD can reopen registration with a reason.
+- Parent: linked-child attendance, marks/GPA, simulated fee payment, downloadable demo receipts and shared mentor updates.
+- Mentor: teaching timetable and class records, separate mentee assignments, complete scoped student profiles, decisions, follow-ups and outcomes.
+- HoD: department summaries on Home; faculty, students, courses/timetables and scoped AI controls in separate sections. No individual students on Home.
+- LMS: existing registrations → lessons → assignments → private submission versions → published scores and feedback. Files up to 2 MB are stored durably and access-controlled.
+- AI Activity: actual review stages, timestamps, evidence, failure reasons and suggestion method. The mentor decides before publication. HoD/faculty can start/pause/resume/retry appropriate reviews.
+
+Additive migrations 005 and 006 preserve the current synthetic generation. Six public OAuth clients reuse five seeded identities. Demo entry requires no PIN. Teaching and mentorship are distinct. A mentor change immediately removes historical case/list/export access from the former mentor while preserving new-mentor case access and department oversight. Old audit/evidence records are not rewritten.
+
+## Verification
+
+- Local lint: ten packages passed. All eight service builds and type checks passed. Seven platform and eighteen Core unit tests passed. Four database suites skipped by the generic command were run explicitly and passed: base regression, Chapter 11 lifecycle, LMS and portal experience.
+- Mentor reassignment regression passed in 49.3 seconds, including the legacy dashboard, historical review list and direct evidence export. Core build/lint passed after the change.
+- Hosted walking journey passed in 1.8 minutes: final registration, attendance and final results, parent visibility, simulated payment, receipt download, CSRF and role rejection.
+- Hosted six-portal quality passed in 1.9 minutes: all primary sections, widths 390/768/1440, no serious/critical Axe findings, no tested page runtime errors or horizontal page overflow. Six phone captures and selected desktop/workflow captures were inspected.
+- Hosted LMS manual journey passed: HoD published CS401 with Dr Mira Sen; Ananya registered once; faculty published a lesson and assignment; student opened the lesson and submitted a labelled demonstration answer; faculty published 18/20 and written feedback; a fresh student login showed the stored result.
+- Hosted Chapter 11 journey passed in 2.3 minutes on the final Core: current academic/LMS records, four-source evidence, validated rules, mentor decision, student publication and HoD evidence inspection. Ananya's confirmed review scored 30/100 from the two synthetic career signals; recent LMS activity was not replaced with old fixture inactivity.
+- The UI observer patch passed portal-kit lint/type checks and the three affected production builds. Final hosted observer verification is recorded in `hosted-acceptance.json`.
+- Credential-free Chapter 11 build passed for eight students with equal sequential/parallel output quality. Controlled-I/O timing is not a production performance result.
+- Production dependency audit: zero reported vulnerabilities at check time. Three-page Word/PDF report regenerated, rendered and inspected.
+
+One AI-operator sign-in returned `session_failed` during concurrent hosted acceptance. Stored demo credentials were checked without exposing them. A fresh manual login and a complete subsequent quality run passed. The transient cause was not established; the failed run is not counted as a pass.
+
+## Remaining academic and operational boundaries
+
+All records are synthetic. Native academic/LMS workflows are connected; internship and placement inputs remain labelled synthetic fixtures. There is no institutional Contineo/ERP adapter or real payment processor. GPA uses an editable labelled ten-point demonstration scale until official rules are supplied.
+
+Hosted agents use **Rules with validation**. The model adapter and earlier separately verified local Qwen demonstration remain in the repository. This release does not introduce a hosted model endpoint or claim newly verified cloud LLM execution, predictive accuracy, or improved student outcomes.
+
+Chapter 11 section 11.2 and Lab 14 require a real case and actual mentor acceptance. The team must obtain professor acceptance of the synthetic substitute or demonstrate an authorized real case. Synthetic identities are not real faculty sign-off. The recurring release automation remains paused.
+
+The submission excludes credentials, session traces and real student records. Use `submission/DEMO_SCRIPT.md` for the current walkthrough.
+
+---
 
 # Chapter 11 production release evidence
 

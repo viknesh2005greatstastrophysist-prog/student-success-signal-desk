@@ -24,5 +24,7 @@
   },
   "productionAudit": "0 vulnerabilities",
   "labBuild": "8 students; same sequential/parallel quality",
-  "cloudRelease": "pending"
+  "cloudRelease": "See hosted acceptance and health evidence",
+  "mentorReassignmentRegression": "Passed 49.3s: former mentor loses legacy cases, historical plan listing and export; new mentor sees cases; HoD retains evidence",
+  "coreScopeBuildAndLint": "passed"
 }

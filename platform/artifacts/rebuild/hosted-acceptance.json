@@ -1,0 +1,65 @@
+{
+  "verifiedAt": "2026-09-08",
+  "interfaceRelease": "1e64b483b1db758850d5c0d364fc3f3b27bd0901",
+  "finalApplicationRelease": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+  "interfaceUnchangedByFinalMentorScopeFix": true,
+  "hostedQuality": {
+    "passed": true,
+    "duration": "1.9 minutes",
+    "portals": 6,
+    "widths": [
+      390,
+      768,
+      1440
+    ],
+    "seriousOrCriticalAxeFindings": 0,
+    "testedRuntimeErrors": 0
+  },
+  "hostedWalking": {
+    "passed": true,
+    "duration": "1.8 minutes",
+    "scope": [
+      "semester registration lock",
+      "faculty attendance and final results",
+      "parent attendance/results",
+      "demo payment and receipt",
+      "CSRF/role rejection"
+    ]
+  },
+  "hostedLms": {
+    "passed": true,
+    "course": "CS401 Agentic AI Systems",
+    "workflow": [
+      "HoD publishes and assigns course",
+      "student registers once",
+      "faculty publishes lesson and assignment",
+      "student opens lesson and submits answer",
+      "faculty publishes 18/20 and written feedback",
+      "fresh student session sees stored feedback"
+    ],
+    "synthetic": true
+  },
+  "observedLoginFailure": {
+    "account": "AURA Governance Operator",
+    "result": "one session_failed during concurrent acceptance; fresh manual login and complete quality rerun passed",
+    "cause": "not established; no permanent credential failure found"
+  },
+  "chapter11Hosted": {
+    "passed": true,
+    "duration": "2.3 minutes",
+    "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+    "method": "Rules with validation",
+    "student": "Ananya Rao",
+    "outcome": "mentor confirmed; student saw support plan; HoD inspected recorded four-source evidence"
+  },
+  "observerUiPatch": {
+    "release": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38",
+    "affectedSites": [
+      "faculty",
+      "hod",
+      "governance"
+    ],
+    "buildLintTypes": "passed",
+    "hostedObserver": "passed: current confirmed review shows status and evidence; no start/pause/continue controls"
+  }
+}

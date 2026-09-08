@@ -1,0 +1,50 @@
+[
+  {
+    "project": "aura-faculty-portal",
+    "stableUrl": "https://aura-faculty-portal.vercel.app",
+    "deploymentUrl": "https://aura-faculty-portal-qn37ppzws.vercel.app",
+    "release": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38"
+  },
+  {
+    "project": "aura-parent-portal",
+    "stableUrl": "https://aura-parent-portal.vercel.app",
+    "deploymentUrl": "https://aura-parent-portal-oug8g1ou7.vercel.app",
+    "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db"
+  },
+  {
+    "project": "aura-identity-service",
+    "stableUrl": "https://aura-identity-service.vercel.app",
+    "deploymentUrl": "https://aura-identity-service-il4wu4rl0.vercel.app",
+    "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db"
+  },
+  {
+    "project": "aura-lms-portal",
+    "stableUrl": "https://aura-lms-portal.vercel.app",
+    "deploymentUrl": "https://aura-lms-portal-qh5sl5kz9.vercel.app",
+    "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db"
+  },
+  {
+    "project": "aura-student-portal",
+    "stableUrl": "https://aura-student-portal.vercel.app",
+    "deploymentUrl": "https://aura-student-portal-jqevagtmw.vercel.app",
+    "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db"
+  },
+  {
+    "project": "aura-core-api",
+    "stableUrl": "https://aura-core-api.vercel.app",
+    "deploymentUrl": "https://aura-core-2dmi8ty3g.vercel.app",
+    "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db"
+  },
+  {
+    "project": "aura-hod-portal",
+    "stableUrl": "https://aura-hod-portal.vercel.app",
+    "deploymentUrl": "https://aura-hod-portal-m0euw6ofe.vercel.app",
+    "release": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38"
+  },
+  {
+    "project": "aura-ai-governance",
+    "stableUrl": "https://aura-ai-governance.vercel.app",
+    "deploymentUrl": "https://aura-ai-governance-j1eqzlqp9.vercel.app",
+    "release": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38"
+  }
+]

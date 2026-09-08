@@ -72,3 +72,7 @@ Deployment and reproducibility:
 - All seven public health endpoints report that release and all checked security headers. Production acceptance passed: three consecutive J01–J10 journeys, the 22-view quality suite and the Chapter 11 publication/rollback journey. See `RELEASE_EVIDENCE.md`.
 - Added local initialization and corrected new-client provisioning: local loopback clients and production HTTPS clients use separate profiles; fixed public PKCE IDs match the checked-in portal contract.
 - Initialized isolated identity/Core schemas successfully, linked five demo identities, and reran initialization with zero new identities while preserving the institutional generation. Auth provisioning passed lint and type checks.
+
+## 8 September six-portal rebuild
+
+The agreed Student, Parent, Mentor, HoD, AI Activity and LMS workflows are implemented and deployed. Actual native LMS activity replaces fixed LMS fixtures for new reviews. Hosted registration/academic/parent, LMS feedback, mentor publication and six-portal quality checks passed; source and evidence versions are in RELEASE_EVIDENCE.md. Mentor reassignment revokes former-mentor historical reads while preserving evidence and HoD oversight. The professor's real-case and actual mentor acceptance requirement is unchanged.

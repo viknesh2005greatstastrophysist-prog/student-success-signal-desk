@@ -1,6 +1,6 @@
 # Six-portal rebuild progress
 
-8 September 2026. Implementation and local acceptance complete; production release is the next step.
+8 September 2026. Implementation, local acceptance and hosted workflow verification complete. The final UI observer check passed. The submission manifest records the refreshed archive.
 
 ## Implemented
 
@@ -22,9 +22,11 @@ The LMS browser walkthrough published a lesson and assignment, submitted Ananya'
 
 The credential-free Chapter 11 build passed with eight students and identical sequential/parallel output quality. Its controlled-I/O timing is not a production latency claim. The report was regenerated as a three-page Word/PDF document and rendered for inspection.
 
-## Release work
+## Hosted acceptance
 
-Apply additive migrations 005 and 006 to production, provision the sixth OAuth client, deploy the committed candidate to all eight services, verify fresh hosted sessions and LMS workflow, then refresh the submission ZIP. Use RELEASE_EVIDENCE.md for completed hosted verification. Never reset production as test preparation.
+The six-portal backend release is 7243e56; the scoped Mentor/HoD/AI observer UI patch is 8b2677a. All eight services deployed successfully. Production migrations preserved the existing generation. Hosted walking acceptance passed in 1.8 minutes; six-portal quality in 1.9 minutes; Chapter 11 mentor-to-student publication in 2.3 minutes. The manual LMS journey returned 18/20 and written feedback to a fresh student session. Current evidence and the one observed transient sign-in failure are documented in RELEASE_EVIDENCE.md.
+
+The report, screenshots, demo script, source and acceptance evidence are included in the refreshed submission package. See the adjacent archive manifest for its exact source commit and checksum.
 
 ## Boundaries
 

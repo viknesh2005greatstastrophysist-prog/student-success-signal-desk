@@ -70,7 +70,7 @@ User authorized implementation of course -> lesson -> assignment -> feedback.
 - [x] Replace everyday screens/copy across all six portals with the agreed navigation.
 - [x] Verify permissions, persistence, stale updates, duplicate submissions, results and cross-portal consequences.
 - [x] Verify an actual browser walkthrough at desktop/mobile sizes.
-- [ ] Deploy tested services, verify fresh production sessions and update submission package/evidence.
+- [x] Deploy tested services, verify fresh production sessions and update submission package/evidence.
 
 ## Starting evidence
 

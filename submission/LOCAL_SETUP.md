@@ -16,9 +16,9 @@ npm run initialize:local
 npm run dev:local
 ```
 
-The initializer creates missing schemas and tables, seeds a synthetic institutional generation only when none exists, provisions the five public PKCE clients, and links the five demo identities to Core people. Repeating initialization preserves the institutional generation. It refuses production schema names. Local registrations use loopback callbacks in a separate identity schema; production registrations use HTTPS web callbacks. Do not repurpose the deployed identity schema for a fresh local installation.
+The initializer creates missing schemas and tables, seeds a synthetic institutional generation only when none exists, provisions the six public PKCE clients, and links the five demo identities to Core people. Repeating initialization preserves the institutional generation. It refuses production schema names. Local registrations use loopback callbacks in a separate identity schema; production registrations use HTTPS web callbacks. Do not repurpose the deployed identity schema for a fresh local installation.
 
-Open Faculty at `http://127.0.0.1:3103` or Governance at `http://127.0.0.1:3105`. Choose Enter portal; no PIN is required. Student, Parent and HoD run on ports 3101, 3102 and 3104. Identity is on 3200 and Core on 3300. The root environment is passed to all workspaces; it does not need to be copied into each app.
+Open Faculty at `http://127.0.0.1:3103` or Governance at `http://127.0.0.1:3105`. Choose Open portal; no PIN is required. Student, Parent and HoD run on ports 3101, 3102 and 3104. Identity is on 3200 and Core on 3300. The root environment is passed to all workspaces; it does not need to be copied into each app.
 
 ## Optional local model
 
@@ -41,6 +41,6 @@ node --test tests/*.test.mjs
 npm run test:core
 ```
 
-Database and browser acceptance tests reset synthetic data. Use a separate test installation with schema names beginning `aura_core_test_ch11` and `aura_identity_test_`, and consult the test files for the required environment flags. Never point destructive acceptance tests at an institutional dataset.
+Database acceptance suites reset their isolated test schemas; the new browser suites retain records. Use a separate test installation with schema names beginning `aura_core_test_` and `aura_identity_test_`, and consult the test files for the required environment flags. Never point destructive acceptance tests at an institutional dataset.
 
 The LMS runs at http://127.0.0.1:3106. It uses the existing student, faculty and HoD demo accounts. `npm run initialize:local` now registers six public PKCE clients. The new migrations are additive and preserve the existing generation. For an isolated browser acceptance setup only, `prepare-lms-demo.ts` and `prepare-rebuild-browser.ts` prepare a registered demo course and labelled career records. Both scripts refuse a production schema.

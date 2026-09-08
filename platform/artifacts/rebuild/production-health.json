@@ -1,0 +1,144 @@
+{
+  "checkedAt": "2026-09-08T08:04:39.377Z",
+  "expectedReleases": {
+    "core-api": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+    "identity-service": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+    "student-portal": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+    "parent-portal": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+    "faculty-portal": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38",
+    "hod-portal": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38",
+    "ai-governance": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38",
+    "lms-portal": "7243e5664b7de9d0b5d1ce950f93e1921470b5db"
+  },
+  "issuer": "https://aura-identity-service.vercel.app/api/auth",
+  "results": [
+    {
+      "service": "core-api",
+      "origin": "https://aura-core-api.vercel.app",
+      "status": 200,
+      "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    },
+    {
+      "service": "identity-service",
+      "origin": "https://aura-identity-service.vercel.app",
+      "status": 200,
+      "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self' https://aura-student-portal.vercel.app http://127.0.0.1:3101 https://aura-parent-portal.vercel.app http://127.0.0.1:3102 https://aura-faculty-portal.vercel.app http://127.0.0.1:3103 https://aura-hod-portal.vercel.app http://127.0.0.1:3104 https://aura-ai-governance.vercel.app http://127.0.0.1:3105 https://aura-lms-portal.vercel.app http://127.0.0.1:3106; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    },
+    {
+      "service": "student-portal",
+      "origin": "https://aura-student-portal.vercel.app",
+      "status": 200,
+      "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    },
+    {
+      "service": "parent-portal",
+      "origin": "https://aura-parent-portal.vercel.app",
+      "status": 200,
+      "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    },
+    {
+      "service": "faculty-portal",
+      "origin": "https://aura-faculty-portal.vercel.app",
+      "status": 200,
+      "release": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    },
+    {
+      "service": "hod-portal",
+      "origin": "https://aura-hod-portal.vercel.app",
+      "status": 200,
+      "release": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    },
+    {
+      "service": "ai-governance",
+      "origin": "https://aura-ai-governance.vercel.app",
+      "status": 200,
+      "release": "8b2677a92ae7ef04fc2f5b6bea44b11955f10e38",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    },
+    {
+      "service": "lms-portal",
+      "origin": "https://aura-lms-portal.vercel.app",
+      "status": 200,
+      "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+      "headers": {
+        "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; frame-src 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "cross-origin-opener-policy": "same-origin",
+        "cross-origin-resource-policy": "same-origin"
+      }
+    }
+  ]
+}

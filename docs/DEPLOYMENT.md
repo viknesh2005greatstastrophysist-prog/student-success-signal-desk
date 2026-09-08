@@ -27,7 +27,7 @@ Run the four database suites explicitly against separate `aura_core_test_*` sche
 
 ## Apply and deploy
 
-Commit the tested candidate and record its full SHA. Apply additive Core migrations using the private Core environment; verify the schema name before running. Provision six production OAuth clients using the private Identity environment with `AURA_CLIENT_PROFILE=production`. Reuse the five existing demo identities. Do not copy the local test-schema environment to production.
+Commit the tested candidate and record its full SHA. For a scoped UI-only patch with unchanged data/auth contracts, deploy affected sites and record a per-component release map; do not imply every service runs the newest UI commit. Apply additive Core migrations using the private Core environment; verify the schema name before running. Provision six production OAuth clients using the private Identity environment with `AURA_CLIENT_PROFILE=production`. Reuse the five existing demo identities. Do not copy the local test-schema environment to production.
 
 Every portal needs `CORE_API_URL`, `AURA_IDENTITY_URL`, its own `PORTAL_ORIGIN`, and an independent `PORTAL_SESSION_SECRET`. LMS accepts the existing student, faculty and HoD roles; AI Activity also accepts the HoD. Private database and signing credentials belong in provider settings, never source or evidence files.
 
@@ -41,7 +41,7 @@ Substitute verified project, team and commit values. Record each immutable deplo
 
 ## Hosted acceptance
 
-- Verify HTTP success, security headers and full `RELEASE_SHA` for all eight services. Core health is `/api/v1/health`; other services use `/api/health`.
+- Verify HTTP success, security headers and expected per-component `RELEASE_SHA` for all eight services. Core health is `/api/v1/health`; other services use `/api/health`.
 - Check Identity discovery advertises the production issuer.
 - Open fresh PINless demo sessions for all six portals. Verify HoD Home contains department summaries without individual students.
 - Set the six `*_PORTAL_URL` variables to production and run the read-only quality suite. Inspect desktop and mobile captures.
