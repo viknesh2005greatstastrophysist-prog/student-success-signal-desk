@@ -7,7 +7,7 @@ import { actionManifest, chapter11ActionNames } from "@aura/contracts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-test("every interactive control is named and every action contract is rendered", async () => {
+test("legacy action contracts retain their named controls during migration", async () => {
   const ids = actionManifest.map((action) => action.id);
   assert.equal(new Set(ids).size, ids.length);
   const sources = await Promise.all([

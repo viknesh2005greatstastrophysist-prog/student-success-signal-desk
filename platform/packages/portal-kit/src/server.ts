@@ -11,6 +11,7 @@ const productionOrigins: Record<PortalId, string> = {
   faculty: "https://aura-faculty-portal.vercel.app",
   hod: "https://aura-hod-portal.vercel.app",
   governance: "https://aura-ai-governance.vercel.app",
+  lms: "https://aura-lms-portal.vercel.app",
 };
 const localOrigins: Record<PortalId, string> = {
   student: "http://127.0.0.1:3101",
@@ -18,6 +19,7 @@ const localOrigins: Record<PortalId, string> = {
   faculty: "http://127.0.0.1:3103",
   hod: "http://127.0.0.1:3104",
   governance: "http://127.0.0.1:3105",
+  lms: "http://127.0.0.1:3106",
 };
 
 function settings(portal: PortalId) {
@@ -53,7 +55,7 @@ function readCookie(request: Request, name: string) {
   }
   return undefined;
 }
-function safeReturnTo(raw: string | null) { return raw?.startsWith("/") && !raw.startsWith("//") ? raw : "/"; }
+function safeReturnTo(raw: string | null) { return raw?.startsWith("/") && !raw.startsWith("//") && !/[\\\r\n]/.test(raw) ? raw : "/"; }
 function redirect(location: string | URL, status = 302) {
   return new Response(null, { status, headers: { Location: location.toString() } });
 }
@@ -104,6 +106,8 @@ export async function beginPortalLogin(request: Request, portal: PortalId) {
   authorize.searchParams.set("state", state);
   authorize.searchParams.set("nonce", nonce);
   authorize.searchParams.set("prompt", "login");
+  const hint = new URL(request.url).searchParams.get("account");
+  if (hint && /^[a-zA-Z0-9.@_-]{1,120}$/.test(hint)) authorize.searchParams.set("login_hint", hint);
   const response = redirect(authorize, 302);
   response.headers.append("Set-Cookie", cookie(cookieName(portal, "tx", config.secure), transaction, config.secure, 600));
   response.headers.set("Cache-Control", "no-store");
@@ -223,7 +227,7 @@ export async function portalPublishAndAssign(request: Request, portal: PortalId,
     body: await request.text(),
     cache: "no-store",
   });
-  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-CSRF-Token":session.csrfToken } });
 }
 
 async function portalCoreCommand(request: Request, portal: PortalId, path: string) {
@@ -240,7 +244,7 @@ async function portalCoreCommand(request: Request, portal: PortalId, path: strin
     body: await request.text(),
     cache: "no-store",
   });
-  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-CSRF-Token":session.csrfToken } });
 }
 
 export function portalRegister(request: Request, portal: PortalId) {
@@ -278,7 +282,21 @@ export async function portalChapter11(request: Request, portal: PortalId, path: 
   const session = await readSession(request, portal);
   if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
   const response = await fetch(`${settings(portal).coreUrl}${destination}`, { headers: { Authorization: `Bearer ${session.accessToken}` }, cache: "no-store" });
-  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-CSRF-Token":session.csrfToken } });
+}
+
+export async function portalResource(request: Request, portal: PortalId, namespace: "lms" | "experience", path: string[]) {
+  if (!path.length || path.some(part => !/^[a-zA-Z0-9-]+$/.test(part))) return Response.json({ ok: false }, { status: 404 });
+  const destination = `/api/v1/${namespace}/${path.map(encodeURIComponent).join("/")}`;
+  if (request.method === "POST") return portalCoreCommand(request, portal, destination);
+  const session = await readSession(request, portal);
+  if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  const url = new URL(destination, settings(portal).coreUrl);
+  url.search = new URL(request.url).search;
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${session.accessToken}` }, cache: "no-store" });
+  const headers = new Headers({ "Cache-Control": "private, no-store", "X-CSRF-Token": session.csrfToken, "X-Content-Type-Options": "nosniff" });
+  for (const name of ["Content-Type", "Content-Disposition"]) if (response.headers.has(name)) headers.set(name, response.headers.get(name)!);
+  return new Response(response.body, { status: response.status, headers });
 }
 
 export function portalReplayAgentRun(request: Request, portal: PortalId, runId: string) {

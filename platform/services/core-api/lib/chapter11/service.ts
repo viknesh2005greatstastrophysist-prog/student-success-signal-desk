@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
+import { lmsEvidence } from "../lms-queries";
 import { withCoreTransaction } from "../db";
 import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
 import { ConflictError, NotFoundError } from "../http";
@@ -11,7 +12,7 @@ import { collectSources, compose, DataBlocked, demoPolicy, digest, formatSkill, 
 import { configuredComposer } from "./provider";
 
 type PlanBody = ReturnType<typeof planSkill>;
-type PlanRow = { id: string; generation_id: string; created_by: string; department_id: string; revision: number; status: string; body: PlanBody; plan_hash: string };
+type PlanRow = { id: string; generation_id: string; created_by: string; department_id: string; revision: number; status: string; paused: boolean; body: PlanBody; plan_hash: string };
 type Job = { id: string; generation_id: string; plan_id: string; student_id: string; faculty_person_id: string; status: string; stage: string; checkpoint: Checkpoint; lease_token: string; support_case_id: string | null };
 type Checkpoint = { evidence?: Evidence; capturedAt?: string; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy };
 
@@ -23,10 +24,8 @@ function departmentScope(actor: ActorContext, department: string) {
   if (actor.role !== "governance" && actor.departmentId !== department) throw new AuthorizationError("The requested review is outside your department");
 }
 async function requireAssignedStudents(client: PoolClient, generation: string, facultyId: string, studentIds: string[]) {
-  const assigned = await client.query<{ student_id: string }>(`SELECT DISTINCT r.student_id FROM registrations r
-    JOIN faculty_assignments a ON a.generation_id=r.generation_id AND a.course_offering_id=r.course_offering_id AND a.active
-    WHERE r.generation_id=$1 AND a.faculty_person_id=$2 AND r.student_id=ANY($3::uuid[]) AND r.status IN ('registered','completed')`, [generation, facultyId, studentIds]);
-  if (assigned.rowCount !== studentIds.length) throw new AuthorizationError("Every student must be assigned to the policy mentor through an active course assignment");
+  const assigned = await client.query("SELECT student_id FROM mentor_assignments WHERE generation_id=$1 AND faculty_person_id=$2 AND student_id=ANY($3::uuid[])",[generation,facultyId,studentIds]);
+  if(assigned.rowCount!==studentIds.length)throw new AuthorizationError("Every student must be assigned to the selected mentor");
 }
 async function getPlan(client: PoolClient, actor: ActorContext, id: string, lock = false): Promise<PlanRow> {
   z.string().uuid().parse(id);
@@ -42,28 +41,32 @@ async function getPlan(client: PoolClient, actor: ActorContext, id: string, lock
   return plan;
 }
 
-export const approvePolicySchema = z.object({ policy: policySchema, rationale: z.string().trim().min(12).max(600) }).strict();
+export const approvePolicySchema = z.object({ policy: policySchema, facultyId: z.string().uuid().optional(), rationale: z.string().trim().min(12).max(600) }).strict();
 export async function approvePolicy(actor: ActorContext, raw: unknown, commandId: string = randomUUID()) {
-  requireRole(actor, "faculty");
+  requireRole(actor, "faculty", "hod");
   z.string().uuid().parse(commandId);
   const input = approvePolicySchema.parse(raw);
+  const owner=input.facultyId??actor.personId;
+  if(actor.role==="faculty" && owner!==actor.personId)throw new AuthorizationError("Use your own mentor policy");
   return withCoreTransaction(async client => {
     const generation = await getCurrentGeneration(client);
+    const permitted=await client.query("SELECT id FROM role_assignments WHERE generation_id=$1 AND person_id=$2 AND department_id=$3 AND role='faculty' AND active",[generation,owner,actor.departmentId]);
+    if(!permitted.rowCount)throw new AuthorizationError("Choose an active mentor in your department");
     const id = commandId;
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [id]);
     const prior = await client.query<{ faculty_person_id: string; policy: Policy; rationale: string }>("SELECT faculty_person_id,policy,rationale FROM ch11_policies WHERE id=$1 AND generation_id=$2", [id, generation]);
     if (prior.rowCount) {
-      if (prior.rows[0]!.faculty_person_id !== actor.personId || digest({ policy: prior.rows[0]!.policy, rationale: prior.rows[0]!.rationale }) !== digest(input)) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This command already approved a different policy");
+      if (prior.rows[0]!.faculty_person_id !== owner || digest({ policy: prior.rows[0]!.policy, rationale: prior.rows[0]!.rationale }) !== digest({policy:input.policy,rationale:input.rationale})) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This command already approved a different policy");
       return { id, ...input, synthetic: true };
     }
-    await client.query("INSERT INTO ch11_policies(id,generation_id,department_id,faculty_person_id,policy,rationale) VALUES($1,$2,$3,$4,$5::jsonb,$6)", [id, generation, actor.departmentId, actor.personId, JSON.stringify(input.policy), input.rationale]);
+    await client.query("INSERT INTO ch11_policies(id,generation_id,department_id,faculty_person_id,policy,rationale) VALUES($1,$2,$3,$4,$5::jsonb,$6)", [id, generation, actor.departmentId, owner, JSON.stringify(input.policy), input.rationale]);
     await audit(client, generation, actor, id, "policy.approved", input, { id, synthetic: true });
     return { id, ...input, synthetic: true };
   });
 }
 
 export async function savePlan(actor: ActorContext, raw: unknown, id?: string, expectedRevision?: number, commandId: string = randomUUID()) {
-  requireRole(actor, "faculty", "governance");
+  requireRole(actor, "faculty", "hod", "governance");
   z.string().uuid().parse(commandId);
   const input = planInputSchema.parse(raw);
   return withCoreTransaction(async client => {
@@ -109,7 +112,7 @@ export async function savePlan(actor: ActorContext, raw: unknown, id?: string, e
   });
 }
 export async function lockPlan(actor: ActorContext, id: string, expectedRevision: number) {
-  requireRole(actor, "faculty", "governance");
+  requireRole(actor, "faculty", "hod", "governance");
   return withCoreTransaction(async client => {
     const plan = await getPlan(client, actor, id, true);
     if (plan.status === "locked") return plan;
@@ -134,6 +137,7 @@ export async function readSource(actor: ActorContext, studentId: string, source:
     if (!row.rowCount) throw new NotFoundError("Student not found");
     departmentScope(actor, row.rows[0]!.department_id);
     if (actor.role === "faculty") await requireAssignedStudents(client, generation, actor.personId, [studentId]);
+    if (source === "lms") return lmsEvidence(client,generation,studentId);
     if (source !== "academic") {
       const record = await client.query<{ record: Source }>("SELECT record FROM ch11_sources WHERE generation_id=$1 AND student_id=$2 AND source=$3", [generation, studentId, source]);
       if (!record.rowCount) throw new DataBlocked([`${source}: no linked authorized record`]);
@@ -143,7 +147,7 @@ export async function readSource(actor: ActorContext, studentId: string, source:
       `SELECT 'attendance' AS kind, CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END AS value,r.id::text AS record_id,s.session_date::timestamptz AS observed_at
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
        JOIN course_offerings co ON co.id=s.course_offering_id JOIN terms t ON t.id=co.term_id
-       WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked')
+       WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'
        UNION ALL SELECT 'mark', (m.score / NULLIF(a.maximum_score,0) * 100)::float,m.id::text,m.recorded_at
        FROM marks m JOIN assessments a ON a.id=m.assessment_id JOIN course_offerings co ON co.id=a.course_offering_id JOIN terms t ON t.id=co.term_id WHERE t.code='2026-ODD' AND t.active AND m.generation_id=$1 AND m.student_id=$2 AND a.published`, [generation, studentId]);
     const attendance = records.rows.filter(r => r.kind === "attendance");
@@ -185,6 +189,8 @@ async function saveCheckpoint(actor: ActorContext, job: Job, stage: string, chec
 
 async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
   return withCoreTransaction(async client => {
+    const activePlan=await getPlan(client,actor,plan.id,true);
+    if(activePlan.paused)throw new ConflictError("PLAN_PAUSED","Review paused before publishing its suggestion");
     const current = await client.query<Job>("SELECT * FROM ch11_jobs WHERE id=$1 AND lease_token=$2 AND status='running' FOR UPDATE", [job.id, job.lease_token]);
     if (!current.rowCount) throw new ConflictError("LEASE_LOST", "Another executor owns this job");
     if (await getCurrentGeneration(client) !== job.generation_id) throw new ConflictError("GENERATION_CHANGED", "The generation changed");
@@ -212,10 +218,11 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
 }
 
 export async function executePlan(actor: ActorContext, planId: string, options: { concurrency?: number; composer?: Composer; stopAfterStage?: string } = {}) {
-  requireRole(actor, "faculty", "governance");
+  requireRole(actor, "faculty", "hod", "governance");
   const start = performance.now();
   const initial = await withCoreTransaction(async client => {
     const plan = await getPlan(client, actor, planId);
+    if(plan.paused)throw new ConflictError("PLAN_PAUSED","This review is paused. Resume it before continuing.");
     if (plan.status !== "locked" || digest(plan.body) !== plan.plan_hash) throw new ConflictError("PLAN_NOT_LOCKED", "Lock a valid plan before execution");
     const policy = await client.query<{ policy: Policy; faculty_person_id: string }>("SELECT policy,faculty_person_id FROM ch11_policies WHERE id=$1 AND generation_id=$2", [plan.body.policyId, plan.generation_id]);
     if (!policy.rowCount) throw new ConflictError("POLICY_REQUIRED", "Approved policy missing");
@@ -225,18 +232,22 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
   });
   const results = await parallelMap(initial.jobs, options.concurrency ?? initial.plan.body.budget.concurrency, async ({ id }) => {
     const job = await withCoreTransaction(async client => {
+      const plan=await getPlan(client,actor,planId,true);
+      if(plan.paused)return undefined;
       const lease = randomUUID();
       const claimed = await client.query<Job>("UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *", [id, lease]);
       return claimed.rows[0];
     });
     if (!job) return { id, skipped: true };
     try {
+      await ensureReviewRunning(actor,planId);
       if (!job.checkpoint.evidence) {
         const evidence = await collectSources({ read: (student, source) => readSource(actor, student, source) }, job.student_id);
         const capturedAt = new Date().toISOString();
         validateEvidence(evidence, job.student_id, initial.policy, capturedAt, "2026-ODD");
         await saveCheckpoint(actor, job, "risk", { evidence, capturedAt, policy: initial.policy });
       }
+      await ensureReviewRunning(actor,planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
       if (!job.checkpoint.risk) {
         const risk = riskAnalysis(job.checkpoint.evidence!, initial.policy);
@@ -246,6 +257,7 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
         });
         await saveCheckpoint(actor, job, "recommend", { ...job.checkpoint, risk, retrieval: retrieve(risk.signals.map(s => s.explanation).join(" "), [initial.plan.body.domain!], [...referenceLibrary, ...history], initial.plan.department_id, job.student_id) });
       }
+      await ensureReviewRunning(actor,planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
       if (job.checkpoint.risk!.flagged && !job.checkpoint.composed) {
         const provider = initial.plan.body.mode === "model" ? options.composer ?? configuredComposer() : undefined;
@@ -253,13 +265,14 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
         if (initial.plan.body.mode === "model" && !provider) { composed.validation.providerError = "MODEL_NOT_CONFIGURED"; composed.validation.fallback = true; }
         await saveCheckpoint(actor, job, "publish", { ...job.checkpoint, composed });
       }
+      await ensureReviewRunning(actor,planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
       await publishDraft(actor, job, initial.plan);
       return { id, completed: true };
     } catch (error) {
       const code = error instanceof DataBlocked ? "DATA_BLOCKED" : error instanceof ConflictError ? error.code : error instanceof Error && error.message === "INJECTED_STOP" ? "INJECTED_STOP" : "EXECUTION_FAILED";
       await withCoreTransaction(async client => {
-        await client.query("UPDATE ch11_jobs SET status=$2,error_code=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running'", [job.id, code === "DATA_BLOCKED" ? "blocked" : "failed", code, job.lease_token]);
+        await client.query("UPDATE ch11_jobs SET status=$2,error_code=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running'", [job.id, code === "PLAN_PAUSED" ? "queued" : code === "DATA_BLOCKED" ? "blocked" : "failed", code, job.lease_token]);
         await audit(client, job.generation_id, actor, job.id, "execution.stopped", { stage: job.stage }, { code, reasons: error instanceof DataBlocked ? error.reasons : [] });
       });
       return { id, error: code };
@@ -276,29 +289,14 @@ export async function overview(actor: ActorContext) {
     const generation = await getCurrentGeneration(client);
     const department = actor.role === "governance" ? null : actor.departmentId;
     const mentor = actor.role === "faculty" ? actor.personId : null;
-    if (actor.role === "hod") {
-      const trends = await client.query(`SELECT date_trunc('day',j.created_at)::date::text AS day,
-        count(*)::int AS reviewed, count(*) FILTER(WHERE j.checkpoint->'risk'->>'flagged'='true')::int AS flagged,
-        count(*) FILTER(WHERE j.status='blocked')::int AS blocked,
-        count(*) FILTER(WHERE c.status='approved')::int AS approved,
-        count(*) FILTER(WHERE i.status='completed')::int AS completed,
-        count(*) FILTER(WHERE i.status='withdrawn')::int AS withdrawn
-        FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id
-        LEFT JOIN support_cases c ON c.id=j.support_case_id
-        LEFT JOIN support_plans sp ON sp.support_case_id=c.id
-        LEFT JOIN ch11_interventions i ON i.support_plan_id=sp.id
-        WHERE j.generation_id=$1 AND p.department_id=$2
-        GROUP BY 1 ORDER BY 1`, [generation, department]);
-      return { students: [], policies: [], plans: [], jobs: [], trends: trends.rows, demoPolicy, modelConfigured: false, synthetic: true };
-    }
-    const students = await client.query(`SELECT s.id,s.department_id,s.register_number,p.display_name FROM student_profiles s JOIN people p ON p.id=s.person_id
+    const students = await client.query(`SELECT s.id,s.department_id,s.register_number,p.display_name,m.faculty_person_id AS mentor_id,mp.display_name AS mentor_name FROM student_profiles s JOIN people p ON p.id=s.person_id LEFT JOIN mentor_assignments m ON m.student_id=s.id LEFT JOIN people mp ON mp.id=m.faculty_person_id
       WHERE s.generation_id=$1 AND ($2::uuid IS NULL OR s.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(
-      SELECT 1 FROM registrations r JOIN faculty_assignments a ON a.generation_id=r.generation_id AND a.course_offering_id=r.course_offering_id AND a.active
-      WHERE r.generation_id=s.generation_id AND r.student_id=s.id AND a.faculty_person_id=$3 AND r.status IN ('registered','completed'))) ORDER BY s.register_number`, [generation, department, mentor]);
+      SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) ORDER BY created_at DESC", [generation, department, mentor]);
-    const jobs = await client.query("SELECT j.id,j.plan_id,j.student_id,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR j.faculty_person_id=$3) ORDER BY j.created_at DESC", [generation, department, mentor]);
-    return { students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: true };
+    const jobs = await client.query("SELECT j.id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
+    const trends=await client.query("SELECT date_trunc('day',j.created_at)::date::text AS day,count(*)::int AS reviewed FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) GROUP BY 1 ORDER BY 1",[generation,department]);
+    return { trends:trends.rows, students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: true };
   });
 }
 
@@ -308,5 +306,18 @@ export async function exportPlan(actor: ActorContext, id: string) {
     const jobs = await client.query("SELECT * FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 ORDER BY student_id", [id, plan.generation_id]);
     const events = await client.query("SELECT * FROM ch11_events WHERE generation_id=$1 AND (subject_id=$2 OR subject_id IN (SELECT id FROM ch11_jobs WHERE plan_id=$2)) ORDER BY created_at,id", [plan.generation_id, id]);
     return { schemaVersion: 1, synthetic: true, plan, jobs: jobs.rows, events: events.rows, exportedAt: new Date().toISOString() };
+  });
+}
+
+async function ensureReviewRunning(actor:ActorContext,id:string){
+  await withCoreTransaction(async client=>{const plan=await getPlan(client,actor,id);if(plan.paused)throw new ConflictError("PLAN_PAUSED","Review paused before the next stage");});
+}
+export async function setReviewPaused(actor:ActorContext,id:string,raw:unknown){
+  requireRole(actor,"hod","faculty","governance");
+  const input=z.object({paused:z.boolean(),expectedRevision:z.number().int().nonnegative(),reason:z.string().trim().min(5).max(600)}).strict().parse(raw);
+  return withCoreTransaction(async client=>{const plan=await getPlan(client,actor,id,true);if(plan.revision!==input.expectedRevision)throw new ConflictError("STALE_VERSION","Reload this review before changing its status");
+    await client.query("UPDATE ch11_plans SET paused=$2,revision=revision+1 WHERE id=$1",[id,input.paused]);
+    await audit(client,plan.generation_id,actor,id,input.paused?"review.paused":"review.resumed",{paused:plan.paused,reason:input.reason},{paused:input.paused});
+    return {id,paused:input.paused,revision:plan.revision+1};
   });
 }

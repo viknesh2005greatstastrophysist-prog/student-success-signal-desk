@@ -1,3 +1,7 @@
+# Six-portal rebuild release candidate, 8 September 2026
+
+The six-portal implementation and updated documentation are being prepared for release. The records below describe earlier deployments. They do not establish that the new LMS or rebuilt interfaces are live. Current hosted evidence will be added after deployment.
+
 # Chapter 11 production release evidence
 
 Verified 7 September 2026. This record supersedes older prototype deployment reports.

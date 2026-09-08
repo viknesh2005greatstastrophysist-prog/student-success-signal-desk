@@ -6,7 +6,10 @@
   "exports": {
     ".": "./src/index.tsx",
     "./server": "./src/server.ts",
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./lms": "./src/lms.tsx",
+    "./workspace.css": "./src/workspace.css",
+    "./experience": "./src/experience.tsx"
   },
   "scripts": {
     "lint": "eslint src",

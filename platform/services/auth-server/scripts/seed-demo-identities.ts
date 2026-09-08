@@ -19,7 +19,7 @@ let created = 0;
 let linked = 0;
 
 try {
-  for (const persona of demoPersonas) {
+  for (const persona of [...new Map(demoPersonas.map(persona => [persona.email, persona])).values()]) {
     const existing = await pool.query<{ id: string }>(
       `SELECT id FROM "${identitySchema}"."user" WHERE email = $1 LIMIT 1`,
       [persona.email],

@@ -1,21 +1,19 @@
-# AURA five-portal academic ecosystem
+# AURA student-support ecosystem
 
-AURA is a production-shaped, synthetic college simulation composed of five
+AURA is a production-shaped, synthetic college simulation composed of six
 independent websites, one central identity service, and one authoritative Core
 API backed by PostgreSQL.
 
-The portals are deliberately separate deployments:
+Start in the mentor portal. Use the sidebar to open a timetable, a mentee profile, or support and follow-ups. HoD Home contains department totals and shortcuts; individual students appear in Students.
 
-- Student Portal: registration, published academics, fee status, approved
-  support, and parent-grant control.
-- Parent Portal: grant-scoped child academics, support, sandbox fee payment,
-  and receipt export.
-- Faculty Portal: assigned roster, attendance submission, mark publication,
-  and accountable support decisions.
-- HOD Portal: department-scoped people, course publication, faculty assignment,
-  finance summary, and case oversight.
-- AI Governance Console: evidence freezing, deterministic policy execution,
-  validation, faculty handoff, audit, replay, export, and synthetic reset.
+The six connected portals are:
+
+- Student: one semester course selection, timetable, progress and confirmed support.
+- Parent: linked-child attendance, marks/GPA, simulated fee payment, receipts and mentor updates.
+- Mentor: timetable/class records, assigned mentees, support decisions and follow-ups.
+- HoD: department summaries, faculty/students, courses/timetables and AI controls.
+- LMS: courses, lessons, assignments, private submissions and faculty feedback.
+- AI Activity: review status, evidence, rules/model method, failure recovery and history.
 
 This repository contains no real student data and performs no real payment.
 Governance may propose support, but it cannot alter academic records or approve
@@ -43,7 +41,8 @@ Student site  ─┐
 Parent site   ─┤
 Faculty site  ─┼─> same-origin BFFs ─> Core API ─> Neon PostgreSQL
 HOD site      ─┤          │                 │              │
-Governance    ─┘          └─ OIDC tokens    ├─ audit ledger
+AI Activity   ─┤
+LMS           ─┘          └─ OIDC tokens    ├─ audit ledger
                            Identity service  └─ deterministic agent runtime
 ```
 
@@ -58,13 +57,13 @@ is not part of this release architecture.
 
 ## Local development
 
-Requirements: Node.js 20.9 or newer, npm, and a PostgreSQL database.
+Requirements: Node.js 22.12 or newer, npm, and a PostgreSQL database.
 
 ```bash
 cd platform
 npm ci
 cp .env.example .env.local
-# Fill the private database connection, PIN and random secrets before continuing.
+# Fill the private database connection and random secrets before continuing.
 npm run initialize:local
 npm run dev:local
 ```
@@ -80,11 +79,12 @@ Local services:
 | Faculty | `http://127.0.0.1:3103` |
 | HOD | `http://127.0.0.1:3104` |
 | Governance | `http://127.0.0.1:3105` |
+| LMS | `http://127.0.0.1:3106` |
 | Identity | `http://127.0.0.1:3200` |
 | Core API | `http://127.0.0.1:3300` |
 
 Keep secrets in ignored `.env.local` files. Never commit database URLs, OIDC
-client secrets, session secrets, or the private demonstration PIN.
+client secrets or session secrets. Demo login itself requires no password.
 
 ## Verification
 
@@ -92,11 +92,11 @@ client secrets, session secrets, or the private demonstration PIN.
 cd platform
 npm run check
 npm audit --omit=dev --audit-level=high
-npx playwright test e2e/walking-skeleton.spec.ts
+RUN_REBUILD_MUTATIONS=1 npx playwright test e2e/walking-skeleton.spec.ts
 npx playwright test e2e/quality-gates.spec.ts
 ```
 
-`npm run check` builds, lints, and type-checks all seven deployables, validates
+`npm run check` builds, lints, and type-checks all eight deployables, validates
 the action manifest and security configuration, and runs Core unit tests. The
 database integration test is opt-in and must target a disposable schema:
 
@@ -104,20 +104,11 @@ database integration test is opt-in and must target a disposable schema:
 RUN_DB_TESTS=1 CORE_DATABASE_SCHEMA=aura_core_test_release npm run test:db --workspace=@aura/core-api
 ```
 
-The walking skeleton is the binding cross-portal proof. It covers course
-publication and registration, attendance and marks propagation, sandbox payment
-and receipt access, grant revocation, governed support generation, exact-artifact
-faculty decision, replay with zero academic side effects, CSRF/origin rejection,
-deep links, and deterministic reset.
+The three browser suites cover registration persistence, academic records reaching parents, simulated payment/receipt access, current-record AI reviews, mentor publication, six-portal navigation, accessibility and responsive layout. Database suites separately exercise scope, parent grants, concurrency, reconnect persistence, immutable versions and reversible publication.
 
 ## Deployment
 
-Seven Vercel projects deploy from the same repository and production branch.
-Each project uses its own root or build configuration and production
-environment. A release is not complete merely because Vercel returned seven
-green builds. The exact application commit must be visible in every portal
-footer and Core health response, then the production journey must pass three
-times against clean seeded generations.
+Eight Vercel projects deploy a committed application release. Each has its own root directory and private environment. Verify the full release through every health endpoint, then fresh hosted sessions and cross-portal workflows. Do not reset production as test setup.
 
 Stable production domains:
 
@@ -126,6 +117,7 @@ Stable production domains:
 - <https://aura-faculty-portal.vercel.app>
 - <https://aura-hod-portal.vercel.app>
 - <https://aura-ai-governance.vercel.app>
+- <https://aura-lms-portal.vercel.app>
 - <https://aura-identity-service.vercel.app>
 - <https://aura-core-api.vercel.app>
 
@@ -133,7 +125,9 @@ See the current release procedure and rollback boundaries in
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Release evidence is recorded in
 `docs/RELEASE_EVIDENCE.md` only after exact-commit production verification.
 
-## Project contracts
+## Current agreement and historical contracts
+
+[`docs/PORTAL_EXPERIENCE_SPEC.md`](docs/PORTAL_EXPERIENCE_SPEC.md) is the current interface authority. The documents below retain earlier architectural and acceptance context; where they differ, use the six-portal agreement and latest release evidence.
 
 - [`docs/FULL_COLLEGE_ECOSYSTEM_BUILD_PLAN.md`](docs/FULL_COLLEGE_ECOSYSTEM_BUILD_PLAN.md)
 - [`docs/MULTI_PORTAL_ARCHITECTURE.md`](docs/MULTI_PORTAL_ARCHITECTURE.md)

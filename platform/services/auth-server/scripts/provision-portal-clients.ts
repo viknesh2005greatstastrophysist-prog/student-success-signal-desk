@@ -15,6 +15,7 @@ const clients = [
   { id: "faculty", name: "AURA Faculty Portal" },
   { id: "hod", name: "AURA HOD Portal" },
   { id: "governance", name: "AURA AI Governance" },
+  { id: "lms", name: "AURA Learning Portal" },
 ] as const;
 const clientProfile = process.env.AURA_CLIENT_PROFILE ?? "production";
 if (!["local", "production"].includes(clientProfile)) throw new Error("AURA_CLIENT_PROFILE must be local or production");

@@ -98,6 +98,7 @@ type Snapshot = {
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } };
 
 const navByPortal: Record<PortalId, string[]> = {
+  lms: ["Home", "Courses"],
   student: ["Today", "Registration", "Academics", "Fees", "Support", "Account"],
   parent: ["Overview", "Children", "Fees", "Access"],
   faculty: ["Today", "Classrooms", "Gradebook", "Cases"],

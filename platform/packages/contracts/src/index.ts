@@ -1,6 +1,7 @@
 import { z } from "zod";
+export type { LmsAttachment, LmsCourse, LmsLesson, LmsAssignment, LmsSubmission, LmsOverview, LmsCourseDetail } from "./lms";
 
-export const portalIdSchema = z.enum(["student", "parent", "faculty", "hod", "governance"]);
+export const portalIdSchema = z.enum(["student", "parent", "faculty", "hod", "governance", "lms"]);
 export type PortalId = z.infer<typeof portalIdSchema>;
 
 export const actorRoleSchema = z.enum(["student", "parent", "faculty", "hod", "governance"]);
@@ -23,6 +24,7 @@ export const portalOidcClients: Record<PortalId, string> = {
   faculty: "uSidVDdjNoQCabBMghhPkIXdRBFvPRDw",
   hod: "kqiOIOfbMBtlcIqJxIjHmIHinbBQsnCX",
   governance: "jnDmKEJpxPXzqcwskyxaPJReUkAEWXLE",
+  lms: "auraLmsPortalPublicClient20260908",
 };
 
 const productionPortalOrigins: Record<PortalId, string> = {
@@ -31,6 +33,7 @@ const productionPortalOrigins: Record<PortalId, string> = {
   faculty: "https://aura-faculty-portal.vercel.app",
   hod: "https://aura-hod-portal.vercel.app",
   governance: "https://aura-ai-governance.vercel.app",
+  lms: "https://aura-lms-portal.vercel.app",
 };
 
 const localPortalOrigins: Record<PortalId, string> = {
@@ -39,7 +42,16 @@ const localPortalOrigins: Record<PortalId, string> = {
   faculty: "http://127.0.0.1:3103",
   hod: "http://127.0.0.1:3104",
   governance: "http://127.0.0.1:3105",
+  lms: "http://127.0.0.1:3106",
 };
+
+export const portalAllowedRoles: Record<PortalId, readonly ActorRole[]> = {
+  student: ["student"], parent: ["parent"], faculty: ["faculty"], hod: ["hod"],
+  governance: ["governance", "hod"], lms: ["student", "faculty", "hod"],
+};
+export function clientAllowsRole(clientId: string, role: ActorRole): boolean {
+  return portalIdSchema.options.some(portal => portalOidcClients[portal] === clientId && portalAllowedRoles[portal].includes(role));
+}
 
 export function resolvePortalOrigins(configuredJson?: string): Record<PortalId, string[]> {
   const configured = configuredJson ? JSON.parse(configuredJson) as unknown : {};
@@ -123,6 +135,7 @@ export const portalViewRoutes = {
   faculty: { Today: "/dashboard", Classrooms: "/classes/current", Gradebook: "/classes/current/gradebook", Cases: "/cases/current" },
   hod: { Department: "/dashboard", Offerings: "/offerings/current", People: "/people", Cases: "/cases" },
   governance: { Operations: "/dashboard", Runs: "/runs/current", Evidence: "/runs/current/evidence", Simulation: "/simulation" },
+  lms: { Home: "/dashboard", Courses: "/courses" },
 } as const satisfies Record<PortalId, Record<string, string>>;
 
 const chapter11PlanningActions = ["refresh", "request", "domain", "policy", "mode", "student", "feedback", "save", "new", "revise", "lock", "execute", "export"];
@@ -236,6 +249,7 @@ export type PortalDefinition = {
 };
 
 export const portalDefinitions: Record<PortalId, PortalDefinition> = {
+  lms: { id: "lms", name: "Learning portal", actor: "Student or faculty member", purpose: "Find your course work, submit assignments and read feedback.", accent: "#196c60", capabilities: ["Course materials", "Assignments", "Submissions", "Feedback"], prohibited: ["Unregistered courses", "Other students' submissions"] },
   student: {
     id: "student",
     name: "Student Portal",
@@ -256,7 +270,7 @@ export const portalDefinitions: Record<PortalId, PortalDefinition> = {
   },
   faculty: {
     id: "faculty",
-    name: "Faculty Portal",
+    name: "Mentor portal",
     actor: "Assigned faculty member",
     purpose: "Operate assigned classrooms and make accountable support decisions.",
     accent: "#1d4ed8",
@@ -265,7 +279,7 @@ export const portalDefinitions: Record<PortalId, PortalDefinition> = {
   },
   hod: {
     id: "hod",
-    name: "HOD Portal",
+    name: "HoD portal",
     actor: "Department head",
     purpose: "Operate course and departmental oversight within one authorised department.",
     accent: "#6d28d9",
@@ -282,3 +296,11 @@ export const portalDefinitions: Record<PortalId, PortalDefinition> = {
     prohibited: ["Academic record mutation", "Faculty approval"],
   },
 };
+export type * from "./experience";
+export const experienceViewRoutes = {
+  student: {Home:"/dashboard","Course registration":"/registration",Timetable:"/timetable","My progress":"/progress","My support plan":"/support"},
+  parent: {Home:"/dashboard",Attendance:"/attendance","Marks & results":"/results","Fees & receipts":"/fees","Mentor updates":"/mentor"},
+  faculty: {Home:"/dashboard","My timetable":"/timetable","My students":"/students","Support & follow-ups":"/support"},
+  hod: {Home:"/dashboard",Faculty:"/faculty",Students:"/students","Courses & timetables":"/courses","AI activity":"/ai"},
+  governance: {Overview:"/dashboard",Reviews:"/reviews",History:"/history"},
+} as const;

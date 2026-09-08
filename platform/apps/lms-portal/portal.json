@@ -1,0 +1,7 @@
+{
+  "id": "lms",
+  "localOrigin": "http://127.0.0.1:3106",
+  "vercelProject": "aura-lms-portal",
+  "oidcClientId": "auraLmsPortalPublicClient20260908",
+  "coreApiAudience": "urn:aura:core-api"
+}

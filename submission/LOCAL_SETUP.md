@@ -42,3 +42,5 @@ npm run test:core
 ```
 
 Database and browser acceptance tests reset synthetic data. Use a separate test installation with schema names beginning `aura_core_test_ch11` and `aura_identity_test_`, and consult the test files for the required environment flags. Never point destructive acceptance tests at an institutional dataset.
+
+The LMS runs at http://127.0.0.1:3106. It uses the existing student, faculty and HoD demo accounts. `npm run initialize:local` now registers six public PKCE clients. The new migrations are additive and preserve the existing generation. For an isolated browser acceptance setup only, `prepare-lms-demo.ts` and `prepare-rebuild-browser.ts` prepare a registered demo course and labelled career records. Both scripts refuse a production schema.

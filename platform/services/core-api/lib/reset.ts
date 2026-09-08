@@ -1,3 +1,4 @@
+import { seedExperience } from "./experience-seed";
 import { randomUUID } from "node:crypto";
 import { seedManifestSchema, type SeedManifest } from "@aura/contracts";
 import type { PoolClient } from "pg";
@@ -327,6 +328,7 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
       JSON.stringify(manifest),
     ]);
 
+    await seedExperience(client,generationId);
     return manifest;
   }, "exclusive");
 }

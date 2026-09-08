@@ -4,7 +4,7 @@ Authority: Chapter 11 of `Agentic_AI_15_Worklets_14Lab_Build_Book.docx`, read on
 
 ## Objective
 
-One deployed, connected student-support workflow: clarify and lock a plan; collect four authorized sources; calculate transparent risk; retrieve scoped references; draft and validate recommendations; repair bounded failures; pause for mentor approval; publish, track, export and roll back. The five portals share the same backend state.
+One deployed, connected student-support workflow: clarify and lock a plan; collect four authorized sources; calculate transparent risk; retrieve scoped references; draft and validate recommendations; repair bounded failures; pause for mentor approval; publish, track, export and roll back. The six portals share the same backend state.
 
 ## Execution milestones
 
@@ -20,10 +20,10 @@ One deployed, connected student-support workflow: clarify and lock a plan; colle
 | Lab | Implementation and evidence | Remaining boundary |
 | --- | --- | --- |
 | 1 | Typed coordinator asks three missing constraints; editable, versioned plan then hash lock; unit and browser checks | No arbitrary natural-language tool autonomy |
-| 2 | Four source envelopes, normalized percentages and transparent policy arithmetic; boundary tests | External sources use synthetic normalized fixtures |
+| 2 | Four source envelopes, normalized percentages and transparent policy arithmetic; boundary tests | Academic and LMS sources use actual demo records; career sources use synthetic fixtures |
 | 3 | Reusable `planSkill` and `formatSkill`; executable notebook | None for the demonstrated scope |
 | 4 | Scoped tags plus cosine ranking of lexical embeddings; prior support history separate from checkpoints | Not a pretrained semantic embedding model |
-| 5 | Authenticated Core connector routes and typed source interface; assignment scope checks | Institution-specific Contineo/LMS adapters require authorized source contracts |
+| 5 | Authenticated Core connector routes and typed source interface; assignment scope checks | Native LMS is connected; external institution adapters require authorized source contracts |
 | 6 | PostgreSQL checkpoints, leases, timeout, concurrency and repair budgets; reconnect/resume test | Four jobs per request; repeat to continue larger cohorts |
 | 7 | Explicit collection, validation, risk, recommendation, repair and mentor stages | Implemented in TypeScript; book pseudocode is language-neutral |
 | 8 | Eight-student sequential/parallel comparison with identical output hashes; candidate selection recorded | Controlled source-I/O timing, not a production load test |
@@ -32,7 +32,7 @@ One deployed, connected student-support workflow: clarify and lock a plan; colle
 | 11 | `npm run chapter11:build` emits artifact, hashes and acceptance report; publish hard gate | Credential-free build does not publish |
 | 12 | Assigned mentor edits, exact-version approval, outcomes, withdrawal/restoration, role and browser tests | Test identities are not actual faculty approval |
 | 13 | Academic, attendance and wellbeing-referral registry; all three validated in cohort build | Approved action catalogue intentionally bounds model freedom |
-| 14 | Five connected portals, complete local model journey and hosted publication/rollback journey verified | Real-case demonstration and actual mentor approval remain external |
+| 14 | Six connected portals; prior local model journey and hosted publication/rollback journey verified | Real-case demonstration and actual mentor approval remain external |
 
 ## Claim boundaries
 

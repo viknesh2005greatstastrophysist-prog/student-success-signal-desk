@@ -1,4 +1,4 @@
-import { actorContextSchema, portalOidcClients, type ActorContext } from "@aura/contracts";
+import { actorContextSchema, clientAllowsRole, type ActorContext } from "@aura/contracts";
 import { createRemoteJWKSet, errors as joseErrors, jwtVerify } from "jose";
 
 import { loadCoreConfig } from "./config";
@@ -82,7 +82,7 @@ export async function authenticateRequest(request: Request): Promise<Authenticat
     return { ...context, displayName: row.display_name, email: row.email, clientId };
   });
 
-  if (portalOidcClients[actor.role] !== clientId) {
+  if (!clientAllowsRole(clientId, actor.role)) {
     throw new AuthorizationError(`The ${actor.role} identity cannot enter this portal client`);
   }
   return actor;

@@ -10,7 +10,7 @@ import { packetSchema, validatePacket, type Evidence, type Risk, type domainName
 
 const editSchema = z.object({ expectedRevision: z.number().int().nonnegative(), artifactId: z.string().uuid(), packet: packetSchema, rationale: z.string().trim().min(12).max(600) }).strict();
 export async function editDraft(actor: ActorContext, caseId: string, commandId: string, raw: unknown) {
-  requireRole(actor, "faculty"); assertCommandId(commandId); z.string().uuid().parse(caseId);
+  requireRole(actor, "faculty", "hod"); assertCommandId(commandId); z.string().uuid().parse(caseId);
   const input = editSchema.parse(raw);
   return withCoreTransaction(async client => {
     const generation = await getCurrentGeneration(client);
@@ -23,7 +23,7 @@ export async function editDraft(actor: ActorContext, caseId: string, commandId: 
       `SELECT c.revision,c.status,e.evidence,p.body->>'domain' AS domain,r.id AS run_id,a.id AS artifact_id,a.artifact_version,c.student_id,p.department_id
        FROM support_cases c JOIN evidence_snapshots e ON e.support_case_id=c.id JOIN agent_runs r ON r.evidence_snapshot_id=e.id
        JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN ch11_jobs j ON j.support_case_id=c.id JOIN ch11_plans p ON p.id=j.plan_id
-       WHERE c.id=$1 AND c.generation_id=$2 AND j.faculty_person_id=$3 ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`, [caseId, generation, actor.personId]);
+       WHERE c.id=$1 AND c.generation_id=$2 AND (($4='hod' AND p.department_id=$5) OR ($4='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=c.student_id AND m.faculty_person_id=$3))) ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`, [caseId, generation, actor.personId,actor.role,actor.departmentId]);
     if (!result.rowCount) throw new NotFoundError("Assigned Chapter 11 draft not found");
     const current = result.rows[0]!;
     if (current.status !== "awaiting_faculty" || current.revision !== input.expectedRevision || current.artifact_id !== input.artifactId) throw new ConflictError("STALE_ARTIFACT", "Reload the current draft before editing");
@@ -40,7 +40,7 @@ export async function editDraft(actor: ActorContext, caseId: string, commandId: 
 
 const outcomeSchema = z.object({ expectedRevision: z.number().int().nonnegative(), status: z.enum(["planned", "in_progress", "completed", "withdrawn"]), outcome: z.string().trim().min(12).max(1200) }).strict();
 export async function recordOutcome(actor: ActorContext, planId: string, commandId: string, raw: unknown) {
-  requireRole(actor, "faculty"); assertCommandId(commandId); z.string().uuid().parse(planId);
+  requireRole(actor, "faculty", "hod"); assertCommandId(commandId); z.string().uuid().parse(planId);
   const input = outcomeSchema.parse(raw);
   return withCoreTransaction(async client => {
     const generation = await getCurrentGeneration(client);
@@ -51,7 +51,7 @@ export async function recordOutcome(actor: ActorContext, planId: string, command
     }
     const result = await client.query<{ id: string; student_id: string; department_id: string; plan: unknown }>(
       `SELECT p.id,p.student_id,s.department_id,p.plan FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id
-       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND d.faculty_person_id=$3 FOR UPDATE OF p`, [planId, generation, actor.personId]);
+       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND (($4='hod' AND s.department_id=$5) OR ($4='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$3))) FOR UPDATE OF p`, [planId, generation, actor.personId,actor.role,actor.departmentId]);
     if (!result.rowCount) throw new NotFoundError("Assigned approved plan not found");
     const prior = await client.query<{ revision: number }>("SELECT revision FROM ch11_interventions WHERE support_plan_id=$1 AND generation_id=$2 FOR UPDATE", [planId, generation]);
     const revision = prior.rows[0]?.revision ?? 0;
@@ -67,19 +67,19 @@ export async function recordOutcome(actor: ActorContext, planId: string, command
   });
 }
 export async function reviewQueue(actor: ActorContext) {
-  requireRole(actor, "faculty");
+  requireRole(actor, "faculty", "hod");
   return withCoreTransaction(async client => {
     const generation = await getCurrentGeneration(client);
     const plans = await client.query(`SELECT p.id,p.student_id,p.visible_to_student,p.plan,s.register_number,person.display_name,
       COALESCE(i.status,'planned') AS status,COALESCE(i.revision,0) AS revision,COALESCE(i.outcome,'') AS outcome
       FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN student_profiles s ON s.id=p.student_id
       JOIN people person ON person.id=s.person_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id
-      WHERE p.generation_id=$1 AND d.faculty_person_id=$2 ORDER BY p.created_at DESC`, [generation, actor.personId]);
-    const drafts = await client.query(`SELECT c.id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,person.display_name
+      WHERE p.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$2))) ORDER BY p.created_at DESC`, [generation, actor.personId,actor.role,actor.departmentId]);
+    const drafts = await client.query(`SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,person.display_name
       FROM ch11_jobs j JOIN support_cases c ON c.id=j.support_case_id JOIN agent_runs r ON r.support_case_id=c.id
       JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id
-      WHERE j.generation_id=$1 AND j.faculty_person_id=$2 AND c.status='awaiting_faculty'
-      AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`, [generation, actor.personId]);
+      WHERE j.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2))) AND c.status='awaiting_faculty'
+      AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`, [generation, actor.personId,actor.role,actor.departmentId]);
     return { plans: plans.rows, drafts: drafts.rows };
   });
 }

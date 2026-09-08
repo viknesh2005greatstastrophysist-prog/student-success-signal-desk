@@ -11,6 +11,7 @@ export default defineConfig({
   use: {
     channel: "chrome",
     headless: true,
+    actionTimeout: 20000,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

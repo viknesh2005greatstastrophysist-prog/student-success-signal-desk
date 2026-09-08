@@ -1,3 +1,2 @@
-import { portalDefinitions } from "@aura/contracts";
-import { PortalHome } from "@aura/portal-kit";
-export default function Page() { return <PortalHome portal={portalDefinitions.governance} release={process.env.RELEASE_SHA ?? process.env.COMMIT_REF ?? process.env.VERCEL_GIT_COMMIT_SHA} />; }
+import { ExperiencePortal } from "@aura/portal-kit/experience";
+export default function Page(){return <ExperiencePortal portal="governance"/>;}

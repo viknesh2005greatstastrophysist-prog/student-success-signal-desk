@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { authenticateRequest } from "@/lib/authentication";
 import { apiFailure, noStore, NotFoundError } from "@/lib/http";
-import { approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, savePlan, seedChapterSources } from "@/lib/chapter11/service";
+import { setReviewPaused, approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, savePlan, seedChapterSources } from "@/lib/chapter11/service";
 import { DataBlocked, sourceNames } from "@/lib/chapter11/engine";
 import { editDraft, recordOutcome, reviewQueue } from "@/lib/chapter11/review";
 
@@ -33,6 +33,7 @@ export async function POST(request: Request, context: Context) {
     if (path.join("/") === "sources/seed") return noStore(await seedChapterSources(actor));
     if (path.join("/") === "plans") return noStore(await savePlan(actor, body, undefined, undefined, z.string().uuid().parse(request.headers.get("idempotency-key"))), 201);
     if (path.length === 3 && path[0] === "plans") {
+      if(path[2]==="pause")return noStore(await setReviewPaused(actor,path[1]!,body));
       if (path[2] === "revise") {
         const input = z.object({ expectedRevision: z.number().int().nonnegative(), input: z.unknown() }).strict().parse(body);
         return noStore(await savePlan(actor, input.input, path[1]!, input.expectedRevision));

@@ -279,7 +279,7 @@ export async function decideSupportCase(
        JOIN agent_runs run ON run.evidence_snapshot_id = evidence.id AND run.generation_id = support_case.generation_id
        JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id AND artifact.generation_id = support_case.generation_id
        WHERE support_case.generation_id = $1 AND support_case.id = $2
-         AND evidence.evidence->>'assignedFacultyPersonId' = $3
+         AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=support_case.student_id AND m.faculty_person_id=$3)
        ORDER BY artifact.artifact_version DESC LIMIT 1
        FOR UPDATE OF support_case`,
       [generationId, caseId, actor.personId],

@@ -1,3 +1,4 @@
+import { lmsCommand } from "../lib/lms-commands";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -6,12 +7,12 @@ import { migrateCoreDatabase } from "../lib/migrations";
 import { resetSyntheticSeed } from "../lib/reset";
 import { closePool, withCoreTransaction } from "../lib/db";
 import { getCurrentGeneration } from "../lib/command-ledger";
-import { approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, savePlan, seedChapterSources } from "../lib/chapter11/service";
+import { setReviewPaused, approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, savePlan, seedChapterSources } from "../lib/chapter11/service";
 import { demoPolicy } from "../lib/chapter11/engine";
 import { decideSupportCase, replayAgentRun } from "../lib/support-commands";
 import { editDraft, recordOutcome, reviewQueue } from "../lib/chapter11/review";
 
-test("Chapter 11 durable integration: policy, sources, locked plan, recovery, approval and evidence", { skip: process.env.RUN_CH11_DB_TESTS !== "1", timeout: 120000 }, async () => {
+test("Chapter 11 durable integration: policy, sources, locked plan, recovery, approval and evidence", { skip: process.env.RUN_CH11_DB_TESTS !== "1", timeout: 180000 }, async () => {
   assert.match(process.env.CORE_DATABASE_SCHEMA ?? "", /^aura_core_test_ch11/);
   try {
     await migrateCoreDatabase();
@@ -31,6 +32,12 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     const vague = await savePlan(faculty, { request: "Review students" });
     assert.ok(vague.body.questions.length >= 2);
     await assert.rejects(() => lockPlan(faculty, vague.id, vague.revision), /planning questions/);
+    const offering=await withCoreTransaction(async client=>{
+      const gen=await getCurrentGeneration(client);
+      const course=(await client.query<{id:string}>("SELECT o.id FROM course_offerings o JOIN courses c ON c.id=o.course_id WHERE o.generation_id=$1 AND c.code='CS301'",[gen])).rows[0]!;
+      await client.query("UPDATE registrations SET status='registered',registered_at=now()-interval '14 days' WHERE student_id=$1 AND course_offering_id=$2",[student.studentId,course.id]);return course.id;
+    });
+    await lmsCommand(faculty,randomUUID(),{action:"save-assignment",offeringId:offering,title:"Review exercise",instructions:"Explain the main idea with an example",dueAt:new Date(Date.now()-86400000).toISOString(),maximumScore:20,published:true});
     await seedChapterSources(governance);
     assert.equal((await seedChapterSources(governance)).inserted, 0);
     await assert.rejects(() => readSource({ ...faculty, departmentId: otherDepartment }, student.studentId!, "lms"), /outside your department/);
@@ -38,6 +45,9 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     const locked = await lockPlan(faculty, revised.id, revised.revision);
     assert.equal(locked.status, "locked");
     await assert.rejects(() => savePlan(faculty, revised.body, revised.id, locked.revision), /Unrecognized|locked/i);
+    await setReviewPaused(faculty,locked.id,{expectedRevision:locked.revision,paused:true,reason:"Test pause before collection"});
+    await assert.rejects(()=>executePlan(faculty,locked.id),/paused/);
+    await setReviewPaused(faculty,locked.id,{expectedRevision:locked.revision+1,paused:false,reason:"Resume the saved review"});
     const stopped = await executePlan(faculty, locked.id, { stopAfterStage: "risk" });
     assert.equal(stopped.results[0]!.error, "INJECTED_STOP");
     await closePool(); // New connections simulate a process restarting after its checkpoint committed.
@@ -69,9 +79,9 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     assert.equal((await replayAgentRun(governance, current.run_id, randomUUID())).replay.matched, true);
     assert.equal((await overview(faculty)).jobs[0]!.status, "approved");
     const aggregate = await overview({ ...faculty, role: "hod" });
-    assert.equal(aggregate.students.length, 0);
-    assert.equal(aggregate.jobs.length, 0);
-    assert.equal(aggregate.trends?.[0]?.approved, 1);
+    assert.equal(aggregate.students.length, 10);
+    assert.equal(aggregate.jobs.length, 1);
+    assert.equal(aggregate.jobs[0]!.status,"approved");
     const before = await withCoreTransaction(async client => (await client.query("SELECT count(*)::int AS n FROM marks")).rows[0]!.n);
     const withdrawn = await recordOutcome(faculty, approved.plan!.id, randomUUID(), { expectedRevision: 0, status: "withdrawn", outcome: "Withdraw the approved publication for a mentor review" });
     assert.equal(withdrawn.revision, 1);

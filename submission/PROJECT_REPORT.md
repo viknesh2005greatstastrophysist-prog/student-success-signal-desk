@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This project implements the coordinator-and-workers method in Chapter 11 of the Agentic AI 15 Worklets 14 Lab Build Book. Four collectors normalize academic, learning engagement, internship and placement signals. A transparent policy identifies cases for mentor review. Recommendation specialists produce structured actions with evidence citations. Automated validation, bounded repair, saved checkpoints and a mandatory mentor decision control publication. Five role-specific portals use a shared PostgreSQL backend.
+This project implements the coordinator-and-workers method in Chapter 11 of the Agentic AI 15 Worklets 14 Lab Build Book. Four collectors normalize academic, learning engagement, internship and placement signals. A transparent policy identifies cases for mentor review. Recommendation specialists produce structured actions with evidence citations. Automated validation, bounded repair, saved checkpoints and a mandatory mentor decision control publication. Six connected portals use a shared PostgreSQL backend.
 
 The implemented demonstration uses synthetic records. Its software acceptance evidence must be distinguished from the book's requirement for a real-case pilot and approval by an actual academic advisor.
 
@@ -14,7 +14,7 @@ Student support information is fragmented. Attendance alone cannot explain wheth
 
 The TypeScript coordinator in `platform/services/core-api/lib/chapter11/service.ts` owns editable plans, locked plan hashes, job claims, checkpoints and audit events. The engine in `engine.ts` contains typed contracts, risk calculations, reusable skills, retrieval, specialist registration, validation and targeted repair. `provider.ts` is the bounded model adapter. `review.ts` handles mentor edits, outcomes and withdrawal or restoration of approved publications.
 
-The academic collector normalizes attendance and published assessment marks from the shared institutional simulation. Three other collectors read normalized LMS, internship and placement fixtures through the same authorized source interface. Collectors execute concurrently. Student jobs run with a concurrency limit of four, and results retain their original order.
+The academic collector normalizes attendance and published assessment marks from the shared institutional simulation. The LMS collector derives inactivity and overdue coursework from registered courses, published assignments, lesson-access events and submitted work. It distinguishes a never-active student from a student without assigned work and never sends raw assignment answers to the model. Internship and placement collectors read explicitly synthetic normalized career records through the same authorized interface. Collectors execute concurrently. Student jobs run with a concurrency limit of four, and results retain their original order.
 
 The risk worker applies the selected versioned mentor policy. The recommendation worker uses one of three domain packs: academic support, attendance support, or optional wellbeing referral. The model may choose and order permitted actions and assign a due interval within the approved range. Factual summary text and citations are restricted to evidence-derived statements. No worker independently contacts a student or changes an academic record.
 
@@ -58,7 +58,7 @@ Execution checkpoints live in job rows. Reference knowledge is separate: tagged 
 
 Plans cannot change after locking. Workers use leased jobs and save stages in PostgreSQL. Failed or interrupted work resumes from a committed checkpoint. Model calls have a 45-second timeout and at most two targeted repair attempts. Failed model output falls back to a separately labelled validated rule-based packet. The audit records candidate outputs, hashes, failures, repairs and selection. Exact citations must cover every triggering signal. Invalid drafts cannot reach mentor review.
 
-Faculty can access assigned students. Students and parents only receive authorized published support plans. Department reporting returns aggregate review and intervention counts. Mentor edits create a new artifact version; approval binds to the exact artifact hash and revision. Withdrawal removes the approved plan from student and parent views while retaining audit history. Restoration republishes that exact approved version. Replay recomputes frozen risk, validates the saved packet and verifies hashes; it does not claim a nondeterministic model will regenerate identical prose.
+A mentor can access assigned mentees. Teaching faculty separately access their assigned courses, rosters, submissions and gradebooks. Students and parents only receive authorized published support plans. HoD Home shows department totals and shortcuts without a student list. Student records and department-scoped AI controls are available in separate sections. Mentor edits create a new artifact version; approval binds to the exact artifact hash and revision. Withdrawal removes the approved plan from student and parent views while retaining audit history. Restoration republishes that exact approved version. Replay recomputes frozen risk, validates the saved packet and verifies hashes; it does not claim a nondeterministic model will regenerate identical prose.
 
 ## Evaluation
 
@@ -75,3 +75,18 @@ The verified local model runs through a loopback endpoint. Cloud model execution
 ## Source
 
 Agentic_AI_15_Worklets_14Lab_Build_Book.docx, Chapter 11, sections 11.1 to 11.12 and Labs 1 to 14. The implementation follows the book's language-neutral coordinator, typed-worker, validation, human-gate and governed-publication structure.
+
+
+## Connected portal workflows
+
+Students submit one final course selection per semester. The backend checks programme scope, prerequisites, capacity and timetable clashes in one transaction. A failed selection changes no registrations. HoD reopening requires a reason and revision check. Concurrent timetable and registration changes share a department lock so they cannot silently create a clash.
+
+The LMS follows course, lesson, assignment and feedback. Student access comes from the same registrations. Faculty publish lessons, instructions, due dates and maximum marks; students submit text or a private file up to 2 MB. Submitted versions are retained. Faculty publish dated scores and feedback. Repeated requests do not create duplicate submissions, and stale grading cannot overwrite revised work. Opening a lesson proves access, not learning.
+
+Student and parent progress screens show attendance by course and published assessment marks. Final course results use a labelled ten-point demonstration scale and course credits to calculate SGPA and CGPA. Unpublished results are excluded and the screen states how many courses have results. Changes to the grade scale do not silently change grades that were already published. Parents only receive data permitted by their active link and field grants.
+
+Mentors can inspect academics, LMS activity, internship and placement signals, fee status and mentoring history. They review suggestions, change permitted support steps, confirm or dismiss the suggestion, schedule follow-ups, and record outcomes. Shared follow-ups reach the student and authorized linked parents. Reopening an intervention and withdrawing or restoring a confirmed publication preserve history.
+
+HoD controls cover teaching and mentor assignments, course publication and details, capacity, class times, registration dates, reopening registration, names, attendance, assessment marks, final results and grade policies. Changes retain earlier values, actor and reason. The HoD can inspect, start, pause, resume and retry department reviews and correct support suggestions; the assigned mentor remains responsible for confirming a suggestion for publication. These controls do not provide arbitrary edits to payment transactions, audit records, identity credentials or another department.
+
+The AI Activity portal shows saved review status, stages, timestamps, concerns, failures and actual suggestion method. Pausing takes effect before the next stage or publication. A completed rule-based run is labelled as such. Cloud model credentials have not been introduced by this rebuild; the model adapter and local model demonstration remain separate from the hosted rule-based demonstration.

@@ -1,3 +1,4 @@
+import type { PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
@@ -9,13 +10,15 @@ import { requireRole, requireStudentScope } from "./security";
 
 export const registerInput = z.object({ offeringId: z.string().uuid() });
 
-export async function registerForOffering(actor: ActorContext, commandId: string, input: z.infer<typeof registerInput>) {
+export async function registerForOffering(actor: ActorContext, commandId: string, input: z.infer<typeof registerInput>, transaction?: PoolClient) {
   assertCommandId(commandId);
   requireRole(actor, "student");
   if (!actor.studentId) throw new ConflictError("STUDENT_PROFILE_MISSING", "This identity has no active student profile");
 
-  return withCoreTransaction(async (client) => {
+  const run = async (client: PoolClient) => {
     const generationId = await getCurrentGeneration(client);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`courses:${generationId}:${actor.departmentId}`]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`registration:${generationId}:${actor.studentId}`]);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
     if (duplicate) {
       const priorOffering = duplicate.payload.offering as { id?: string } | undefined;
@@ -26,6 +29,7 @@ export async function registerForOffering(actor: ActorContext, commandId: string
     const offering = await client.query<{
       id: string;
       course_id: string;
+      term_id: string;
       code: string;
       title: string;
       department_id: string;
@@ -36,7 +40,7 @@ export async function registerForOffering(actor: ActorContext, commandId: string
       closes_at: Date | null;
       faculty_person_id: string | null;
     }>(
-      `SELECT o.id, o.course_id, c.code, c.title, c.department_id, o.capacity, o.status,
+      `SELECT o.id, o.course_id, o.term_id, c.code, c.title, c.department_id, o.capacity, o.status,
               rw.status AS window_status, rw.opens_at, rw.closes_at, fa.faculty_person_id
        FROM course_offerings o
        JOIN courses c ON c.id = o.course_id
@@ -48,6 +52,7 @@ export async function registerForOffering(actor: ActorContext, commandId: string
     );
     if (!offering.rowCount) throw new NotFoundError("Offering not found");
     const course = offering.rows[0]!;
+    await requireOpenSubmission(client, generationId, actor.studentId!, course.term_id);
 
     const student = await client.query<{ department_id: string; completed_course_codes: string[] }>(
       "SELECT department_id, completed_course_codes FROM student_profiles WHERE generation_id = $1 AND id = $2",
@@ -140,16 +145,19 @@ export async function registerForOffering(actor: ActorContext, commandId: string
       metadata: { eventType: "registration.created" },
     });
     return { registration: payload.registration, duplicate: false, receipt };
-  });
+  };
+  return transaction ? run(transaction) : withCoreTransaction(run);
 }
 
-export async function withdrawRegistration(actor: ActorContext, registrationId: string, commandId: string) {
+export async function withdrawRegistration(actor: ActorContext, registrationId: string, commandId: string, transaction?: PoolClient) {
   assertCommandId(commandId);
   z.string().uuid().parse(registrationId);
   requireRole(actor, "student");
 
-  return withCoreTransaction(async (client) => {
+  const run = async (client: PoolClient) => {
     const generationId = await getCurrentGeneration(client);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`courses:${generationId}:${actor.departmentId}`]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`registration:${generationId}:${actor.studentId}`]);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
     if (duplicate) {
       const prior = duplicate.payload.registration as { id?: string } | undefined;
@@ -161,12 +169,13 @@ export async function withdrawRegistration(actor: ActorContext, registrationId: 
       student_id: string;
       status: string;
       offering_id: string;
+      term_id: string;
       code: string;
       title: string;
       department_id: string;
       faculty_person_id: string | null;
     }>(
-      `SELECT r.id, r.student_id, r.status, o.id AS offering_id, c.code, c.title, c.department_id, fa.faculty_person_id
+      `SELECT r.id, r.student_id, r.status, o.id AS offering_id, o.term_id, c.code, c.title, c.department_id, fa.faculty_person_id
        FROM registrations r
        JOIN course_offerings o ON o.id = r.course_offering_id
        JOIN courses c ON c.id = o.course_id
@@ -178,6 +187,7 @@ export async function withdrawRegistration(actor: ActorContext, registrationId: 
     if (!result.rowCount) throw new NotFoundError("Registration not found");
     const registration = result.rows[0]!;
     requireStudentScope(actor, registration.student_id);
+    await requireOpenSubmission(client,generationId,registration.student_id,registration.term_id);
     if (registration.status !== "registered") throw new ConflictError("NOT_REGISTERED", "Only an active registration can be withdrawn");
     await client.query("UPDATE registrations SET status = 'withdrawn' WHERE id = $1", [registration.id]);
     const enrolment = await client.query<{ count: string }>(
@@ -205,5 +215,11 @@ export async function withdrawRegistration(actor: ActorContext, registrationId: 
       metadata: { eventType: "registration.withdrawn" },
     });
     return { registration: payload.registration, duplicate: false, receipt };
-  });
+  };
+  return transaction ? run(transaction) : withCoreTransaction(run);
+}
+
+export async function requireOpenSubmission(client:PoolClient,generation:string,studentId:string,termId:string){
+  const status=await client.query("SELECT status FROM registration_submissions WHERE generation_id=$1 AND student_id=$2 AND term_id=$3",[generation,studentId,termId]);
+  if(status.rows[0]?.status==='submitted')throw new ConflictError("REGISTRATION_SUBMITTED","Your course selection has been submitted. Ask your HoD to reopen it for changes.");
 }

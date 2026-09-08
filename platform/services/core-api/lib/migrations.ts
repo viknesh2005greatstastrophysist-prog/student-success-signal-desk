@@ -8,6 +8,8 @@ const migrations = [
   { id: "002_parent_grant_revision", url: new URL("../migrations/002_parent_grant_revision.sql", import.meta.url) },
   { id: "003_replay_idempotency", url: new URL("../migrations/003_replay_idempotency.sql", import.meta.url) },
   { id: "004_chapter11", url: new URL("../migrations/004_chapter11.sql", import.meta.url) },
+  { id: "005_lms", url: new URL("../migrations/005_lms.sql", import.meta.url) },
+  { id: "006_portal_experience", url: new URL("../migrations/006_portal_experience.sql", import.meta.url) },
 ];
 
 export async function migrateCoreDatabase(): Promise<void> {

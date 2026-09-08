@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const expectedPortals = ["student", "parent", "faculty", "hod", "governance"];
+const expectedPortals = ["student", "parent", "faculty", "hod", "governance", "lms"];
 const results = [];
 
 function record(name, ok, detail) {
@@ -11,7 +11,7 @@ function record(name, ok, detail) {
 }
 
 const nodeMajor = Number(process.versions.node.split(".")[0]);
-record("Node.js >= 20.9", nodeMajor >= 20, process.versions.node);
+record("Node.js >= 22", nodeMajor >= 22, process.versions.node);
 
 for (const portal of expectedPortals) {
   const packagePath = join(root, "apps", `${portal}-portal`, "package.json");
@@ -26,11 +26,13 @@ for (const portal of expectedPortals) {
 
 for (const file of [
   "../docs/MULTI_PORTAL_ARCHITECTURE.md",
-  "../docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md",
+  "../docs/PORTAL_EXPERIENCE_SPEC.md",
   ".env.example",
   "services/auth-server/package.json",
   "services/core-api/package.json",
   "services/core-api/migrations/001_core.sql",
+  "services/core-api/migrations/005_lms.sql",
+  "services/core-api/migrations/006_portal_experience.sql",
 ]) {
   try {
     await access(join(root, file));

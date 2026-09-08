@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-import { portalViewRoutes } from "@aura/contracts";
+import { portalViewRoutes,experienceViewRoutes } from "@aura/contracts";
 import { auraPortalRewrites, auraSecurityHeaders } from "../../next-security";
 
 const nextConfig: NextConfig = {
@@ -7,6 +7,6 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,
   headers: auraSecurityHeaders,
-  rewrites: auraPortalRewrites(Object.values(portalViewRoutes.student)),
+  rewrites: auraPortalRewrites([...Object.values(portalViewRoutes.student),...Object.values(experienceViewRoutes.student)]),
 };
 export default nextConfig;

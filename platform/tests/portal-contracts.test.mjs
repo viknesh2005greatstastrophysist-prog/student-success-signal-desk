@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import { coreApiAudience, portalOidcClients, resolvePortalOrigins } from "@aura/contracts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const expected = ["student", "parent", "faculty", "hod", "governance"];
+const expected = ["student", "parent", "faculty", "hod", "governance", "lms"];
 
-test("exactly five independent portal workspaces are declared", async () => {
+test("six independent portal workspaces are declared", async () => {
   const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   assert.deepEqual(rootPackage.workspaces, ["apps/*", "packages/*", "services/*"]);
 
@@ -20,7 +20,7 @@ test("exactly five independent portal workspaces are declared", async () => {
     assert.equal(pkg.scripts.start, "next start");
     names.push(pkg.name);
   }
-  assert.equal(new Set(names).size, 5);
+  assert.equal(new Set(names).size, 6);
 });
 
 test("the five-service Railway topology preserves the independent portals and control-plane boundaries", async () => {
@@ -53,7 +53,7 @@ test("every portal carries an independent client and release contract", async ()
     assert.equal(contract.oidcClientId, portalOidcClients[portal]);
     clientIds.push(contract.oidcClientId);
   }
-  assert.equal(new Set(clientIds).size, 5);
+  assert.equal(new Set(clientIds).size, 6);
 });
 
 test("alternate deployment origins remain role-mapped and HTTPS-only", () => {

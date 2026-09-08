@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   const form = await request.formData();
   const requestedPortal = String(form.get("persona") ?? "");
   const clientId = new URL(request.url).searchParams.get("client_id") ?? undefined;
-  const persona = demoPersonaForClient(clientId);
+  const persona = demoPersonaForClient(clientId, String(form.get("account") ?? "") || undefined);
   const password = process.env.DEMO_PERSONA_PASSWORD;
 
   if (!password || !persona || persona.portal !== requestedPortal) {
