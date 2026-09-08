@@ -202,6 +202,7 @@ export function AiWorkspace({
   const plan = d.plans.find((p) => p.id === selected);
   const jobs = plan ? d.jobs.filter((j) => j.plan_id === plan.id) : [];
   const canStart = ["faculty", "hod"].includes(actorRole);
+  const unfinished = jobs.some((j) => ["queued", "running", "failed", "blocked"].includes(j.status));
   return (
     <>
       {!embedded ? (
@@ -270,7 +271,7 @@ export function AiWorkspace({
             {reviewStatus(plan,d.jobs)}
           </p>
           <div className="form-actions">
-            {plan.status === "locked" ? (
+            {canStart && unfinished && plan.status === "locked" ? (
               <>
                 <button
                   disabled={api.pending || plan.paused}
@@ -300,7 +301,7 @@ export function AiWorkspace({
                   {plan.paused ? "Resume review" : "Pause review"}
                 </button>
               </>
-            ) : plan.status === "ready" ? (
+            ) : canStart && plan.status === "ready" ? (
               <button
                 disabled={api.pending}
                 onClick={async () => {
@@ -338,10 +339,10 @@ export function AiWorkspace({
               View recorded evidence
             </button>
           </div>
-          <p>
+          {canStart && unfinished ? <p>
             Pausing takes effect before the next stage. Work already saved
             remains available.
-          </p>
+          </p> : null}
           {jobs.map((job) => (
             <article className="panel" key={job.id}>
               <div className="panel-heading">
