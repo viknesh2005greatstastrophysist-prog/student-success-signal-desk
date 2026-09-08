@@ -1,0 +1,26 @@
+[
+  {
+    "url": "https://aura-identity-service.vercel.app/api/health",
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "service": "aura-identity-service",
+        "release": "f967727bde78c243c2418106d81536a31ef48506"
+      }
+    }
+  },
+  {
+    "url": "https://aura-core-api.vercel.app/api/v1/health",
+    "status": 200,
+    "body": {
+      "ok": true,
+      "data": {
+        "service": "aura-core-api",
+        "version": "0.1.0",
+        "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db",
+        "database": "not-probed"
+      }
+    }
+  }
+]

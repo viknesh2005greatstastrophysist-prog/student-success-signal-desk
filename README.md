@@ -6,6 +6,8 @@ API backed by PostgreSQL.
 
 Start in the mentor portal. Use the sidebar to open a timetable, a mentee profile, or support and follow-ups. HoD Home contains department totals and shortcuts; individual students appear in Students.
 
+The [fictional demo cohort](docs/DEMO_COHORT.md) contains ten CSE students shared across three mentors (4–3–3), with attendance, marks, GPA results, LMS coursework, fees and follow-ups. Select a demo account at entry; no PIN is required. Run `npm run populate:local` after local initialization to reproduce the cohort without replacing existing records.
+
 The six connected portals are:
 
 - Student: one semester course selection, timetable, progress and confirmed support.

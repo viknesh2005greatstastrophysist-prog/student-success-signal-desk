@@ -1,0 +1,47 @@
+{
+  "sourceCommit": "f967727bde78c243c2418106d81536a31ef48506",
+  "synthetic": true,
+  "lint": [
+    "core-api",
+    "auth-server",
+    "contracts"
+  ],
+  "typecheck": [
+    "core-api",
+    "auth-server",
+    "contracts"
+  ],
+  "build": [
+    "auth-server"
+  ],
+  "coreUnitTests": {
+    "passed": 18,
+    "failed": 0,
+    "databaseSuitesSkippedByDefault": 5
+  },
+  "cohortDatabaseTest": {
+    "schema": "aura_core_test_cohort_release",
+    "passed": true,
+    "durationMs": 427021.74125,
+    "checks": [
+      "ten populated students",
+      "three mentors assigned 4-3-3",
+      "mentor and teaching scope",
+      "four-source review results",
+      "preservation of edited mentor follow-up",
+      "preservation of historical result",
+      "repeat creates no records or events",
+      "identity links survive an explicit isolated reset"
+    ]
+  },
+  "additionalRepeatCheck": {
+    "schema": "aura_core_test_cohort_population",
+    "passed": true,
+    "allTenMentorBoundariesVerified": true
+  },
+  "identitySeed": {
+    "created": 19,
+    "linked": 24,
+    "existingPasswordsPreserved": true
+  }
+}

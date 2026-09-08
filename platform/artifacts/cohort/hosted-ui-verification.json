@@ -1,0 +1,68 @@
+{
+  "verifiedAt": "2026-09-08T11:09:33.762Z",
+  "identityRelease": "f967727bde78c243c2418106d81536a31ef48506",
+  "method": "Visible hosted browser interaction",
+  "checks": [
+    {
+      "account": "Prof Arjun Bhat",
+      "portal": "faculty",
+      "signIn": true,
+      "mentees": [
+        "Meera Iyer",
+        "Nikhil Kumar",
+        "Priya Das"
+      ]
+    },
+    {
+      "account": "Dr Leena Thomas",
+      "portal": "faculty",
+      "signIn": true,
+      "mentees": [
+        "Tarun Bose",
+        "Rahul Menon",
+        "Sara Ali"
+      ],
+      "tarunOpenSupportCases": 1
+    },
+    {
+      "account": "Kavya Nair",
+      "portal": "student",
+      "signIn": true,
+      "registeredCourses": 3,
+      "attendancePercentByCourse": {
+        "CS301": 100,
+        "CS402": 100,
+        "CS403": 100
+      },
+      "gradedCourses": 3,
+      "cgpa": 10
+    },
+    {
+      "account": "Kavya Nair",
+      "portal": "lms",
+      "signIn": true,
+      "registeredCourses": 3,
+      "course": "CS402",
+      "score": 18,
+      "maximumScore": 20,
+      "publishedFeedbackVisible": true
+    },
+    {
+      "account": "Gopal Nair",
+      "portal": "parent",
+      "signIn": true,
+      "linkedStudent": "Kavya Nair",
+      "invoice": "INV-AURA-COHORT-004",
+      "amountRupees": 45000,
+      "simulatedPaymentLabelVisible": true
+    }
+  ],
+  "accountPickers": {
+    "student": 10,
+    "faculty": 3,
+    "parent": 9,
+    "lms": 14,
+    "pinRequired": false
+  },
+  "note": "The first Arjun click timed out in the browser tool while navigation completed; the following snapshot verified successful sign-in. No failed identity check was observed."
+}

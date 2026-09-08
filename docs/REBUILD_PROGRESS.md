@@ -2,6 +2,8 @@
 
 8 September 2026. Implementation, local acceptance and hosted workflow verification complete. The final UI observer check passed. The submission manifest records the refreshed archive.
 
+The later cohort population is complete: ten CSE students, three mentors assigned 4–3–3, connected academic/LMS/fee/follow-up records, and three completed cohort reviews. Six suggestions await mentor decisions; four students are not flagged. Identity now offers all cohort accounts without a PIN. The isolated population test passed and all 17 pre-existing records in the preservation check remained unchanged. See DEMO_COHORT.md and `platform/artifacts/cohort/`.
+
 ## Implemented
 
 The agreed scope in PORTAL_EXPERIENCE_SPEC.md is implemented across Student, Parent, Mentor, HoD, AI Activity and the new LMS. Home screens lead to named sections and details. HoD Home contains department totals and shortcuts, without individual students. Demo entry remains PINless.

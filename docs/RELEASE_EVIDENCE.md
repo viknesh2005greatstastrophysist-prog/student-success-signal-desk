@@ -4,9 +4,9 @@ Verified 8 September 2026. This section is the current handoff. Earlier release 
 
 ## Deployed components
 
-The six-portal backend release is `7243e5664b7de9d0b5d1ce950f93e1921470b5db`. All eight services were deployed and their health responses/security headers verified. A subsequent UI-only patch, `8b2677a92ae7ef04fc2f5b6bea44b11955f10e38`, updates the Mentor, HoD and AI Activity sites: review execution controls appear only for faculty/HoD with unfinished work. The AI viewing screen retains status and evidence controls. Student, Parent, LMS, Core and Identity retain the tested backend release. Their data/authentication contracts are unchanged by the UI patch.
+The six-portal backend release is `7243e5664b7de9d0b5d1ce950f93e1921470b5db`. All eight services were deployed and their health responses/security headers verified. A subsequent UI-only patch, `8b2677a92ae7ef04fc2f5b6bea44b11955f10e38`, updates the Mentor, HoD and AI Activity sites: review execution controls appear only for faculty/HoD with unfinished work. The AI viewing screen retains status and evidence controls. Student, Parent, LMS and Core retain the tested backend release. Identity now runs `f967727bde78c243c2418106d81536a31ef48506`, adding the cohort account choices with a compact selector for longer lists. The five roles and six OAuth clients are unchanged.
 
-Exact stable URLs, immutable deployment URLs and per-component commits are recorded in `platform/artifacts/rebuild/production-deployments.json`. Current health/header evidence is in `production-health.json`. The source/evidence commit in the submission manifest may be newer because it includes documentation and screenshots.
+Exact stable URLs, immutable deployment URLs and per-component commits are recorded in `platform/artifacts/rebuild/production-deployments.json`. Baseline rebuild health/header evidence is in `production-health.json`; `platform/artifacts/cohort/production-health.json` verifies the newer Identity release and retained Core release. The source/evidence commit in the submission manifest may be newer because it includes documentation and screenshots.
 
 ## Implemented experience
 
@@ -17,9 +17,13 @@ Exact stable URLs, immutable deployment URLs and per-component commits are recor
 - LMS: existing registrations → lessons → assignments → private submission versions → published scores and feedback. Files up to 2 MB are stored durably and access-controlled.
 - AI Activity: actual review stages, timestamps, evidence, failure reasons and suggestion method. The mentor decides before publication. HoD/faculty can start/pause/resume/retry appropriate reviews.
 
-Additive migrations 005 and 006 preserve the current synthetic generation. Six public OAuth clients reuse five seeded identities. Demo entry requires no PIN. Teaching and mentorship are distinct. A mentor change immediately removes historical case/list/export access from the former mentor while preserving new-mentor case access and department oversight. Old audit/evidence records are not rewritten.
+Additive migrations 005 and 006 preserve the current synthetic generation. Six public OAuth clients use five roles; the cohort account seed now links 24 fictional identities. Demo entry requires no PIN. Teaching and mentorship are distinct. A mentor change immediately removes historical case/list/export access from the former mentor while preserving new-mentor case access and department oversight. Old audit/evidence records are not rewritten.
 
 ## Verification
+
+The later ten-student population used source `f967727bde78c243c2418106d81536a31ef48506` against the existing generation `16e1d1b9-dceb-4a98-a827-517af57fb1e4`. Mentor distribution is 4–3–3. All ten students have courses, attendance, marks, results, a fee invoice and a follow-up. Three four-source reviews completed: six suggestions await mentor decisions and four students are not flagged. All 17 pre-existing registration, result, payment, LMS and support/review records checked by row hash were preserved unchanged. No production reset occurred. Exact cohort records and preservation evidence are in `platform/artifacts/cohort/`.
+
+The population change passed Core/Auth/Contracts lint and type checks, the Identity production build, and all 18 Core unit tests. The new isolated cohort database test passed in 427 seconds, including a repeat with no duplicate events, preservation of a later manual mentor edit, all-ten-student scope checks, teaching permissions and retention of newly linked identity subjects through an explicit isolated reset. The other four database suites remain covered by the earlier rebuild results below. Current population data is fictional; its scripted review policies do not establish real faculty approval.
 
 - Local lint: ten packages passed. All eight service builds and type checks passed. Seven platform and eighteen Core unit tests passed. Four database suites skipped by the generic command were run explicitly and passed: base regression, Chapter 11 lifecycle, LMS and portal experience.
 - Mentor reassignment regression passed in 49.3 seconds, including the legacy dashboard, historical review list and direct evidence export. Core build/lint passed after the change.

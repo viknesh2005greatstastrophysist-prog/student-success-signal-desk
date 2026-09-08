@@ -27,7 +27,7 @@ Run the four database suites explicitly against separate `aura_core_test_*` sche
 
 ## Apply and deploy
 
-Commit the tested candidate and record its full SHA. For a scoped UI-only patch with unchanged data/auth contracts, deploy affected sites and record a per-component release map; do not imply every service runs the newest UI commit. Apply additive Core migrations using the private Core environment; verify the schema name before running. Provision six production OAuth clients using the private Identity environment with `AURA_CLIENT_PROFILE=production`. Reuse the five existing demo identities. Do not copy the local test-schema environment to production.
+Commit the tested candidate and record its full SHA. For a scoped UI-only patch with unchanged data/auth contracts, deploy affected sites and record a per-component release map; do not imply every service runs the newest UI commit. Apply additive Core migrations using the private Core environment; verify the schema name before running. Provision six production OAuth clients using the private Identity environment with `AURA_CLIENT_PROFILE=production`. Reuse existing demo identities; the additive identity seed now links 24 fictional accounts without resetting existing passwords. Do not copy the local test-schema environment to production. See DEMO_COHORT.md for additive population; production resets are not part of that workflow.
 
 Every portal needs `CORE_API_URL`, `AURA_IDENTITY_URL`, its own `PORTAL_ORIGIN`, and an independent `PORTAL_SESSION_SECRET`. LMS accepts the existing student, faculty and HoD roles; AI Activity also accepts the HoD. Private database and signing credentials belong in provider settings, never source or evidence files.
 

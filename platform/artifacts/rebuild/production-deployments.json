@@ -14,8 +14,8 @@
   {
     "project": "aura-identity-service",
     "stableUrl": "https://aura-identity-service.vercel.app",
-    "deploymentUrl": "https://aura-identity-service-il4wu4rl0.vercel.app",
-    "release": "7243e5664b7de9d0b5d1ce950f93e1921470b5db"
+    "deploymentUrl": "https://aura-identity-service-r3yi7xt6m.vercel.app",
+    "release": "f967727bde78c243c2418106d81536a31ef48506"
   },
   {
     "project": "aura-lms-portal",

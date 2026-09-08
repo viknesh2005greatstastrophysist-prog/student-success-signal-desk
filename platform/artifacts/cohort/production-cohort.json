@@ -1,0 +1,183 @@
+{
+  "version": "AURA-COHORT-10-V1",
+  "generation": "16e1d1b9-dceb-4a98-a827-517af57fb1e4",
+  "synthetic": true,
+  "mentors": [
+    {
+      "mentor": "Dr Mira Sen",
+      "students": 4
+    },
+    {
+      "mentor": "Prof Arjun Bhat",
+      "students": 3
+    },
+    {
+      "mentor": "Dr Leena Thomas",
+      "students": 3
+    }
+  ],
+  "students": [
+    {
+      "student": "Ananya Rao",
+      "mentor": "Dr Mira Sen",
+      "courses": 1,
+      "attendance_records": 10,
+      "marks": 3,
+      "lms_activity": 4,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Dev Patel",
+      "mentor": "Dr Mira Sen",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 6,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Ishaan Shah",
+      "mentor": "Dr Mira Sen",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 0,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Kavya Nair",
+      "mentor": "Dr Mira Sen",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 6,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Meera Iyer",
+      "mentor": "Prof Arjun Bhat",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 3,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Nikhil Kumar",
+      "mentor": "Prof Arjun Bhat",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 0,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Priya Das",
+      "mentor": "Prof Arjun Bhat",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 6,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Rahul Menon",
+      "mentor": "Dr Leena Thomas",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 6,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Sara Ali",
+      "mentor": "Dr Leena Thomas",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 6,
+      "followups": 1,
+      "invoices": 1
+    },
+    {
+      "student": "Tarun Bose",
+      "mentor": "Dr Leena Thomas",
+      "courses": 3,
+      "attendance_records": 24,
+      "marks": 6,
+      "lms_activity": 3,
+      "followups": 1,
+      "invoices": 1
+    }
+  ],
+  "reviews": [
+    {
+      "student": "Ananya Rao",
+      "status": "awaiting_faculty",
+      "score": "30",
+      "band": "medium"
+    },
+    {
+      "student": "Dev Patel",
+      "status": "awaiting_faculty",
+      "score": "40",
+      "band": "medium"
+    },
+    {
+      "student": "Ishaan Shah",
+      "status": "awaiting_faculty",
+      "score": "40",
+      "band": "medium"
+    },
+    {
+      "student": "Kavya Nair",
+      "status": "not_flagged",
+      "score": "0",
+      "band": "low"
+    },
+    {
+      "student": "Meera Iyer",
+      "status": "awaiting_faculty",
+      "score": "35",
+      "band": "medium"
+    },
+    {
+      "student": "Nikhil Kumar",
+      "status": "awaiting_faculty",
+      "score": "55",
+      "band": "high"
+    },
+    {
+      "student": "Priya Das",
+      "status": "not_flagged",
+      "score": "0",
+      "band": "low"
+    },
+    {
+      "student": "Rahul Menon",
+      "status": "not_flagged",
+      "score": "0",
+      "band": "low"
+    },
+    {
+      "student": "Sara Ali",
+      "status": "not_flagged",
+      "score": "15",
+      "band": "low"
+    },
+    {
+      "student": "Tarun Bose",
+      "status": "awaiting_faculty",
+      "score": "40",
+      "band": "medium"
+    }
+  ]
+}

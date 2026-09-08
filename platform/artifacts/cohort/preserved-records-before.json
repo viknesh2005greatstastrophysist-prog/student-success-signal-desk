@@ -1,0 +1,97 @@
+{
+  "generation": "16e1d1b9-dceb-4a98-a827-517af57fb1e4",
+  "schema": "aura_core",
+  "capturedAt": "2026-09-08T10:59:50.228Z",
+  "tables": {
+    "registrations": [
+      {
+        "id": "03811709-05e0-415d-9e8b-0becc7966bbd",
+        "hash": "d8fd53437ed6e8137b9bdbcc66674269"
+      },
+      {
+        "id": "a394dcd1-c762-4bae-9388-66ca937e58a5",
+        "hash": "11f9f0e7215011eea28f111fde583838"
+      },
+      {
+        "id": "c181415b-0f50-4223-a9f0-68c2f3435666",
+        "hash": "d36b37e81ad3fc674a281cf49e54cf7a"
+      },
+      {
+        "id": "ee367a38-5ec5-4be3-b752-cc10d6bf3a88",
+        "hash": "34e375f4ce85020d69a644a92631dc84"
+      }
+    ],
+    "registration_submissions": [
+      {
+        "id": "a303e89f-fa1d-4404-bfea-8d0a190574b9",
+        "hash": "c7a69049c320256692dfb20e8b2b0f6c"
+      }
+    ],
+    "course_results": [
+      {
+        "id": "6a267d65-dac3-4058-9f4a-8fb1462e0cc2",
+        "hash": "56e93009f2bf58dbb19b9a6e7e5529e6"
+      },
+      {
+        "id": "f407052e-7fcc-47fc-aa7f-27011c3cff7d",
+        "hash": "09feb9483c5415518db7a96c7e77be1c"
+      }
+    ],
+    "fee_invoices": [
+      {
+        "id": "e8bd9d85-4184-424e-99f8-be576af38d6d",
+        "hash": "996f3e4a2c07766d9a1b6eff6d626e87"
+      }
+    ],
+    "payment_transactions": [
+      {
+        "id": "b0fce071-2e99-47ce-9da5-c6ba018b1d06",
+        "hash": "1d1e123e0cc03beddadf180c339f409f"
+      }
+    ],
+    "lms_lessons": [
+      {
+        "id": "6a2c593b-d1b4-40ef-b9ec-a3e95092a57c",
+        "hash": "1c8f1f60ac60b0df5b297bb8de4f8eb7"
+      }
+    ],
+    "lms_assignments": [
+      {
+        "id": "6c029f7a-78ee-4674-947e-f7f72667efbe",
+        "hash": "c585c1d7050b733ff7c7af7c23250c1c"
+      }
+    ],
+    "lms_submissions": [
+      {
+        "id": "a58187c3-3a00-4baf-8b22-c48634980cd1",
+        "hash": "d3959c1ca91a88431a9290f0f89aea48"
+      }
+    ],
+    "support_plans": [
+      {
+        "id": "3e407b8b-f365-4ccf-8bd6-9bcee205fae9",
+        "hash": "b51881081d699f3ac34405cbbd569a43"
+      }
+    ],
+    "ch11_plans": [
+      {
+        "id": "46dfea26-6363-4f38-9f5a-6038900ea4e7",
+        "hash": "2a3e3899e37782f05148cb26a0f2728d"
+      },
+      {
+        "id": "80059ecc-5fdb-42fb-97fc-2854f440fdda",
+        "hash": "e5698a150730d7feb9e662fd0bdc5d76"
+      },
+      {
+        "id": "ade918d7-cb5c-42a2-8854-6a2f9a1ef781",
+        "hash": "1ef4b921b28e0f5ad7b6f1d1c793cf5c"
+      }
+    ],
+    "ch11_jobs": [
+      {
+        "id": "2318484c-1714-4653-8b9c-aa9689820899",
+        "hash": "98183a5c33b60773400c9ef22b28d487"
+      }
+    ]
+  }
+}
