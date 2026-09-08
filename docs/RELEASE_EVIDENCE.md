@@ -45,3 +45,13 @@ External Contineo/LMS/internship/placement institution-specific integrations are
 The professor's Chapter 11 section 11.2 and Lab 14 require a real case. Vik and the professor must resolve that through an authorized pilot or explicit acceptance of the synthetic substitute. Test mentor identities are not genuine faculty sign-off. This is the remaining academic closure requirement.
 
 The submission excludes credentials, browser traces and real student records. The recurring release automation remains paused.
+
+## 8 September 2026: password-free synthetic demo entry
+
+At the project owner's request, the identity service no longer asks for or checks a demo PIN. Anyone with a portal URL can enter its assigned synthetic demo account; the role-based backend permissions and mentor publication gate remain in place. This mode is for synthetic demonstration data.
+
+Identity release: `fb44da0b8628755df706530ea7711b6850dba3ae`, deployed at `https://aura-identity-service-gdnknuf4k.vercel.app` and the existing stable identity domain. Other services retain release `34424ecb136433a91d37fcafd1663ee637eaeedf`; the original seven-service release checks above describe the previous release.
+
+Validation: identity lint/build passed; all seven platform contract tests passed. A fresh production Faculty sign-out/sign-in reached the role-scoped dashboard without entering any PIN or password. A failed/expired request now offers a registered portal homepage restart link, and display-only error parameters are removed before forwarding the signed OAuth query. No institutional data was changed during this check.
+
+The earlier distributed ZIP and WhatsApp message describe PIN-based entry. The local submission archive has been refreshed with this change.
