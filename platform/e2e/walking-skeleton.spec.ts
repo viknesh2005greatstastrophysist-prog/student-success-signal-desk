@@ -14,7 +14,6 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await page.goto(sites[portal]);
   await page.getByRole("link", { name: /Enter as/i }).click();
   await expect(page).toHaveURL(new RegExp(`^${regexEscape(identityUrl)}/sign-in`));
-  await page.getByLabel("Demo access PIN").fill(process.env.DEMO_ACCESS_PIN ?? "");
   await page.getByRole("button", { name: /Enter portal/i }).click();
   await expect(page).toHaveURL(`${sites[portal]}/dashboard`);
   await expect(page.locator(".revision-strip > span")).toHaveText("Institution revision");
@@ -24,7 +23,6 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
 }
 
 test("J01-J10 cross independent role sessions through the authoritative Core", async ({ browser }) => {
-  test.skip(!process.env.DEMO_ACCESS_PIN, "DEMO_ACCESS_PIN is required");
   const context = await browser.newContext();
   const hod = await context.newPage();
   const student = await context.newPage();

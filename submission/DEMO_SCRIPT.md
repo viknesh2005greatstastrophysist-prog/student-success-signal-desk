@@ -1,6 +1,6 @@
 # Chapter 11 demonstration
 
-Use only the supplied synthetic generation. Keep the demo PIN private.
+Use only the supplied synthetic generation. Demo entry no longer requires a PIN.
 
 1. Open Governance. Link synthetic source fixtures. This supplies the three external signal types; academic evidence comes from the shared simulation.
 2. Open Faculty, then Cases. Approve demonstration thresholds with an explanatory rationale. Explain that this is a test identity, not a real professor's approval.

@@ -1,3 +1,4 @@
+import { resolvePortalOrigins } from "@aura/contracts";
 import { demoPersonaForClient } from "@/lib/demo-personas";
 
 type SearchValue = string | string[] | undefined;
@@ -19,6 +20,8 @@ export default async function SignInPage({
   const params = toSearchParams(raw);
   const persona = demoPersonaForClient(params.get("client_id") ?? undefined);
   const error = params.get("error");
+  params.delete("error");
+  const restartUrl = persona ? resolvePortalOrigins()[persona.portal][process.env.NODE_ENV === "production" ? 0 : 1] : undefined;
 
   return (
     <main className="identity-stage">
@@ -27,7 +30,7 @@ export default async function SignInPage({
         <div>
           <p className="eyebrow">AURA identity</p>
           <h1>Cross the right threshold.</h1>
-          <p>Each portal keeps its own session. This identity service only proves who is entering.</p>
+          <p>Each portal keeps its own session. Choose the assigned synthetic demo account to continue.</p>
         </div>
         <p className="synthetic-note">Synthetic people. Real authorization boundaries.</p>
       </section>
@@ -44,9 +47,8 @@ export default async function SignInPage({
             </div>
             <form action={`/api/demo/sign-in?${params.toString()}`} method="post">
               <input type="hidden" name="persona" value={persona.portal} />
-              <label htmlFor="access-pin">Demo access PIN</label>
-              <input id="access-pin" name="pin" type="password" inputMode="numeric" autoComplete="one-time-code" required minLength={4} maxLength={32} data-action-id="identity-access-pin" />
-              {error ? <p className="form-error" role="alert">The identity check failed. Verify the PIN and portal.</p> : null}
+              <p>Open this synthetic demo as {persona.name}. No PIN or password is required.</p>
+              {error ? <p className="form-error" role="alert">This sign-in request failed or expired. <a href={restartUrl} data-action-id="identity-restart-login">Restart from the portal homepage</a>.</p> : null}
               <button type="submit" data-action-id="identity-enter-portal">Enter portal <span aria-hidden="true">↗</span></button>
             </form>
             <p className="privacy-copy">Credentials stay at the identity origin. The destination receives a short-lived authorization result.</p>

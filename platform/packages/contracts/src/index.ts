@@ -132,9 +132,9 @@ export const chapter11ActionNames = {
   hod: ["refresh", "export"],
 };
 export const actionManifest: readonly ActionContract[] = [
+  { id: "identity-restart-login", portal: "identity", type: "navigate", destination: "Registered portal homepage" },
   ...(["faculty", "governance", "hod"] as const).flatMap(portal => chapter11ActionNames[portal].map(name => ({ id: `${portal}-ch11-${name}`, portal, type: "form" as const, destination: "/api/bff/chapter11" }))),
   { id: "identity-open-discovery", portal: "identity", type: "navigate", destination: "/api/auth/.well-known/openid-configuration" },
-  { id: "identity-access-pin", portal: "identity", type: "form", destination: "/api/demo/sign-in" },
   { id: "identity-enter-portal", portal: "identity", type: "form", destination: "/api/demo/sign-in" },
   { id: "identity-consent-allow", portal: "identity", type: "command", destination: "/api/auth/oauth2/consent" },
   { id: "identity-consent-deny", portal: "identity", type: "command", destination: "/api/auth/oauth2/consent" },

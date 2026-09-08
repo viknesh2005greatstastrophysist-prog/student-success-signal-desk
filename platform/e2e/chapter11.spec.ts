@@ -11,7 +11,6 @@ const sites = {
 async function enter(page: Page, role: keyof typeof sites) {
   await page.goto(sites[role]);
   await page.getByRole("link", { name: /Enter as/i }).click();
-  await page.getByLabel("Demo access PIN").fill(process.env.DEMO_ACCESS_PIN ?? "");
   await page.getByRole("button", { name: /Enter portal/i }).click();
   await expect(page.locator(".revision-strip")).toBeVisible();
 }
@@ -24,7 +23,6 @@ async function post(page: Page, path: string, body: unknown) {
 }
 
 test("Chapter 11 through the browser: plan, four sources, model, mentor approval, cross-session publication and rollback", async ({ browser }, testInfo) => {
-  test.skip(!process.env.DEMO_ACCESS_PIN, "Demo PIN required for authenticated acceptance test");
   const contexts = await Promise.all(Array.from({ length: 4 }, () => browser.newContext()));
   const [faculty, governance, student, parent] = await Promise.all(contexts.map(c => c.newPage()));
   const errors: string[] = [];

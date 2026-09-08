@@ -9,7 +9,7 @@ npm ci
 cp .env.example .env.local
 ```
 
-Edit the ignored `.env.local` file. Supply the database URLs and replace the placeholder values for `BETTER_AUTH_SECRET`, `PORTAL_SESSION_SECRET`, `DEMO_ACCESS_PIN` and `DEMO_PERSONA_PASSWORD`. Generate independent random secrets of at least 32 characters. Keep the example's separate `aura_identity_local` and `aura_core_local` schemas and `AURA_CLIENT_PROFILE=local`.
+Edit the ignored `.env.local` file. Supply the database URLs and replace the placeholder values for `BETTER_AUTH_SECRET`, `PORTAL_SESSION_SECRET` and `DEMO_PERSONA_PASSWORD`. Generate independent random secrets of at least 32 characters. Keep the example's separate `aura_identity_local` and `aura_core_local` schemas and `AURA_CLIENT_PROFILE=local`.
 
 ```sh
 npm run initialize:local
@@ -18,7 +18,7 @@ npm run dev:local
 
 The initializer creates missing schemas and tables, seeds a synthetic institutional generation only when none exists, provisions the five public PKCE clients, and links the five demo identities to Core people. Repeating initialization preserves the institutional generation. It refuses production schema names. Local registrations use loopback callbacks in a separate identity schema; production registrations use HTTPS web callbacks. Do not repurpose the deployed identity schema for a fresh local installation.
 
-Open Faculty at `http://127.0.0.1:3103` or Governance at `http://127.0.0.1:3105`. Use the private PIN you configured. Student, Parent and HoD run on ports 3101, 3102 and 3104. Identity is on 3200 and Core on 3300. The root environment is passed to all workspaces; it does not need to be copied into each app.
+Open Faculty at `http://127.0.0.1:3103` or Governance at `http://127.0.0.1:3105`. Choose Enter portal; no PIN is required. Student, Parent and HoD run on ports 3101, 3102 and 3104. Identity is on 3200 and Core on 3300. The root environment is passed to all workspaces; it does not need to be copied into each app.
 
 ## Optional local model
 

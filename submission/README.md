@@ -10,7 +10,7 @@ AURA Student Success and Early Warning combines four evidence sources, applies a
 - Parent: https://aura-parent-portal.vercel.app
 - Department: https://aura-hod-portal.vercel.app
 
-Sign in with the privately configured demo PIN. The hosted workflow uses the labelled deterministic mode. For the actual language-model demonstration, use the configured local installation and follow `DEMO_SCRIPT.md`. The local model execution is recorded separately from cloud execution.
+Demo entry requires no PIN or password as of 8 September 2026. Anyone with the portal links can enter the synthetic demo roles. The hosted workflow uses the labelled deterministic mode. For the actual language-model demonstration, use the configured local installation and follow `DEMO_SCRIPT.md`. The local model execution is recorded separately from cloud execution.
 
 This Chapter 11 guide and `../docs/RELEASE_EVIDENCE.md` are the current handoff. Older prototype reports elsewhere in the source archive are historical evidence, not the current release status.
 

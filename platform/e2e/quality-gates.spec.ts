@@ -24,13 +24,11 @@ async function enterPortal(page: Page, portal: keyof typeof sites) {
   await page.goto(sites[portal]);
   await page.getByRole("link", { name: /Enter as/i }).click();
   await expect(page).toHaveURL(new RegExp(`^${regexEscape(identityUrl)}/sign-in`));
-  await page.getByLabel("Demo access PIN").fill(process.env.DEMO_ACCESS_PIN ?? "");
   await page.getByRole("button", { name: /Enter portal/i }).click();
   await expect(page.locator(".revision-strip")).toBeVisible();
 }
 
 test("all portal surfaces pass serious accessibility, overflow, and runtime-error gates", async ({ browser }, testInfo) => {
-  test.skip(!process.env.DEMO_ACCESS_PIN, "DEMO_ACCESS_PIN is required");
   const context = await browser.newContext();
   const runtimeErrors: string[] = [];
 

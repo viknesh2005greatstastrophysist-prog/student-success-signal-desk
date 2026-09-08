@@ -1,18 +1,9 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { demoPersonaForClient } from "@/lib/demo-personas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const attempts = new Map<string, { count: number; resetsAt: number }>();
-
-function sameSecret(left: string, right: string): boolean {
-  const a = createHash("sha256").update(left).digest();
-  const b = createHash("sha256").update(right).digest();
-  return timingSafeEqual(a, b);
-}
 
 function redirectWithError(request: Request, code: string) {
   const target = new URL("/sign-in", request.url);
@@ -23,7 +14,9 @@ function redirectWithError(request: Request, code: string) {
 }
 
 export async function POST(request: Request) {
-  const rawOAuthQuery = request.url.includes("?") ? request.url.slice(request.url.indexOf("?") + 1) : "";
+  const oauthParams = new URL(request.url).searchParams;
+  oauthParams.delete("error");
+  const rawOAuthQuery = oauthParams.toString();
   const configuredIdentity = process.env.NODE_ENV === "production"
     ? process.env.BETTER_AUTH_URL ?? request.url
     : process.env.LOCAL_BETTER_AUTH_URL ?? "http://127.0.0.1:3200";
@@ -31,21 +24,13 @@ export async function POST(request: Request) {
   const suppliedOrigin = request.headers.get("origin");
   if (suppliedOrigin && suppliedOrigin !== expectedOrigin) return new NextResponse("Origin rejected", { status: 403 });
 
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  const now = Date.now();
-  const limit = attempts.get(ip);
-  if (limit && limit.resetsAt > now && limit.count >= 8) return new NextResponse("Try again later", { status: 429 });
-
   const form = await request.formData();
-  const pin = String(form.get("pin") ?? "");
   const requestedPortal = String(form.get("persona") ?? "");
   const clientId = new URL(request.url).searchParams.get("client_id") ?? undefined;
   const persona = demoPersonaForClient(clientId);
-  const expectedPin = process.env.DEMO_ACCESS_PIN;
   const password = process.env.DEMO_PERSONA_PASSWORD;
 
-  if (!expectedPin || !password || !persona || persona.portal !== requestedPortal || !sameSecret(pin, expectedPin)) {
-    attempts.set(ip, { count: limit && limit.resetsAt > now ? limit.count + 1 : 1, resetsAt: now + 15 * 60_000 });
+  if (!password || !persona || persona.portal !== requestedPortal) {
     return redirectWithError(request, "access_denied");
   }
 
@@ -60,7 +45,6 @@ export async function POST(request: Request) {
   }));
   if (signedIn.status >= 400) return redirectWithError(request, "session_failed");
 
-  attempts.delete(ip);
   const headers = new Headers(signedIn.headers);
   headers.set("Cache-Control", "no-store");
   return new Response(signedIn.body, { status: signedIn.status, headers });
