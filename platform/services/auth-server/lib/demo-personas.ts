@@ -1,4 +1,4 @@
-import { portalOidcClients, type PortalId } from "@aura/contracts";
+import { demoStudents, demoMentors, demoParents, portalOidcClients, type PortalId } from "@aura/contracts";
 
 export type DemoPersona = {
   portal: PortalId;
@@ -9,14 +9,14 @@ export type DemoPersona = {
 };
 
 export const demoPersonas: readonly DemoPersona[] = [
-  { portal: "student", clientId: portalOidcClients.student, name: "Ananya Rao", label: "CSE student · semester 7", email: "student1@aura.invalid" },
-  { portal: "parent", clientId: portalOidcClients.parent, name: "Lakshmi Rao", label: "Linked guardian · consent scoped", email: "parent1@aura.invalid" },
-  { portal: "faculty", clientId: portalOidcClients.faculty, name: "Dr Mira Sen", label: "CSE faculty · assigned sections", email: "faculty1@aura.invalid" },
+  ...demoStudents.map(p => ({ ...p, portal: "student" as const, clientId: portalOidcClients.student, label: "CSE student · semester 7" })),
+  ...demoParents.map(p => ({ ...p, portal: "parent" as const, clientId: portalOidcClients.parent, label: "Parent · linked student records" })),
+  ...demoMentors.map(p => ({ ...p, portal: "faculty" as const, clientId: portalOidcClients.faculty, label: "CSE mentor · classes and mentees" })),
   { portal: "hod", clientId: portalOidcClients.hod, name: "Dr Sahana Krishnan", label: "Head · Computer Science", email: "hod.cse@aura.invalid" },
   { portal: "governance", clientId: portalOidcClients.governance, name: "AURA Governance Operator", label: "Evidence and replay authority", email: "governance@aura.invalid" },
   { portal: "governance", clientId: portalOidcClients.governance, name: "Dr Sahana Krishnan", label: "HoD · review controls", email: "hod.cse@aura.invalid" },
-  { portal: "lms", clientId: portalOidcClients.lms, name: "Ananya Rao", label: "Student · course work and feedback", email: "student1@aura.invalid" },
-  { portal: "lms", clientId: portalOidcClients.lms, name: "Dr Mira Sen", label: "Faculty · lessons and assignments", email: "faculty1@aura.invalid" },
+  ...demoStudents.map(p => ({ ...p, portal: "lms" as const, clientId: portalOidcClients.lms, label: "Student" })),
+  ...demoMentors.map(p => ({ ...p, portal: "lms" as const, clientId: portalOidcClients.lms, label: "Faculty" })),
   { portal: "lms", clientId: portalOidcClients.lms, name: "Dr Sahana Krishnan", label: "HoD · department courses", email: "hod.cse@aura.invalid" },
 ] as const;
 

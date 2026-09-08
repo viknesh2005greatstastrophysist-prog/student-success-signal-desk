@@ -23,6 +23,7 @@
     "check": "turbo run lint typecheck build && node --test tests/*.test.mjs && npm run test:core && node scripts/check-prerequisites.mjs",
     "chapter11:build": "npm run chapter11:build --workspace=@aura/core-api",
     "initialize:local": "node --env-file=.env.local scripts/initialize-local.mjs",
+    "populate:local": "node --env-file=.env.local --import tsx services/core-api/scripts/populate-demo-cohort.ts --apply",
     "dev:local": "node --env-file=.env.local node_modules/turbo/bin/turbo run dev --parallel --env-mode=loose"
   },
   "devDependencies": {

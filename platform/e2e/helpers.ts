@@ -33,9 +33,15 @@ export async function enter(
       exact: true,
     })
     .click();
-  await page
-    .getByRole("button", { name: `Continue as ${name}`, exact: true })
-    .click();
+  await expect(page.getByRole("heading", { name: /Choose your account|Your demo account/ })).toBeVisible();
+  const picker = page.getByRole("combobox", { name: "Demo account" });
+  if (await picker.isVisible()) {
+    const label = await picker.getByRole("option").filter({ hasText: name }).textContent();
+    await picker.selectOption({ label: label! });
+    await page.getByRole("button", { name: "Open portal", exact: true }).click();
+  } else {
+    await page.getByRole("button", { name: `Continue as ${name}`, exact: true }).click();
+  }
   await expect(
     page.getByRole("navigation", { name: "Portal sections", exact: true }),
   ).toBeVisible();

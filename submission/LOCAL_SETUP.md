@@ -16,7 +16,9 @@ npm run initialize:local
 npm run dev:local
 ```
 
-The initializer creates missing schemas and tables, seeds a synthetic institutional generation only when none exists, provisions the six public PKCE clients, and links the five demo identities to Core people. Repeating initialization preserves the institutional generation. It refuses production schema names. Local registrations use loopback callbacks in a separate identity schema; production registrations use HTTPS web callbacks. Do not repurpose the deployed identity schema for a fresh local installation.
+The initializer creates missing schemas and tables, seeds a synthetic institutional generation only when none exists, provisions the six public PKCE clients, and links 24 fictional accounts to Core people: ten students, nine parents, three mentors, one HoD and one AI observer. Repeating initialization preserves the institutional generation. It refuses production schema names. Local registrations use loopback callbacks in a separate identity schema; production registrations use HTTPS web callbacks. Do not repurpose the deployed identity schema for a fresh local installation.
+
+To fill the ten-student CSE cohort with courses, attendance, marks, LMS work and mentor reviews, run `npm run populate:local` after initialization. It distributes mentees 4–3–3, preserves existing final course selections and saved records, and can be repeated without duplicating its completed steps. See [DEMO_COHORT.md](../docs/DEMO_COHORT.md) for the roster, scenarios and boundaries. The underlying demo term is 2026-ODD; a fresh population needs its registration window open. The HoD can change that window through Courses & timetables.
 
 Open Faculty at `http://127.0.0.1:3103` or Governance at `http://127.0.0.1:3105`. Choose Open portal; no PIN is required. Student, Parent and HoD run on ports 3101, 3102 and 3104. Identity is on 3200 and Core on 3300. The root environment is passed to all workspaces; it does not need to be copied into each app.
 

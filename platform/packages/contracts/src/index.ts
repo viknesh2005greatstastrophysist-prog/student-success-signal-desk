@@ -297,6 +297,7 @@ export const portalDefinitions: Record<PortalId, PortalDefinition> = {
   },
 };
 export type * from "./experience";
+export { demoStudents, demoMentors, demoParents } from "./demo-cohort";
 export const experienceViewRoutes = {
   student: {Home:"/dashboard","Course registration":"/registration",Timetable:"/timetable","My progress":"/progress","My support plan":"/support"},
   parent: {Home:"/dashboard",Attendance:"/attendance","Marks & results":"/results","Fees & receipts":"/fees","Mentor updates":"/mentor"},

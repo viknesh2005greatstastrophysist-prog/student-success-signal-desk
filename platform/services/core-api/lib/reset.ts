@@ -1,6 +1,6 @@
 import { seedExperience } from "./experience-seed";
 import { randomUUID } from "node:crypto";
-import { seedManifestSchema, type SeedManifest } from "@aura/contracts";
+import { demoStudents, demoMentors, demoParents, seedManifestSchema, type SeedManifest } from "@aura/contracts";
 import type { PoolClient } from "pg";
 import { loadCoreConfig } from "./config";
 import { withCoreTransaction } from "./db";
@@ -40,7 +40,7 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
   }
 
   return withCoreTransaction(async (client) => {
-    const identityEmails = ["student1@aura.invalid", "parent1@aura.invalid", "faculty1@aura.invalid", "hod.cse@aura.invalid", "governance@aura.invalid"];
+    const identityEmails = [...demoStudents, ...demoMentors, ...demoParents].map(p=>p.email).concat("hod.cse@aura.invalid", "governance@aura.invalid");
     const priorSubjects = await client.query<{ email: string; external_subject: string }>(
       `SELECT p.email, p.external_subject FROM people p
        JOIN institution_revisions ir ON ir.current_generation_id = p.generation_id AND ir.singleton = true
@@ -90,7 +90,7 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
     ];
     const students: SeedPerson[] = studentNames.map((name, index) => ({
       id: randomUUID(),
-      subject: index === 0 ? subjectByEmail.get("student1@aura.invalid") ?? "aura-demo-student" : `aura-student-${String(index + 1).padStart(2, "0")}`,
+      subject: subjectByEmail.get(`student${index+1}@aura.invalid`) ?? (index === 0 ? "aura-demo-student" : `aura-student-${String(index + 1).padStart(2, "0")}`),
       name,
       email: `student${index + 1}@aura.invalid`,
       role: "student",
@@ -99,7 +99,7 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
 
     const parents: SeedPerson[] = Array.from({ length: 9 }, (_, index) => ({
       id: randomUUID(),
-      subject: index === 0 ? subjectByEmail.get("parent1@aura.invalid") ?? "aura-demo-parent" : `aura-parent-${String(index + 1).padStart(2, "0")}`,
+      subject: subjectByEmail.get(`parent${index+1}@aura.invalid`) ?? (index === 0 ? "aura-demo-parent" : `aura-parent-${String(index + 1).padStart(2, "0")}`),
       name: ["Lakshmi Rao", "Harish Patel", "Neha Shah", "Gopal Nair", "Suma Iyer", "Mohan Kumar", "Deepa Das", "Arun Menon", "Farah Ali"][index]!,
       email: `parent${index + 1}@aura.invalid`,
       role: "parent",
@@ -112,7 +112,7 @@ export async function resetSyntheticSeed(confirmation: string, requestedBy = "lo
       ["aura-faculty-04", "Prof Kiran Rao", eceId],
     ].map(([subject, name, departmentId], index) => ({
       id: randomUUID(),
-      subject: subject!,
+      subject: subjectByEmail.get(`faculty${index+1}@aura.invalid`) ?? subject!,
       name: name!,
       email: `faculty${index + 1}@aura.invalid`,
       role: "faculty" as const,
