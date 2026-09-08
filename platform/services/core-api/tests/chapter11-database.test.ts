@@ -1,8 +1,10 @@
+import { experienceCommand } from "../lib/experience-commands";
+import { loadPortalSnapshot } from "../lib/projections";
 import { lmsCommand } from "../lib/lms-commands";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import type { ActorContext } from "@aura/contracts";
+import { portalOidcClients, type ActorContext } from "@aura/contracts";
 import { migrateCoreDatabase } from "../lib/migrations";
 import { resetSyntheticSeed } from "../lib/reset";
 import { closePool, withCoreTransaction } from "../lib/db";
@@ -17,14 +19,14 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
   try {
     await migrateCoreDatabase();
     await resetSyntheticSeed("AURA-SYNTHETIC-SEED-V1", "chapter11-isolated-test");
-    const { faculty, governance, student, otherDepartment } = await withCoreTransaction(async client => {
+    const { faculty, governance, student, otherDepartment, hod, nextMentor } = await withCoreTransaction(async client => {
       const generation = await getCurrentGeneration(client);
       const people = await client.query<{ id: string; email: string; department_id: string }>("SELECT p.id,p.email,r.department_id FROM people p JOIN role_assignments r ON r.person_id=p.id WHERE p.generation_id=$1", [generation]);
       const person = (email: string) => people.rows.find(p => p.email === email)!;
-      const make = (email: string, role: ActorContext["role"]): ActorContext => ({ subject: email, role, personId: person(email).id, departmentId: person(email).department_id });
+      const make = (email: string, role: ActorContext["role"]) => ({ subject: email, role, displayName:email, email, clientId:portalOidcClients[role], personId: person(email).id, departmentId: person(email).department_id });
       const s = await client.query<{ id: string }>("SELECT id FROM student_profiles WHERE generation_id=$1 AND person_id=$2", [generation, person("student1@aura.invalid").id]);
       const departments = await client.query<{ id: string }>("SELECT id FROM departments WHERE generation_id=$1 AND code='ECE'", [generation]);
-      return { faculty: make("faculty1@aura.invalid", "faculty"), governance: make("governance@aura.invalid", "governance"), student: { ...make("student1@aura.invalid", "student"), studentId: s.rows[0]!.id }, otherDepartment: departments.rows[0]!.id };
+      return { hod: make("hod.cse@aura.invalid", "hod"), nextMentor: make("faculty2@aura.invalid", "faculty"), faculty: make("faculty1@aura.invalid", "faculty"), governance: make("governance@aura.invalid", "governance"), student: { ...make("student1@aura.invalid", "student"), studentId: s.rows[0]!.id }, otherDepartment: departments.rows[0]!.id };
     });
     await assert.rejects(() => overview(student), /not permitted/);
     await assert.rejects(() => approvePolicy(governance, { policy: demoPolicy, rationale: "Cannot self approve" }), /not permitted/);
@@ -90,5 +92,15 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     await recordOutcome(faculty, approved.plan!.id, randomUUID(), { expectedRevision: 1, status: "planned", outcome: "Restore the exact originally approved support plan" });
     assert.equal((await reviewQueue(faculty)).plans[0]!.visible_to_student, true);
     assert.equal(await withCoreTransaction(async client => (await client.query("SELECT count(*)::int AS n FROM marks")).rows[0]!.n), before);
+    const legacySnapshot = async (actor: typeof faculty): Promise<Record<string, unknown>> => loadPortalSnapshot(actor);
+    assert.equal(((await legacySnapshot(faculty)).supportCases as unknown[]).length, 1);
+    const assignment = await withCoreTransaction(async client => (await client.query("SELECT revision FROM mentor_assignments WHERE student_id=$1", [student.studentId])).rows[0]!);
+    await experienceCommand(hod, randomUUID(), {action: "assign-mentor", studentId: student.studentId, facultyId: nextMentor.personId, expectedRevision: assignment.revision, reason: "Transfer the case to its newly assigned mentor"});
+    assert.equal(((await legacySnapshot(faculty)).supportCases as unknown[]).length, 0);
+    assert.equal(((await legacySnapshot(nextMentor)).supportCases as unknown[]).length, 1);
+    assert.equal((await overview(faculty)).plans.some(p => p.id === locked.id), false);
+    await assert.rejects(() => exportPlan(faculty, locked.id), /assigned to the selected mentor/);
+    assert.equal((await exportPlan(hod, locked.id)).jobs.length, 1);
+
   } finally { await closePool(); }
 });

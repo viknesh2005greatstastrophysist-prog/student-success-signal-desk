@@ -69,10 +69,15 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChil
       parentGrants.set(row.student_id, fields);
     });
 
+    const mentorStudents = actor.role === "faculty" ? new Set((await client.query<{student_id:string}>(
+      "SELECT student_id FROM mentor_assignments WHERE generation_id=$1 AND faculty_person_id=$2", [generationId,actor.personId],
+    )).rows.map(row => row.student_id)) : new Set<string>();
     const visibleEvents = events.rows.filter((event) => {
       if (actor.role === "governance") return true;
       if (actor.role === "hod") return event.payload.departmentId === actor.departmentId;
-      if (actor.role === "faculty") return event.payload.facultyPersonId === actor.personId;
+      if (actor.role === "faculty") return event.event_type.startsWith("support.")
+        ? typeof event.payload.studentId === "string" && mentorStudents.has(event.payload.studentId)
+        : event.payload.facultyPersonId === actor.personId;
       if (actor.role === "student") {
         const studentIds = Array.isArray(event.payload.studentIds) ? event.payload.studentIds : [];
         return event.event_type === "offering.published" || event.payload.studentId === actor.studentId || studentIds.includes(actor.studentId);
@@ -344,7 +349,8 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChil
          JOIN evidence_snapshots evidence ON evidence.support_case_id = support_case.id AND evidence.generation_id = support_case.generation_id
          JOIN agent_runs run ON run.evidence_snapshot_id = evidence.id AND run.generation_id = support_case.generation_id
          JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id AND artifact.generation_id = support_case.generation_id
-         WHERE support_case.generation_id = $1 AND evidence.evidence->>'assignedFacultyPersonId' = $2
+         WHERE support_case.generation_id = $1
+         AND EXISTS (SELECT 1 FROM mentor_assignments mentor WHERE mentor.generation_id=$1 AND mentor.student_id=support_case.student_id AND mentor.faculty_person_id=$2)
          AND artifact.artifact_version = (SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id = run.id)
          ORDER BY support_case.opened_at DESC, artifact.artifact_version DESC`,
         [generationId, actor.personId],

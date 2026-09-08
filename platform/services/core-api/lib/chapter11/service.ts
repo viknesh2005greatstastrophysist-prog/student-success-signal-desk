@@ -38,6 +38,9 @@ async function getPlan(client: PoolClient, actor: ActorContext, id: string, lock
     const policy = await client.query("SELECT id FROM ch11_policies WHERE id=$1 AND faculty_person_id=$2 AND generation_id=$3", [plan.body.policyId, actor.personId, generation]);
     if (!policy.rowCount) throw new AuthorizationError("This plan belongs to another mentor");
   }
+  if (actor.role === "faculty" && plan.body.studentIds?.length) {
+    await requireAssignedStudents(client, generation, actor.personId, plan.body.studentIds);
+  }
   return plan;
 }
 
@@ -293,7 +296,7 @@ export async function overview(actor: ActorContext) {
       WHERE s.generation_id=$1 AND ($2::uuid IS NULL OR s.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
-    const plans = await client.query("SELECT * FROM ch11_plans WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) ORDER BY created_at DESC", [generation, department, mentor]);
+    const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
     const jobs = await client.query("SELECT j.id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends=await client.query("SELECT date_trunc('day',j.created_at)::date::text AS day,count(*)::int AS reviewed FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) GROUP BY 1 ORDER BY 1",[generation,department]);
     return { trends:trends.rows, students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: true };
