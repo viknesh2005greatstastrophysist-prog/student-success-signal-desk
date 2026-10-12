@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { identityMode } from "../lib/identity-mode";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { portalOidcClients, resolvePortalOrigins } from "@aura/contracts";
@@ -61,7 +63,9 @@ try {
 
   if (missing.length) {
     const bootstrapPassword = `${randomBytes(30).toString("base64url")}aA1!`;
-    const bootstrapResponse = await auth.api.signUpEmail({
+    const operator = identityMode() === "college-project" ? (JSON.parse(await readFile(new URL("../../../../runtime/project-final/accounts.json",import.meta.url),"utf8")) as Array<{role:string;email:string;password:string}>).find(account=>account.role === "governance") : undefined;
+    if(identityMode() === "college-project" && !operator) throw new Error("Hosted OAuth provisioning requires the existing project Operations account");
+    const bootstrapResponse = operator ? await auth.api.signInEmail({asResponse:true,body:{email:operator.email,password:operator.password}}) : await auth.api.signUpEmail({
       asResponse: true,
       body: {
         email: `client-provisioner-${Date.now()}@aura.synthetic.test`,

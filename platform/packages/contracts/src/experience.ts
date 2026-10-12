@@ -127,6 +127,7 @@ export type SupportPlan = {
   plan: Record<string, unknown>;
 };
 export type Invoice = {
+  payment_simulation_allowed?: boolean;
   id: string;
   invoice_number: string;
   description: string;

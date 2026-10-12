@@ -5,7 +5,7 @@ import { z } from "zod";
 import { assertCommandId, findDuplicateCommand, getCurrentGeneration, writeCommandLedger } from "./command-ledger";
 import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
-import { AuthorizationError, requireRole } from "./security";
+import { AuthorizationError, requireRole, requireSyntheticInstitution, requireSandboxInvoiceOrigin } from "./security";
 
 export const paymentAttemptInput = z.object({
   expectedRevision: z.number().int().nonnegative(),
@@ -43,12 +43,42 @@ export async function createPaymentAttempt(
   commandId: string,
   input: z.infer<typeof paymentAttemptInput>,
 ): Promise<PaymentAttemptResult> {
+  requireSyntheticInstitution();
   assertCommandId(commandId);
   z.string().uuid().parse(invoiceId);
   requireRole(actor, "parent");
 
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
+    const result = await client.query<{
+      id: string;
+      student_id: string;
+      invoice_number: string;
+      description: string;
+      amount_paise: string;
+      paid_paise: string;
+      status: string;
+      revision: number;
+      due_on: string;
+      department_id: string;
+      record_origin: string;
+    }>(
+      `SELECT invoice.id, invoice.student_id, invoice.invoice_number, invoice.description,
+              invoice.amount_paise::text, invoice.paid_paise::text, invoice.status, invoice.revision,
+              invoice.due_on::text, student.department_id,invoice.record_origin
+       FROM fee_invoices invoice
+       JOIN student_profiles student ON student.id = invoice.student_id AND student.generation_id = invoice.generation_id
+       JOIN parent_links link ON link.generation_id = invoice.generation_id AND link.student_id = invoice.student_id
+         AND link.parent_person_id = $3 AND link.active
+       JOIN parent_field_grants grant_row ON grant_row.generation_id = link.generation_id
+         AND grant_row.parent_link_id = link.id AND grant_row.field_group = 'fees' AND grant_row.granted
+       WHERE invoice.generation_id = $1 AND invoice.id = $2
+       FOR UPDATE OF invoice`,
+      [generationId, invoiceId, actor.personId],
+    );
+    if (!result.rowCount) throw new NotFoundError("Invoice not found");
+    const invoice = result.rows[0]!;
+    requireSandboxInvoiceOrigin(invoice.record_origin);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
     if (duplicate) {
       const priorTransaction = duplicate.payload.transaction as PaymentTransactionResult | undefined;
@@ -65,33 +95,6 @@ export async function createPaymentAttempt(
       } as PaymentAttemptResult;
     }
 
-    const result = await client.query<{
-      id: string;
-      student_id: string;
-      invoice_number: string;
-      description: string;
-      amount_paise: string;
-      paid_paise: string;
-      status: string;
-      revision: number;
-      due_on: string;
-      department_id: string;
-    }>(
-      `SELECT invoice.id, invoice.student_id, invoice.invoice_number, invoice.description,
-              invoice.amount_paise::text, invoice.paid_paise::text, invoice.status, invoice.revision,
-              invoice.due_on::text, student.department_id
-       FROM fee_invoices invoice
-       JOIN student_profiles student ON student.id = invoice.student_id AND student.generation_id = invoice.generation_id
-       JOIN parent_links link ON link.generation_id = invoice.generation_id AND link.student_id = invoice.student_id
-         AND link.parent_person_id = $3 AND link.active
-       JOIN parent_field_grants grant_row ON grant_row.generation_id = link.generation_id
-         AND grant_row.parent_link_id = link.id AND grant_row.field_group = 'fees' AND grant_row.granted
-       WHERE invoice.generation_id = $1 AND invoice.id = $2
-       FOR UPDATE OF invoice`,
-      [generationId, invoiceId, actor.personId],
-    );
-    if (!result.rowCount) throw new NotFoundError("Invoice not found");
-    const invoice = result.rows[0]!;
     if (invoice.revision !== input.expectedRevision) throw new ConflictError("STALE_VERSION", "The invoice changed after this page loaded");
     const remainingPaise = Number(invoice.amount_paise) - Number(invoice.paid_paise);
     if (remainingPaise <= 0 || invoice.status === "paid" || invoice.status === "void") {

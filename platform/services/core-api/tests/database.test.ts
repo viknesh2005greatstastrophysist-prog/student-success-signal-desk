@@ -43,6 +43,8 @@ test("isolated Core schema includes the Chapter 11 tables and resets serially", 
 
   const pool = getPool();
   const schema = process.env.CORE_DATABASE_SCHEMA!;
+  // The September seed is historical; this command suite needs an open test window.
+  await pool.query(`UPDATE "${schema}".registration_windows SET status='open',opens_at=now()-interval '1 day',closes_at=now()+interval '1 day'`);
   const tableCount = await pool.query<{ count: string }>(
     "SELECT count(*)::text AS count FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations'",
     [schema],
@@ -205,6 +207,11 @@ test("isolated Core schema includes the Chapter 11 tables and resets serially", 
   assert.equal(paid.transaction.status, "captured");
   assert.equal(paidDuplicate.duplicate, true);
   assert.deepEqual(paidDuplicate.receipt, paid.receipt);
+  const feeGrant=(await pool.query(`SELECT g.id,g.granted FROM "${schema}".parent_field_grants g JOIN "${schema}".parent_links l ON l.id=g.parent_link_id WHERE l.parent_person_id=$1 AND l.student_id=$2 AND g.field_group='fees'`,[fixture.parent_person_id,fixture.student_profile_id])).rows[0]!;
+  try {
+    await pool.query(`UPDATE "${schema}".parent_field_grants SET granted=false WHERE id=$1`,[feeGrant.id]);
+    await assert.rejects(()=>createPaymentAttempt(parent,fixture.invoice_id,paymentCommand,{expectedRevision:0,scenario:"success"}),/Invoice not found/);
+  } finally { await pool.query(`UPDATE "${schema}".parent_field_grants SET granted=$2 WHERE id=$1`,[feeGrant.id,feeGrant.granted]); }
   const paymentCount = await pool.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM "${schema}".payment_transactions WHERE generation_id = $1 AND invoice_id = $2`,
     [fixture.generation_id, fixture.invoice_id],

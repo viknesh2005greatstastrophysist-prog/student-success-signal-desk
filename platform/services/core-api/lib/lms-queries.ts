@@ -13,7 +13,7 @@ import { getCurrentGeneration } from "./command-ledger";
 import { withCoreTransaction } from "./db";
 import { NotFoundError } from "./http";
 import { requireRole } from "./security";
-import { digest, sourceSchema, type Source } from "./chapter11/engine";
+import { DataBlocked, digest, sourceSchema, type Source } from "./chapter11/engine";
 
 export async function requireLmsCourse(
   client: PoolClient,
@@ -200,6 +200,7 @@ export async function lmsEvidence(
      WHERE r.generation_id=$1 AND r.student_id=$2 AND r.status='registered' AND t.active`,
     [generation, studentId],
   );
+  if (new Set(rows.rows.map(row => row.term)).size > 1) throw new DataBlocked(["LMS records span several active terms; select and confirm the reporting scope before aggregation"]);
   const now = new Date();
   const due = await client.query<{ id: string; due_at: Date }>(
     `SELECT a.id,a.due_at FROM lms_assignments a JOIN registrations r ON r.course_offering_id=a.course_offering_id AND r.student_id=$2 AND r.status='registered'
@@ -232,7 +233,7 @@ export async function lmsEvidence(
     observedAt: now.toISOString(),
     semester: rows.rows[0]?.term ?? "2026-ODD",
     state: rows.rows.length ? "present" : "missing",
-    synthetic: true,
+    synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
     values,
   });
 }

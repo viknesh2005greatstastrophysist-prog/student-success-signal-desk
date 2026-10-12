@@ -4,6 +4,7 @@ import { demoStudents, demoMentors, demoParents, seedManifestSchema, type SeedMa
 import type { PoolClient } from "pg";
 import { loadCoreConfig } from "./config";
 import { withCoreTransaction } from "./db";
+import { requireDemoInstitution } from "./security";
 
 type SeedPerson = {
   id: string;
@@ -34,6 +35,7 @@ async function insertRows(
 }
 
 export async function resetSyntheticSeed(confirmation: string, requestedBy = "local-operator"): Promise<SeedManifest> {
+  requireDemoInstitution();
   const expected = loadCoreConfig().resetConfirmation;
   if (confirmation !== expected || confirmation !== seedVersion) {
     throw new Error(`Reset refused: confirmation must equal ${seedVersion}`);

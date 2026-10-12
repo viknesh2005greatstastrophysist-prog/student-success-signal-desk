@@ -286,7 +286,7 @@ export async function experienceStudent(
     const invoices = grants.includes("fees")
       ? (
           await client.query<StudentDetail["invoices"][number]>(
-            `SELECT i.id,i.invoice_number,i.description,i.amount_paise::float,i.paid_paise::float,i.due_on::text,i.status,i.revision,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',t.id,'amount_paise',t.amount_paise,'created_at',t.created_at,'status',t.status) ORDER BY t.created_at DESC) FROM payment_transactions t WHERE t.invoice_id=i.id),'[]') AS transactions FROM fee_invoices i WHERE i.generation_id=$1 AND i.student_id=$2 ORDER BY i.due_on`,
+            `SELECT i.id,(CASE WHEN current_schema()='aura_hosted_project_core' THEN i.record_origin='generated_project_operations' ELSE true END) AS payment_simulation_allowed,i.invoice_number,i.description,i.amount_paise::float,i.paid_paise::float,i.due_on::text,i.status,i.revision,COALESCE((SELECT jsonb_agg(jsonb_build_object('id',t.id,'amount_paise',t.amount_paise,'created_at',t.created_at,'status',t.status) ORDER BY t.created_at DESC) FROM payment_transactions t WHERE t.invoice_id=i.id),'[]') AS transactions FROM fee_invoices i WHERE i.generation_id=$1 AND i.student_id=$2 ORDER BY i.due_on`,
             [gen, id],
           )
         ).rows

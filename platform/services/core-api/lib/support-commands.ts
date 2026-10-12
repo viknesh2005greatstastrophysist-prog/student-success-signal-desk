@@ -5,7 +5,7 @@ import { z } from "zod";
 import { assertCommandId, findDuplicateCommand, getCurrentGeneration, writeCommandLedger } from "./command-ledger";
 import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
-import { requireRole } from "./security";
+import { requireRole, requireDemoInstitution } from "./security";
 import { validatePacket, riskAnalysis, digest, type Evidence, type Risk, type Policy, type domainNames } from "./chapter11/engine";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
@@ -112,6 +112,7 @@ export async function processAcademicEvent(
   commandId: string,
   input: z.infer<typeof processAcademicEventInput>,
 ): Promise<ProcessResult> {
+  requireDemoInstitution();
   assertCommandId(commandId);
   requireRole(actor, "governance");
   return withCoreTransaction(async (client) => {

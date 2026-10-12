@@ -22,9 +22,10 @@ import {
   selectedFile,
   usePortalApi,
   Workspace,
+  type PortalRecordMode,
 } from "./workspace";
 
-export function LmsPortal() {
+export function LmsPortal({ recordMode = "demo" }: { recordMode?: PortalRecordMode } = {}) {
   const api = usePortalApi<LmsOverview>("/api/bff/lms/overview");
   const [section, setSection] = useState("Home");
   const [course, setCourse] = useState<LmsCourseDetail | null>(null);
@@ -126,6 +127,7 @@ export function LmsPortal() {
     return (
       <PortalEntry
         portal="lms"
+        recordMode={recordMode}
         description="Read lessons, submit assignments and find your faculty's feedback."
       />
     );
@@ -151,6 +153,7 @@ export function LmsPortal() {
   return (
     <Workspace
       portal="lms"
+      recordMode={recordMode}
       viewer={`${api.data.name} · ${api.data.role === "hod" ? "HoD" : api.data.role}`}
       sections={["Home", "Courses"]}
       current={section}

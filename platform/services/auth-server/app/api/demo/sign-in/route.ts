@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { demoPersonaForClient } from "@/lib/demo-personas";
+import { identityMode } from "@/lib/identity-mode";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ function redirectWithError(request: Request, code: string) {
 }
 
 export async function POST(request: Request) {
+  if (identityMode() !== "demo") return new NextResponse("Demo sign-in is disabled", { status: 403, headers: { "Cache-Control": "no-store" } });
   const oauthParams = new URL(request.url).searchParams;
   oauthParams.delete("error");
   const rawOAuthQuery = oauthParams.toString();

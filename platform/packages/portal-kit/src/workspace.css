@@ -793,8 +793,8 @@ small {
   button,
   a {
     transition:
-      background-color 0.15s,
-      border-color 0.15s;
+      background-color 150ms cubic-bezier(0.2, 0, 0, 1),
+      border-color 150ms cubic-bezier(0.2, 0, 0, 1);
   }
   @keyframes appear {
     from {
@@ -805,6 +805,17 @@ small {
       opacity: 1;
       transform: translateY(0);
     }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -1136,3 +1147,29 @@ table td {
   outline: 3px solid #ab652a;
   outline-offset: 3px;
 }
+
+.source-picker { display: grid; gap: .5rem; width: min(100%, 32rem); margin: 1rem 0; }
+.source-picker select { min-width: 0; max-width: 100%; width: 100%; text-overflow: ellipsis; }
+.ch11-plan > ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .75rem; padding: 0; list-style: none; counter-reset: stage; }
+.ch11-plan > ol > li { counter-increment: stage; border-left: 2px solid var(--line); padding: .5rem .75rem; color: var(--muted); font-size: .85rem; }
+.ch11-plan > ol > li::before { content: counter(stage, decimal-leading-zero); display: block; color: var(--accent); font-weight: 700; margin-bottom: .35rem; }
+@media (prefers-reduced-motion: no-preference) { .entry-page section, .workspace-header { animation: appear 180ms cubic-bezier(.2,0,0,1) both; } }
+
+.ch11-workbench > header { margin-bottom: 1.5rem; }
+.ch11-workbench h2 { font: 500 2rem/1.15 Georgia, serif; margin: .5rem 0; }
+.ch11-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem; }
+.ch11-card { min-width: 0; border: 1px solid var(--line); border-radius: .5rem; padding: 1.25rem; background: #fff; margin-bottom: 1rem; }
+.ch11-card > h3 { margin-top: 0; }
+.ch11-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(12rem,1fr)); gap: .8rem; }
+.ch11-fields label, .ch11-card > label, .ch11-card details > label { display: grid; gap: .4rem; margin: .8rem 0; }
+.ch11-card input:not([type=checkbox]), .ch11-card select, .ch11-card textarea { min-width: 0; width: 100%; max-width: 100%; }
+.ch11-card textarea { min-height: 6rem; }
+.ch11-students { display: grid; gap: .5rem; max-height: 16rem; overflow: auto; padding: .5rem; }
+.ch11-students label { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.ch11-students small { color: var(--muted); }
+.ch11-buttons { display: flex; flex-wrap: wrap; gap: .5rem; margin: .8rem 0; }
+.ch11-plan { border-top: 1px solid var(--line); padding-top: 1rem; margin-top: 1rem; overflow-wrap: anywhere; }
+.ch11-jobs { display: grid; grid-template-columns: repeat(auto-fit,minmax(13rem,1fr)); gap: .75rem; margin-top: 1rem; }
+.ch11-jobs article { min-width: 0; padding: .75rem; border-radius: .4rem; background: var(--soft); }
+.ch11-jobs p { overflow-wrap: anywhere; }
+@media(max-width:48rem) { .ch11-grid { grid-template-columns: 1fr; } }

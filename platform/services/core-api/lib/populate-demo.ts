@@ -6,6 +6,7 @@ import { experienceCommand, recordChange } from "./experience-commands";
 import { lmsCommand } from "./lms-commands";
 import { demoPolicy } from "./chapter11/engine";
 import { approvePolicy, savePlan, lockPlan, executePlan, seedChapterSources } from "./chapter11/service";
+import { requireDemoInstitution } from "./security";
 
 export const cohortVersion = "AURA-COHORT-10-V1";
 const reason = "Populate the fictional ten-student project demonstration; no real student records or mentor decisions.";
@@ -57,6 +58,7 @@ export async function demoCohortContext() {
 
 /** Additive, resumable population. Each completed step is recorded once; later user edits are preserved. */
 export async function populateDemoCohort(report: (message: string) => void = () => {}) {
+  requireDemoInstitution();
   const context = await demoCohortContext();
   const { generation, hod, students, mentors, courses } = context;
   const lock = await getPool().connect();

@@ -1,3 +1,5 @@
+> Current project edition: see [Final project report](../docs/FINAL_PROJECT_REPORT.md) and [Runbook](../docs/PROJECT_RUNBOOK.md). The private edition uses supplied sources plus generated operations; the earlier institutional requirements below apply to verified college rollout.
+
 # Chapter 11 submission guide
 
 AURA Student Success and Early Warning combines four evidence sources, applies a mentor-approved risk policy, produces a validated support draft, and publishes it only after the assigned mentor approves. The student, parent, faculty, department, AI activity and LMS portals share PostgreSQL state.
@@ -15,6 +17,19 @@ Demo entry requires no PIN or password as of 8 September 2026. Anyone with the p
 
 This Chapter 11 guide and `../docs/RELEASE_EVIDENCE.md` are the current handoff. Older prototype reports elsewhere in the source archive are historical evidence, not the current release status.
 
+## College attendance source data
+
+The 12 October implementation now includes a private agent workflow with 321
+persistent clarification packets and authenticated college-record endpoints/pages
+in all six portals. See [real-college rollout](../docs/REAL_COLLEGE_ROLLOUT.md)
+and [required college inputs](../docs/WHAT_I_NEED_FROM_YOU.md). The prepared packets
+preserve unknowns and cannot publish student support. Real accounts, operational
+records, hosted deployment and actual mentor acceptance remain outstanding.
+The September PDFs and archive describe the synthetic demonstration; they have
+not been regenerated as proof of a real-college rollout.
+
+The project includes a private local import and a searchable source-review screen for attendance and final CIE exports. See `../docs/COLLEGE_ATTENDANCE_IMPORT.md`. Earlier college permission was reported by the project owner; the 12 October instruction authorizes local use of the Downloads reports. Six unique workbooks cover 321 students, including CIE records for 67 of them. Original student data and derived records stay in the ignored `runtime/college-attendance/` directory and are excluded from source/submission archives. These imports do not replace the public demo cohort. Reporting dates, numeric units, maximum CIE marks and source status meanings remain unknown; mentor mappings, LMS activity and other required real-case evidence are still absent.
+
 ## Start here
 
 1. Read [AURA_Team_Walkthrough.pdf](AURA_Team_Walkthrough.pdf) for the simple-English team guide: latest changes, ten students and three mentors, all six portals, agents, a guided tour, practice steps and remaining submission needs. Its editable source is [AURA_Team_Walkthrough.md](AURA_Team_Walkthrough.md).
@@ -27,7 +42,12 @@ This Chapter 11 guide and `../docs/RELEASE_EVIDENCE.md` are the current handoff.
 
 ## Important submission boundary
 
-The professor's Chapter 11 sections 11.2 and Lab 14 explicitly require a real case. All included cases are synthetic. A working software demonstration does not establish that a real mentor approved the methodology or that institutional data access is authorized. Obtain a real mentor's acceptance of this synthetic demonstration, or conduct an authorized real-case pilot, before describing the academic capstone as fully signed off.
+The professor's Chapter 11 sections 11.2 and Lab 14 explicitly require a real case.
+The public submission demonstration uses synthetic cases. Private actual-data
+clarification packets now exist, but they do not establish a real mentor's
+approval of the methodology or institutional account access. The owner requires
+real users across all six portals. Complete that private rollout and obtain
+actual academic acceptance before describing the capstone as fully signed off.
 
 No credentials, access PIN, session traces or real student records belong in this submission folder. The full source repository is part of the project; the notebook calls its TypeScript implementation rather than maintaining a separate imitation.
 

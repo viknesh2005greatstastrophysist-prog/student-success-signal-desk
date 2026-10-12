@@ -1,3 +1,5 @@
+> Current project edition: see [Final project report](../docs/FINAL_PROJECT_REPORT.md) and [Runbook](../docs/PROJECT_RUNBOOK.md). The private edition uses supplied sources plus generated operations; the earlier institutional requirements below apply to verified college rollout.
+
 # Student Success and Early Warning System
 
 ## Abstract
@@ -5,6 +7,16 @@
 This project implements the coordinator-and-workers method in Chapter 11 of the Agentic AI 15 Worklets 14 Lab Build Book. Four collectors normalize academic, learning engagement, internship and placement signals. A transparent policy identifies cases for mentor review. Recommendation specialists produce structured actions with evidence citations. Automated validation, bounded repair, saved checkpoints and a mandatory mentor decision control publication. Six connected portals use a shared PostgreSQL backend.
 
 The implemented demonstration uses synthetic records. Its software acceptance evidence must be distinguished from the book's requirement for a real-case pilot and approval by an actual academic advisor.
+
+As of 12 October 2026, a separate private workflow imports six actual college
+workbooks covering 321 students. Its agent coordinator prepares source-cited
+clarification packets while preserving unknown periods, units and status meanings.
+All six native portals now contain authenticated, scoped raw-record views, and
+Core has an approved-normalization connector to the existing four-source runtime.
+Actual identity provisioning, LMS/operational evidence, approved normalization,
+institutional deployment and real mentor acceptance are still required. See
+`../docs/REAL_COLLEGE_ROLLOUT.md` and `../docs/WHAT_I_NEED_FROM_YOU.md`. This addition
+does not change the synthetic status of the public demo or September archive/PDFs.
 
 ## Problem and objective
 

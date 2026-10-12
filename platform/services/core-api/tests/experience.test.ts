@@ -65,6 +65,7 @@ test(
         "experience-integration",
       );
       const actors = await withCoreTransaction(async (c) => {
+        await c.query("UPDATE registration_windows SET status='open',opens_at=now()-interval '1 day',closes_at=now()+interval '1 day'");
         const gen = await getCurrentGeneration(c);
         return (
           await c.query<{

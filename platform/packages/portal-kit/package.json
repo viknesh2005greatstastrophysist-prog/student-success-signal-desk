@@ -9,7 +9,8 @@
     "./styles.css": "./src/styles.css",
     "./lms": "./src/lms.tsx",
     "./workspace.css": "./src/workspace.css",
-    "./experience": "./src/experience.tsx"
+    "./experience": "./src/experience.tsx",
+    "./college": "./src/college.tsx"
   },
   "scripts": {
     "lint": "eslint src",

@@ -10,6 +10,7 @@ const migrations = [
   { id: "004_chapter11", url: new URL("../migrations/004_chapter11.sql", import.meta.url) },
   { id: "005_lms", url: new URL("../migrations/005_lms.sql", import.meta.url) },
   { id: "006_portal_experience", url: new URL("../migrations/006_portal_experience.sql", import.meta.url) },
+  { id: "007_fee_origin", url: new URL("../migrations/007_fee_origin.sql", import.meta.url) },
 ];
 
 export async function migrateCoreDatabase(): Promise<void> {

@@ -1,10 +1,15 @@
-import { portalDefinitions,resolvePortalOrigins } from "@aura/contracts";
+import { portalDefinitions,resolvePortalOrigins,portalOidcClients, type PortalId } from "@aura/contracts";
 import { demoPersonas } from "@/lib/demo-personas";
+import { identityMode } from "@/lib/identity-mode";
 type SearchValue=string|string[]|undefined;
 export default async function SignInPage({searchParams}:{searchParams:Promise<Record<string,SearchValue>>}){
   const raw=await searchParams;const params=new URLSearchParams();
   for(const [key,value] of Object.entries(raw))for(const item of Array.isArray(value)?value:value?[value]:[])params.append(key,item);
   const error=params.get("error");params.delete("error");
+  if(identityMode()!=="demo"){
+    const portal=(Object.entries(portalOidcClients).find(([,client])=>client===params.get("client_id"))?.[0]) as PortalId|undefined;
+    return <main className="identity-stage"><section className="identity-story"><p className="eyebrow">AURA · academic workspace</p><h1>{portal?portalDefinitions[portal].name:"Account sign-in"}</h1><p>Courses, progress and student support in one connected workspace.</p></section><section className="identity-card"><h2>Sign in</h2>{error?<p className="form-error" role="alert">{error==="rate_limited"?"Too many sign-in attempts. Wait a few seconds and try again.":"Sign-in could not be completed. Check your account details or restart from the portal."}</p>:null}{portal?<form action={`/api/institution/sign-in?${params.toString()}`} method="post"><label htmlFor="college-email">Account email</label><input id="college-email" name="email" type="email" autoComplete="username" data-action-id="identity-college-email" required/><label htmlFor="college-password">Password</label><input id="college-password" name="password" type="password" autoComplete="current-password" minLength={10} data-action-id="identity-college-password" required/><button type="submit" data-action-id="identity-college-sign-in">Sign in</button></form>:<p>Open your assigned portal to start sign-in.</p>}<p>Access follows your assigned role and permissions.</p></section></main>;
+  }
   const accounts=demoPersonas.filter(p=>p.clientId===params.get("client_id"));
   const portal=accounts[0]?.portal;const title=portal?portalDefinitions[portal].name:"Sign-in link expired";
   const hint=params.get("login_hint");
@@ -17,7 +22,7 @@ export default async function SignInPage({searchParams}:{searchParams:Promise<Re
       {ordered.length>4?<form action={`/api/demo/sign-in?${params.toString()}`} method="post">
         <input type="hidden" name="persona" value={portal}/>
         <label htmlFor="demo-account">Demo account</label>
-        <select id="demo-account" name="account" defaultValue={ordered[0]?.email} required>
+        <select id="demo-account" name="account" defaultValue={ordered[0]?.email} data-action-id="identity-select-demo-account" required>
           {ordered.map(p=><option key={p.email} value={p.email}>{p.name}{portal==="lms"?` · ${p.label}`:""}</option>)}
         </select>
         <button type="submit" data-action-id="identity-enter-portal">Open portal</button>

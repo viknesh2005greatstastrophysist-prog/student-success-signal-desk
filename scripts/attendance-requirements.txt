@@ -1,0 +1,2 @@
+xlrd==2.0.2
+python-calamine==0.8.2

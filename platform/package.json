@@ -13,18 +13,23 @@
     "build:all": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --import tsx --test tests/*.test.mjs",
     "test:core": "npm run test --workspace=@aura/core-api",
     "test:e2e": "playwright test",
     "db:migrate": "npm run db:migrate --workspace=@aura/core-api",
     "db:reset": "npm run db:reset --workspace=@aura/core-api",
     "start:railway-control-plane": "node scripts/railway-control-plane.mjs",
     "prerequisites": "node scripts/check-prerequisites.mjs",
-    "check": "turbo run lint typecheck build && node --test tests/*.test.mjs && npm run test:core && node scripts/check-prerequisites.mjs",
+    "check": "turbo run lint typecheck build && node --import tsx --test tests/*.test.mjs && npm run test:core && node scripts/check-prerequisites.mjs",
     "chapter11:build": "npm run chapter11:build --workspace=@aura/core-api",
     "initialize:local": "node --env-file=.env.local scripts/initialize-local.mjs",
     "populate:local": "node --env-file=.env.local --import tsx services/core-api/scripts/populate-demo-cohort.ts --apply",
-    "dev:local": "node --env-file=.env.local node_modules/turbo/bin/turbo run dev --parallel --env-mode=loose"
+    "attendance:review": "node --import tsx services/core-api/scripts/serve-college-attendance.ts",
+    "attendance:workflow": "node --env-file=.env.local --import tsx services/core-api/scripts/serve-college-pilot.ts",
+    "dev:local": "node --env-file=.env.local node_modules/turbo/bin/turbo run dev --parallel --env-mode=loose",
+    "project:setup": "node --env-file-if-exists=.env.local scripts/project-runtime.mjs --setup",
+    "project:start": "node --env-file-if-exists=.env.local scripts/project-runtime.mjs",
+    "project:command": "node scripts/project-command.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.0",
@@ -33,10 +38,18 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "auth": "^1.7.2",
+    "embedded-postgres": "18.4.0-beta.17",
     "eslint": "9.39.5",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.3.8",
     "tsx": "4.20.5",
     "turbo": "2.10.12",
     "typescript": "5.9.3"
+  },
+  "overrides": {
+    "sharp": "0.35.5",
+    "source-map-js": "1.2.2",
+    "next": "16.3.8",
+    "brace-expansion@^1.1.7": "1.1.21",
+    "brace-expansion@^5.0.0": "5.0.12"
   }
 }

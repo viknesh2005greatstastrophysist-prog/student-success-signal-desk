@@ -1,3 +1,4 @@
+import { requireHostedCollegeEnvironment } from "@aura/contracts";
 import { z } from "zod";
 
 const schemaName = z.string().regex(/^[a-z][a-z0-9_]{2,62}$/);
@@ -11,14 +12,16 @@ export type CoreConfig = {
   oidcAudience: string;
 };
 
-export function loadCoreConfig(env: NodeJS.ProcessEnv = process.env): CoreConfig {
+export function loadCoreConfig(env: Record<string, string | undefined> = process.env): CoreConfig {
   const databaseUrl = env.DATABASE_URL_UNPOOLED ?? env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error("DATABASE_URL_UNPOOLED or DATABASE_URL is required for database operations");
   }
+  if (env.CORE_IDENTITY_REALM === "project" && (env.AURA_LOCAL_PROJECT !== "1" || new URL(databaseUrl).hostname !== "127.0.0.1" || new URL(databaseUrl).port !== "55432" || new URL(databaseUrl).pathname !== "/aura_project" || env.CORE_DATABASE_SCHEMA !== "aura_project_core")) throw new Error("Project data requires its dedicated local PostgreSQL schema");
 
+  if(env.CORE_IDENTITY_REALM === "college-project" || env.AURA_HOSTED_COLLEGE_PROJECT === "1" || env.CORE_DATABASE_SCHEMA?.startsWith("aura_hosted_project_")) requireHostedCollegeEnvironment(env);
   const databaseSchema = schemaName.parse(env.CORE_DATABASE_SCHEMA ?? "aura_core");
-  const production = env.NODE_ENV === "production";
+  const production = env.NODE_ENV === "production" && env.AURA_LOCAL_PROJECT !== "1";
 
   return {
     databaseUrl,

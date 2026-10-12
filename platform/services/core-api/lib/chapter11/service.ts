@@ -1,20 +1,23 @@
+import { isCollegeProject } from "@aura/contracts";
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
 import { lmsEvidence } from "../lms-queries";
-import { withCoreTransaction } from "../db";
+import { withCoreSnapshot, withCoreTransaction } from "../db";
 import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
 import { ConflictError, NotFoundError } from "../http";
-import { AuthorizationError, requireRole } from "../security";
+import { AuthorizationError, requireRole, requireDemoInstitution } from "../security";
 import { hashJson } from "../support-commands";
-import { collectSources, compose, DataBlocked, demoPolicy, digest, formatSkill, parallelMap, planInputSchema, planSkill, policySchema, referenceLibrary, retrieve, riskAnalysis, sourceNames, sourceSchema, validateEvidence, type Evidence, type Policy, type Risk, type Source, type SourceName, type Composer, type Reference } from "./engine";
+import { compose, DataBlocked, demoPolicy, digest, formatSkill, parallelMap, planInputSchema, planSkill, policySchema, referenceLibrary, retrieve, riskAnalysis, sourceNames, sourceSchema, validateEvidence, type Evidence, type Policy, type Risk, type Source, type SourceName, type Composer, type Reference } from "./engine";
 import { configuredComposer } from "./provider";
+import { readApprovedCollegeSource } from "../college-normalized";
+import { loadAuthenticatedCollegeSources } from "../college-vault";
 
 type PlanBody = ReturnType<typeof planSkill>;
 type PlanRow = { id: string; generation_id: string; created_by: string; department_id: string; revision: number; status: string; paused: boolean; body: PlanBody; plan_hash: string };
 type Job = { id: string; generation_id: string; plan_id: string; student_id: string; faculty_person_id: string; status: string; stage: string; checkpoint: Checkpoint; lease_token: string; support_case_id: string | null };
-type Checkpoint = { evidence?: Evidence; capturedAt?: string; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy };
+type Checkpoint = { evidence?: Evidence; evidenceRevision?: string; capturedAt?: string; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy };
 
 async function audit(client: PoolClient, generation: string, actor: ActorContext, subject: string, event: string, input: unknown, output: unknown) {
   await client.query("INSERT INTO ch11_events(id,generation_id,subject_id,actor_person_id,event_type,input_hash,output_hash,detail) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)", [randomUUID(), generation, subject, actor.personId, event, digest(input), digest(output), JSON.stringify({ input, output })]);
@@ -60,11 +63,11 @@ export async function approvePolicy(actor: ActorContext, raw: unknown, commandId
     const prior = await client.query<{ faculty_person_id: string; policy: Policy; rationale: string }>("SELECT faculty_person_id,policy,rationale FROM ch11_policies WHERE id=$1 AND generation_id=$2", [id, generation]);
     if (prior.rowCount) {
       if (prior.rows[0]!.faculty_person_id !== owner || digest({ policy: prior.rows[0]!.policy, rationale: prior.rows[0]!.rationale }) !== digest({policy:input.policy,rationale:input.rationale})) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This command already approved a different policy");
-      return { id, ...input, synthetic: true };
+      return { id, ...input, synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
     }
     await client.query("INSERT INTO ch11_policies(id,generation_id,department_id,faculty_person_id,policy,rationale) VALUES($1,$2,$3,$4,$5::jsonb,$6)", [id, generation, actor.departmentId, owner, JSON.stringify(input.policy), input.rationale]);
-    await audit(client, generation, actor, id, "policy.approved", input, { id, synthetic: true });
-    return { id, ...input, synthetic: true };
+    await audit(client, generation, actor, id, "policy.approved", input, { id, synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" });
+    return { id, ...input, synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
   });
 }
 
@@ -132,6 +135,16 @@ export async function lockPlan(actor: ActorContext, id: string, expectedRevision
 
 /** The only four-source access surface used by Chapter 11 workers. */
 export async function readSource(actor: ActorContext, studentId: string, source: SourceName): Promise<Source> {
+  if (process.env.CORE_IDENTITY_REALM === "institutional") {
+    z.string().uuid().parse(studentId); z.enum(sourceNames).parse(source);
+    if (source === "lms") {
+      const scope = await loadAuthenticatedCollegeSources(actor);
+      if (!scope.students.some(s => s.id === studentId)) throw new AuthorizationError("LMS source is outside the current college assignment");
+      const native = await withCoreTransaction(async client => lmsEvidence(client, await getCurrentGeneration(client), studentId));
+      if (native.state === "present") return native;
+    }
+    return readApprovedCollegeSource(actor, studentId, source);
+  }
   z.string().uuid().parse(studentId);
   z.enum(sourceNames).parse(source);
   return withCoreTransaction(async client => {
@@ -156,11 +169,19 @@ export async function readSource(actor: ActorContext, studentId: string, source:
     const attendance = records.rows.filter(r => r.kind === "attendance");
     const marks = records.rows.filter(r => r.kind === "mark");
     const average = (rows: typeof records.rows) => rows.reduce((sum, r) => sum + Number(r.value), 0) / rows.length;
-    return sourceSchema.parse({ source, studentId, recordId: records.rows.map(r => r.record_id).sort().join(",") || "missing", observedAt: records.rows.length ? new Date(Math.max(...records.rows.map(r => new Date(r.observed_at).getTime()))).toISOString() : new Date().toISOString(), semester: "2026-ODD", state: attendance.length && marks.length ? "present" : "missing", synthetic: true, values: { ...(attendance.length ? { attendancePct: average(attendance) } : {}), ...(marks.length ? { markPct: average(marks) } : {}) } });
+    const lineage: Record<string,string|number|boolean> = {};
+    if(isCollegeProject()) {
+      const raw = await client.query<{dataset_hash:string;student: {reports:Array<{sourceId:string;courses:unknown[]}>}}>("SELECT d.dataset_hash,student FROM project_dataset d CROSS JOIN LATERAL jsonb_array_elements(d.review->'students') student WHERE d.id=$1 AND student->>'id'=$2",[generation,studentId]);
+      if(!raw.rowCount)throw new DataBlocked(["Original college source identity is missing from the project dataset"]);
+      const original=raw.rows[0]!;
+      Object.assign(lineage,{origin:"generated_project_operations",collegeDatasetHash:original.dataset_hash,rawSourceValueCount:original.student.reports.reduce((n,r)=>n+r.courses.length,0),rawSourceHashes:[...new Set(original.student.reports.map(r=>r.sourceId))].join(","),rawSourceDefinitionsKnown:false});
+    }
+    return sourceSchema.parse({ source, studentId, recordId: records.rows.map(r => r.record_id).sort().join(",") || "missing", observedAt: records.rows.length ? new Date(Math.max(...records.rows.map(r => new Date(r.observed_at).getTime()))).toISOString() : new Date().toISOString(), semester: "2026-ODD", state: attendance.length && marks.length ? "present" : "missing", synthetic: true, values: { ...(attendance.length ? { attendancePct: average(attendance) } : {}), ...(marks.length ? { markPct: average(marks) } : {}),...lineage } });
   });
 }
 
 export async function seedChapterSources(actor: ActorContext) {
+  requireDemoInstitution();
   requireRole(actor, "governance");
   return withCoreTransaction(async client => {
     const generation = await getCurrentGeneration(client);
@@ -210,8 +231,8 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
     const evidence = { ...cp.evidence, assignedFacultyPersonId: job.faculty_person_id, planId: plan.id, planHash: plan.plan_hash, domain: plan.body.domain, policy: cp.policy, risk: cp.risk, retrieval: cp.retrieval, chapterJobId: job.id };
     const inputHash = hashJson(evidence), contentHash = hashJson(cp.composed.packet);
     await client.query("INSERT INTO support_cases(id,generation_id,student_id,source,status,risk_band,reason) VALUES($1,$2,$3,$4,'awaiting_faculty',$5,$6)", [caseId, job.generation_id, job.student_id, `chapter11:${plan.id}`, cp.risk.band, reason]);
-    const revision = await client.query<{ revision: string }>("SELECT revision::text FROM institution_revisions WHERE singleton=true");
-    await client.query("INSERT INTO evidence_snapshots(id,generation_id,support_case_id,institution_revision,input_hash,evidence) VALUES($1,$2,$3,$4,$5,$6::jsonb)", [snapshotId, job.generation_id, caseId, revision.rows[0]!.revision, inputHash, JSON.stringify(evidence)]);
+    if(!cp.evidenceRevision)throw new ConflictError("EVIDENCE_REVISION_REQUIRED","Recollect evidence before publishing this resumed job");
+    await client.query("INSERT INTO evidence_snapshots(id,generation_id,support_case_id,institution_revision,input_hash,evidence) VALUES($1,$2,$3,$4,$5,$6::jsonb)", [snapshotId, job.generation_id, caseId, cp.evidenceRevision, inputHash, JSON.stringify(evidence)]);
     await client.query("INSERT INTO agent_runs(id,generation_id,support_case_id,evidence_snapshot_id,mode,model_id,status,completed_at) VALUES($1,$2,$3,$4,$5,$6,'validated',now())", [runId, job.generation_id, caseId, snapshotId, cp.composed.mode, cp.composed.modelId]);
     await client.query("INSERT INTO agent_artifacts(id,generation_id,agent_run_id,artifact_version,content_hash,recommendation,validation) VALUES($1,$2,$3,1,$4,$5::jsonb,$6::jsonb)", [artifactId, job.generation_id, runId, contentHash, JSON.stringify(cp.composed.packet), JSON.stringify({ ...cp.composed.validation, policyVersion: cp.policy!.version, chapter11: true })]);
     await client.query("UPDATE ch11_jobs SET status='awaiting_faculty',stage='complete',support_case_id=$2,lease_until=NULL,updated_at=now() WHERE id=$1", [job.id, caseId]);
@@ -244,11 +265,19 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
     if (!job) return { id, skipped: true };
     try {
       await ensureReviewRunning(actor,planId);
-      if (!job.checkpoint.evidence) {
-        const evidence = await collectSources({ read: (student, source) => readSource(actor, student, source) }, job.student_id);
-        const capturedAt = new Date().toISOString();
-        validateEvidence(evidence, job.student_id, initial.policy, capturedAt, "2026-ODD");
-        await saveCheckpoint(actor, job, "risk", { evidence, capturedAt, policy: initial.policy });
+      if (!job.checkpoint.evidence || !job.checkpoint.evidenceRevision) {
+        // Holding the revision row prevents ordinary domain writes from committing
+        // while the four collectors read. The lock is released before model work.
+        const capture=await withCoreSnapshot(async client=>{
+          const revision=await client.query<{revision:string}>("SELECT revision::text FROM institution_revisions WHERE singleton=true FOR SHARE");
+          const evidence={} as Evidence;
+          for(const source of sourceNames) evidence[source]=await readSource(actor,job.student_id,source);
+          return {evidence,evidenceRevision:revision.rows[0]!.revision,capturedAt:new Date().toISOString()};
+        });
+        const {evidence,capturedAt}=capture;
+        validateEvidence(evidence, job.student_id, initial.policy, capturedAt, evidence.academic.semester);
+        job.checkpoint={};
+        await saveCheckpoint(actor, job, "risk", { ...capture, policy: initial.policy });
       }
       await ensureReviewRunning(actor,planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
@@ -297,9 +326,9 @@ export async function overview(actor: ActorContext) {
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
-    const jobs = await client.query("SELECT j.id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
+    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends=await client.query("SELECT date_trunc('day',j.created_at)::date::text AS day,count(*)::int AS reviewed FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) GROUP BY 1 ORDER BY 1",[generation,department]);
-    return { trends:trends.rows, students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: true };
+    return { trends:trends.rows, students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
   });
 }
 
@@ -308,7 +337,7 @@ export async function exportPlan(actor: ActorContext, id: string) {
     const plan = await getPlan(client, actor, id);
     const jobs = await client.query("SELECT * FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 ORDER BY student_id", [id, plan.generation_id]);
     const events = await client.query("SELECT * FROM ch11_events WHERE generation_id=$1 AND (subject_id=$2 OR subject_id IN (SELECT id FROM ch11_jobs WHERE plan_id=$2)) ORDER BY created_at,id", [plan.generation_id, id]);
-    return { schemaVersion: 1, synthetic: true, plan, jobs: jobs.rows, events: events.rows, exportedAt: new Date().toISOString() };
+    return { schemaVersion: 1, synthetic: process.env.CORE_IDENTITY_REALM !== "institutional", plan, jobs: jobs.rows, events: events.rows, exportedAt: new Date().toISOString() };
   });
 }
 

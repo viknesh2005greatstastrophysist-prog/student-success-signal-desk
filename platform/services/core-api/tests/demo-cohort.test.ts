@@ -15,6 +15,7 @@ test("Additive demo cohort: three scoped mentors, populated records, durable edi
   try {
     await migrateCoreDatabase();
     const seed=await resetSyntheticSeed("AURA-SYNTHETIC-SEED-V1","cohort-integration");
+    await withCoreTransaction(c=>c.query("UPDATE registration_windows SET status='open',opens_at=now()-interval '1 day',closes_at=now()+interval '1 day'"));
     const result=await populateDemoCohort(message=>console.log(message));
     assert.equal(result.generation,seed.generationId);
     assert.equal(result.students.length,10);

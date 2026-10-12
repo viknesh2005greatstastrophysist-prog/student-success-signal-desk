@@ -140,11 +140,15 @@ export const portalViewRoutes = {
 
 const chapter11PlanningActions = ["refresh", "request", "domain", "policy", "mode", "student", "feedback", "save", "new", "revise", "lock", "execute", "export"];
 export const chapter11ActionNames = {
-  faculty: [...chapter11PlanningActions, "policy-open", "policy-field", "policy-reason", "policy-approve", "edit-summary", "edit-due", "edit-reason", "edit-save", "outcome-status", "outcome-note", "outcome-save"],
-  governance: [...chapter11PlanningActions, "seed"],
+  faculty: [...chapter11PlanningActions, "policy-open", "policy-field", "policy-reason", "policy-approve", "edit-summary", "edit-due", "edit-reason", "edit-save", "approve-draft", "reject-draft", "outcome-status", "outcome-note", "outcome-save"],
+  governance: [...chapter11PlanningActions, "seed", "replay"],
   hod: ["refresh", "export"],
 };
 export const actionManifest: readonly ActionContract[] = [
+  { id: "identity-college-email", portal: "identity", type: "form", destination: "Institutional sign-in form" },
+  { id: "identity-college-password", portal: "identity", type: "form", destination: "Institutional sign-in form" },
+  { id: "identity-college-sign-in", portal: "identity", type: "command", destination: "/api/institution/sign-in" },
+  { id: "identity-select-demo-account", portal: "identity", type: "form", destination: "Demonstration account selection" },
   { id: "identity-restart-login", portal: "identity", type: "navigate", destination: "Registered portal homepage" },
   ...(["faculty", "governance", "hod"] as const).flatMap(portal => chapter11ActionNames[portal].map(name => ({ id: `${portal}-ch11-${name}`, portal, type: "form" as const, destination: "/api/bff/chapter11" }))),
   { id: "identity-open-discovery", portal: "identity", type: "navigate", destination: "/api/auth/.well-known/openid-configuration" },
@@ -305,3 +309,5 @@ export const experienceViewRoutes = {
   hod: {Home:"/dashboard",Faculty:"/faculty",Students:"/students","Courses & timetables":"/courses","AI activity":"/ai"},
   governance: {Overview:"/dashboard",Reviews:"/reviews",History:"/history"},
 } as const;
+
+export { hostedCollegeSchemas, requireHostedCollegeEnvironment, isCollegeProject } from "./hosted-college";

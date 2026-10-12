@@ -23,7 +23,7 @@ const localOrigins: Record<PortalId, string> = {
 };
 
 function settings(portal: PortalId) {
-  const production = process.env.NODE_ENV === "production";
+  const production = process.env.NODE_ENV === "production" && process.env.AURA_LOCAL_PROJECT !== "1";
   return {
     clientId: portalOidcClients[portal],
     origin: production ? process.env.PORTAL_ORIGIN ?? productionOrigins[portal] : process.env.LOCAL_PORTAL_ORIGIN ?? localOrigins[portal],
@@ -211,6 +211,13 @@ export async function portalDashboard(request: Request, portal: PortalId) {
     cache: "no-store",
   });
   return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "X-CSRF-Token": session.csrfToken } });
+}
+
+export async function portalCollegeSources(request: Request, portal: PortalId) {
+  const session = await readSession(request, portal);
+  if (!session) return Response.json({ ok: false, error: { code: "UNAUTHENTICATED", message: "Sign in to continue" } }, { status: 401 });
+  const response = await fetch(`${settings(portal).coreUrl}/api/v1/college-sources`, { headers: { Authorization: `Bearer ${session.accessToken}` }, cache: "no-store" });
+  return new Response(response.body, { status: response.status, headers: { "Content-Type": "application/json", "Cache-Control": "private, no-store", "X-CSRF-Token": session.csrfToken, "X-Content-Type-Options": "nosniff" } });
 }
 
 export async function portalPublishAndAssign(request: Request, portal: PortalId, offeringId: string) {

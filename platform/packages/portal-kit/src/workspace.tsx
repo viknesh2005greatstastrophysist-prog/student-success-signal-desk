@@ -15,11 +15,13 @@ import {
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: { code: string; message: string } };
+export type PortalRecordMode = "demo" | "college" | "project";
 export function usePortalApi<T>(path: string) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [pending, setPending] = useState(false);
+  const [csrfToken, setCsrfToken] = useState("");
   const pendingCount = useRef(0);
   const csrf = useRef("");
   const requestVersion = useRef(0);
@@ -27,7 +29,10 @@ export function usePortalApi<T>(path: string) {
   const read = useCallback(async <R,>(url: string): Promise<R> => {
     const response = await fetch(url, { cache: "no-store" });
     const token = response.headers.get("x-csrf-token");
-    if (token) csrf.current = token;
+    if (token) {
+      csrf.current = token;
+      setCsrfToken(token);
+    }
     if (response.status === 401) {
       setSignedOut(true);
       throw new Error("Your session ended. Sign in again.");
@@ -121,6 +126,7 @@ export function usePortalApi<T>(path: string) {
     setError,
     signedOut,
     pending,
+    csrfToken,
     read,
     command,
     refresh,
@@ -144,6 +150,7 @@ export function Workspace({
   onSignOut,
   viewer,
   children,
+  recordMode = "demo",
 }: {
   portal: PortalId;
   sections: string[];
@@ -152,6 +159,7 @@ export function Workspace({
   onSignOut: () => void;
   viewer?: string;
   children: ReactNode;
+  recordMode?: PortalRecordMode;
 }) {
   return (
     <div className="workspace" data-portal={portal}>
@@ -165,7 +173,13 @@ export function Workspace({
         </div>
         <div className="workspace-tools">
           {viewer ? <span className="viewer-name">{viewer}</span> : null}
-          <span className="demo-label">Project demo</span>
+          <span className="demo-label">
+            {recordMode === "project"
+              ? "College workspace"
+              : recordMode === "college"
+                ? "Private college records"
+                : "Project demo"}
+          </span>
           <button className="quiet" onClick={onSignOut}>
             Sign out
           </button>
@@ -185,6 +199,9 @@ export function Workspace({
               </button>
             ))}
           </nav>
+          {recordMode !== "demo" ? (
+            <a href="/college-records">College source records</a>
+          ) : null}
           <details className="portal-links">
             <summary>Other portals</summary>
             {Object.entries(portalDefinitions)
@@ -196,7 +213,11 @@ export function Workspace({
               ))}
           </details>
           <p className="sidebar-note">
-            Fictional records for the student-support project.
+            {recordMode === "project"
+              ? "Your role determines which college records you can access."
+              : recordMode === "college"
+                ? "Verified account scope. Source definitions remain unknown."
+                : "Fictional records for the student-support project."}
           </p>
         </aside>
         <main id="workspace-main" className="workspace-main">
@@ -258,15 +279,23 @@ export function Empty({
 export function PortalEntry({
   portal,
   description,
+  recordMode = "demo",
 }: {
   portal: PortalId;
   description: string;
+  recordMode?: PortalRecordMode;
 }) {
   return (
     <main className="entry-page">
       <div className="workspace-brand">
         <b>AURA</b>
-        <span>Project demonstration</span>
+        <span>
+          {recordMode === "project"
+            ? "College portal"
+            : recordMode === "college"
+              ? "College portal"
+              : "Project demonstration"}
+        </span>
       </div>
       <section>
         <p className="eyebrow">{portalDefinitions[portal].name}</p>
@@ -280,14 +309,24 @@ export function PortalEntry({
           className="primary button-link"
           href={`/api/session/login?returnTo=${encodeURIComponent(typeof window !== "undefined" && window.location.pathname !== "/" ? window.location.pathname + window.location.search : "/dashboard")}`}
         >
-          Open {portal === "lms" ? "LMS" : "portal"}
+          {recordMode === "project"
+            ? "Sign in"
+            : `Open ${portal === "lms" ? "LMS" : "portal"}`}
         </a>
         <small>
-          No password needed. Choose a demo account on the next screen.
+          {recordMode === "project"
+            ? "Sign in with your college account."
+            : recordMode === "college"
+              ? "Use your provisioned college identity on the next screen."
+              : "No password needed. Choose a demo account on the next screen."}
         </small>
       </section>
       <footer>
-        Fictional people and records · AURA student-support project
+        {recordMode === "project"
+          ? "Your role determines which records you can access."
+          : recordMode === "college"
+            ? "Access follows your verified college assignments."
+            : "Fictional people and records · AURA student-support project"}
       </footer>
     </main>
   );

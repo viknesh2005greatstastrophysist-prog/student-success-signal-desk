@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>College academic records | AURA</title>
+  <link rel="stylesheet" href="/review.css">
+  <script src="/review.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to records</a>
+  <header><b>AURA <span>College records</span></b><span>Read-only · This computer</span></header>
+  <main id="main">
+    <div class="intro"><p class="eyebrow">COLLEGE SOURCE REPORTS</p><h1>College academic records</h1><p>Find a student and check attendance and available CIE records in their college reports.</p></div>
+    <p id="loading" role="status">Loading the college records…</p>
+    <section id="content" hidden>
+      <div class="notice"><strong>Dates and units still need checking.</strong><p>Values are shown exactly as recorded. We cannot yet treat them as percentages or use them to flag students who need help.</p></div>
+      <div id="metrics" class="metrics" aria-label="Import summary"></div>
+      <details class="explanation"><summary>What do the recorded values mean?</summary><p>The attendance reports do not define 0, NA and TNS. The final CIE report uses a dash for many entries, also without a definition. These values remain separate. Reporting periods are unknown. A report-generation date does not establish an academic period.</p><p>Available CIE marks, eligibility tokens, course titles and credits are shown as recorded. Maximum marks and eligibility rules have not been supplied. These files do not provide class-by-class attendance, LMS activity or mentor assignments. Student support reviews need that evidence too.</p><p id="permission"></p></details>
+      <nav id="workspace-nav" hidden aria-label="Private project areas"><button id="show-records">Source records</button><button id="show-workflow">Agent workflow</button></nav>
+      <section id="workflow" hidden aria-labelledby="workflow-heading">
+        <h2 id="workflow-heading" tabindex="-1">Agent workflow</h2>
+        <p>Prepare and review a clarification checklist from the imported records. Source meanings remain unknown. Accepting a checklist does not approve student support or establish faculty sign-off.</p>
+        <div class="workflow-controls"><label>Suggestion method<select id="workflow-mode"><option value="model">Local language model</option><option value="deterministic">Rules only</option></select></label><button id="workflow-start">Prepare full cohort</button><button id="workflow-continue">Continue processing</button><button id="workflow-pause">Pause processing</button><button id="workflow-refresh">Refresh status</button></div>
+        <p id="workflow-status" role="status"></p><p id="workflow-method"></p><p id="workflow-audit"></p>
+        <div class="filters"><label>Checklist status<select id="workflow-filter"><option value="">All statuses</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="awaiting_review">Awaiting local review</option><option value="approved">Accepted clarification checklist</option><option value="rejected">Returned for review</option><option value="withdrawn">Withdrawn checklist</option><option value="failed">Failed</option></select></label><label>Find a student in this run<input id="workflow-search" type="search" placeholder="Name or SRN" autocomplete="off"></label></div>
+        <p id="workflow-results"></p><div class="table-wrap" tabindex="0" role="region" aria-label="Agent review queue"><table><thead><tr><th scope="col">Student</th><th scope="col">Status</th><th scope="col">Stage</th><th scope="col">Review</th></tr></thead><tbody id="workflow-jobs"></tbody></table></div>
+        <nav class="pagination" aria-label="Agent queue pages"><button id="workflow-previous">Previous</button><span id="workflow-page"></span><button id="workflow-next">Next</button></nav>
+        <article id="workflow-case" hidden>
+          <h3 id="workflow-case-heading" tabindex="-1"></h3><p id="workflow-case-status"></p><p id="workflow-case-method"></p>
+          <div class="notice"><strong>Student risk: unknown. Student publication: blocked.</strong><p id="workflow-unknowns"></p></div>
+          <h4>Source-linked observations</h4><ul id="workflow-facts"></ul>
+          <h4>Clarification checklist</h4><p>Change the order if useful. Every required question stays in the checklist.</p><ol id="workflow-tasks"></ol>
+          <label>Review or follow-up note<textarea id="workflow-note" rows="3" placeholder="Explain your local project review. Avoid unnecessary personal details."></textarea></label>
+          <div class="workflow-controls"><button id="workflow-edit">Save revised order</button><button id="workflow-approve">Accept clarification checklist</button><button id="workflow-reject">Return for review</button><button id="workflow-withdraw">Withdraw checklist</button><button id="workflow-restore">Restore accepted checklist</button><button id="workflow-retry">Retry failed collection</button></div>
+          <fieldset id="workflow-followup"><legend>Record clarification progress</legend><label>Question<select id="workflow-task-code"></select></label><label>Progress<select id="workflow-task-status"><option value="in_progress">In progress</option><option value="response_recorded">Response recorded for verification</option></select></label><button id="workflow-record-followup">Record progress</button><p>Recording a response does not change the source definitions or remove the data block.</p></fieldset>
+          <div class="workflow-controls"><button id="workflow-replay">Verify frozen-source replay</button><button id="workflow-export">Download private case</button></div>
+          <p id="workflow-action-status" role="status"></p><details><summary>Stages, decisions and saved history</summary><ol id="workflow-events"></ol></details>
+        </article>
+      </section>
+      <section id="directory" aria-labelledby="students-heading">
+        <h2 id="students-heading">Find a student</h2>
+        <div class="filters"><label>Semester and section<select id="report"><option value="">All reports</option></select></label><label>Student name or SRN<input id="search" type="search" placeholder="Type a name or SRN" autocomplete="off"></label></div>
+        <p id="results" role="status"></p>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="Student records"><table><thead><tr><th scope="col">Student</th><th scope="col">SRN</th><th scope="col">Reports</th><th scope="col">Record</th></tr></thead><tbody id="students"></tbody></table></div>
+        <nav class="pagination" aria-label="Results pages"><button id="previous">Previous</button><span id="page"></span><button id="next">Next</button></nav>
+      </section>
+      <section id="student" hidden aria-labelledby="student-name"><button id="back">← Back to students</button><h2 id="student-name" tabindex="-1"></h2><p id="student-srn"></p><p>Recorded values. Units unconfirmed. No overall attendance or risk score has been calculated.</p><div id="student-reports"></div></section>
+    </section>
+    <footer>College source review · Local import · AURA Student Success</footer>
+  </main>
+</body>
+</html>

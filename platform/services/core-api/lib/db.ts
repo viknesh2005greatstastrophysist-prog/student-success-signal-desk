@@ -1,7 +1,9 @@
 import { Pool, type PoolClient } from "pg";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { loadCoreConfig, quoteIdentifier } from "./config";
 
 let pool: Pool | undefined;
+const snapshotClient = new AsyncLocalStorage<PoolClient>();
 
 export function getPool(): Pool {
   if (!pool) {
@@ -21,6 +23,8 @@ export async function withCoreTransaction<T>(
   work: (client: PoolClient) => Promise<T>,
   mode: "shared" | "exclusive" = "shared",
 ): Promise<T> {
+  const nested=snapshotClient.getStore();
+  if(nested){if(mode==="exclusive")throw new Error("Exclusive operations cannot run inside source capture");return work(nested);}
   const client = await getPool().connect();
   const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
   try {
@@ -38,6 +42,12 @@ export async function withCoreTransaction<T>(
   } finally {
     client.release();
   }
+}
+
+/** Nested read collectors share a short transaction, avoiding pool starvation
+ * while holding the institution revision lock. Model work happens afterwards. */
+export async function withCoreSnapshot<T>(work:(client:PoolClient)=>Promise<T>):Promise<T>{
+  return withCoreTransaction(client=>snapshotClient.run(client,()=>work(client)));
 }
 
 export async function closePool(): Promise<void> {

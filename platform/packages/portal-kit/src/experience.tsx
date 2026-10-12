@@ -23,6 +23,7 @@ import {
   usePortalApi,
   portalUrl,
   dateTime,
+  type PortalRecordMode,
 } from "./workspace";
 import {
   CourseManager,
@@ -31,6 +32,7 @@ import {
   StudentControls,
 } from "./management";
 import { AiWorkspace, SupportReviews } from "./reviews";
+import { Chapter11Workbench } from "./chapter11";
 type EverydayPortal = Exclude<PortalId, "lms">;
 export type SaveChange = (input: unknown) => Promise<boolean>;
 export function Field({
@@ -208,7 +210,7 @@ export function SupportText({ plan }: { plan: Record<string, unknown> }) {
                 ) : null}
                 {typeof a.owner === "string" ? (
                   <small>
-                    With:{" "}
+                    {" · With: "}
                     {a.owner === "assigned_faculty" ? "Your mentor" : a.owner}
                   </small>
                 ) : null}
@@ -221,10 +223,16 @@ export function SupportText({ plan }: { plan: Record<string, unknown> }) {
   );
 }
 
-export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
+export function ExperiencePortal({ portal, recordMode = "demo" }: { portal: EverydayPortal; recordMode?: PortalRecordMode }) {
   const api = usePortalApi<ExperienceOverview>("/api/bff/experience/overview");
   const routes = experienceViewRoutes[portal] as Record<string, string>;
-  const sections = useMemo(() => Object.keys(routes), [routes]);
+  const sections = useMemo(
+    () =>
+      portal === "governance" && recordMode === "project"
+        ? ["Reviews"]
+        : Object.keys(routes),
+    [portal, recordMode, routes],
+  );
   const [section, setSection] = useState(sections[0]!);
   const [selected, setSelected] = useState("");
   const [classId, setClassId] = useState("");
@@ -232,7 +240,7 @@ export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
   useEffect(() => {
     const sync = () => {
       setSection(
-        Object.keys(routes).find(
+        sections.find(
           (key) => routes[key] === window.location.pathname,
         ) ?? sections[0]!,
       );
@@ -270,6 +278,7 @@ export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
     return (
       <PortalEntry
         portal={portal}
+        recordMode={recordMode}
         description={
           portal === "faculty"
             ? "See your classes, find students who need help, and record the next step."
@@ -305,7 +314,17 @@ export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
         : selected;
   let content: ReactNode;
   if (portal === "governance")
-    content = <AiWorkspace section={section} actorRole={data.actor.role} />;
+    content =
+      recordMode === "project" ? (
+        <Chapter11Workbench
+          role="governance"
+          csrfToken={api.csrfToken}
+          refresh={api.refresh}
+          project
+        />
+      ) : (
+        <AiWorkspace section={section} actorRole={data.actor.role} />
+      );
   else if (portal === "student" && section === "Course registration")
     content = (
       <Registration
@@ -341,6 +360,7 @@ export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
         data={data}
         portal={portal}
         navigate={navigate}
+        recordMode={recordMode}
       />
     ) : (
       <Empty title="No linked student">
@@ -377,13 +397,24 @@ export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
           data={data}
           portal={portal}
           navigate={navigate}
+          recordMode={recordMode}
         />
       </>
     ) : (
       <StudentDirectory data={data} open={(id) => navigate(section, id)} />
     );
   else if (portal === "faculty" && section === "Support & follow-ups")
-    content = <SupportReviews data={data} onRefresh={api.refresh} />;
+    content =
+      recordMode === "project" ? (
+        <Chapter11Workbench
+          role="faculty"
+          csrfToken={api.csrfToken}
+          refresh={api.refresh}
+          project
+        />
+      ) : (
+        <SupportReviews data={data} onRefresh={api.refresh} />
+      );
   else if (portal === "hod" && section === "Faculty")
     content = (
       <FacultyDirectory data={data} save={save} pending={api.pending} />
@@ -395,6 +426,15 @@ export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
         save={save}
         pending={api.pending}
         openClass={setClassId}
+      />
+    );
+  else if (portal === "hod" && section === "AI activity" && recordMode === "project")
+    content = (
+      <Chapter11Workbench
+        role="hod"
+        csrfToken={api.csrfToken}
+        refresh={api.refresh}
+        project
       />
     );
   else if (portal === "hod" && section === "AI activity")
@@ -488,6 +528,7 @@ export function ExperiencePortal({ portal }: { portal: EverydayPortal }) {
   return (
     <Workspace
       portal={portal}
+      recordMode={recordMode}
       sections={sections}
       current={section}
       onNavigate={navigate}
@@ -811,12 +852,14 @@ export function StudentRecord({
   data,
   portal,
   navigate,
+  recordMode = "demo",
 }: {
   id: string;
   section: string;
   data: ExperienceOverview;
   portal: Exclude<PortalId, "lms" | "governance">;
   navigate: (section: string, student?: string) => void;
+  recordMode?: PortalRecordMode;
 }) {
   const api = usePortalApi<StudentDetail>(`/api/bff/experience/students/${id}`);
   const [tab, setTab] = useState("Progress");
@@ -967,7 +1010,9 @@ export function StudentRecord({
                   title="Fees & receipts"
                   onClick={() => navigate("Fees & receipts", id)}
                 >
-                  Check dues and download demo receipts.
+                  {recordMode === "project"
+                    ? "Check due amounts and view payment receipts."
+                    : "Check dues and download demo receipts."}
                 </Jump>
                 <Jump
                   title="Mentor updates"
@@ -1009,7 +1054,11 @@ export function StudentRecord({
           {record.grants.includes("fees") ? (
             <>
               <h2>Fees & receipts</h2>
-              <Notice>Demo payments only. No money is charged.</Notice>
+              <Notice>
+                {recordMode === "project"
+                  ? "Payment attempts run in a test environment. No money is collected."
+                  : "Demo payments only. No money is charged."}
+              </Notice>
               {record.invoices.length ? (
                 record.invoices.map((invoice) => (
                   <article className="panel" key={invoice.id}>
@@ -1034,6 +1083,7 @@ export function StudentRecord({
                       />
                     </div>
                     {portal === "parent" &&
+                    invoice.payment_simulation_allowed !== false &&
                     ["due", "partial"].includes(invoice.status) ? (
                       <button
                         className="primary"
@@ -1049,12 +1099,16 @@ export function StudentRecord({
                           if (result) {
                             await api.refresh();
                             setMessage(
-                              "Demo payment recorded. Your receipt is ready.",
+                              recordMode === "project"
+                                ? "Payment recorded. Your receipt is ready."
+                                : "Demo payment recorded. Your receipt is ready.",
                             );
                           }
                         }}
                       >
-                        Record demo payment of{" "}
+                        {recordMode === "project"
+                          ? "Record payment of "
+                          : "Record demo payment of "}
                         {money(invoice.amount_paise - invoice.paid_paise)}
                       </button>
                     ) : null}
@@ -1072,7 +1126,9 @@ export function StudentRecord({
                                 target="_blank"
                                 rel="noreferrer"
                               >
-                                Download demo receipt
+                                {recordMode === "project"
+                                  ? "Download receipt"
+                                  : "Download demo receipt"}
                               </a>
                             ) : null}
                           </li>
@@ -1104,8 +1160,15 @@ export function StudentRecord({
                   <p>
                     <b>{record.mentor.name}</b>
                   </p>
-                  <p>{record.mentor.email}</p>
-                  <small>This is a demonstration contact address.</small>
+                  {recordMode === "project" &&
+                  record.mentor.email.endsWith(".invalid") ? (
+                    <small>Contact details are not available.</small>
+                  ) : (
+                    <p>{record.mentor.email}</p>
+                  )}
+                  {recordMode !== "project" ? (
+                    <small>This is a demonstration contact address.</small>
+                  ) : null}
                 </article>
               ) : null}
               <h2>Confirmed support plans</h2>

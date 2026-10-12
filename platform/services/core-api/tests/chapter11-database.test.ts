@@ -52,12 +52,20 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     await setReviewPaused(faculty,locked.id,{expectedRevision:locked.revision+1,paused:false,reason:"Resume the saved review"});
     const stopped = await executePlan(faculty, locked.id, { stopAfterStage: "risk" });
     assert.equal(stopped.results[0]!.error, "INJECTED_STOP");
+    const capturedRevision=await withCoreTransaction(async client=>(await client.query("SELECT checkpoint->>'evidenceRevision' AS revision FROM ch11_jobs WHERE plan_id=$1",[locked.id])).rows[0]!.revision);
+    assert.ok(capturedRevision);
+    await experienceCommand(faculty,randomUUID(),{action:"save-followup",studentId:student.studentId,dueOn:new Date().toISOString().slice(0,10),note:"Record a follow-up while the captured review is interrupted.",shared:false,status:"planned",outcome:"",reason:"Test evidence capture revision through a domain change and restart"});
     await closePool(); // New connections simulate a process restarting after its checkpoint committed.
     const resumed = await executePlan(faculty, locked.id);
     assert.equal(resumed.results[0]!.completed, true);
     const exported = await exportPlan(faculty, locked.id);
     assert.equal(exported.jobs.length, 1);
     assert.equal(exported.jobs[0]!.status, "awaiting_faculty");
+    await withCoreTransaction(async client=>{
+      const snapshot=(await client.query("SELECT institution_revision::text AS revision FROM evidence_snapshots WHERE support_case_id=$1",[exported.jobs[0]!.support_case_id])).rows[0]!;
+      const currentRevision=(await client.query("SELECT revision::text FROM institution_revisions WHERE singleton=true")).rows[0]!.revision;
+      assert.equal(snapshot.revision,capturedRevision);assert.notEqual(snapshot.revision,currentRevision);
+    });
     assert.ok(exported.events.some(e => e.event_type === "checkpoint.risk"));
     assert.ok(exported.events.some(e => e.event_type === "mentor.interrupt"));
     const duplicate = await executePlan(faculty, locked.id);
