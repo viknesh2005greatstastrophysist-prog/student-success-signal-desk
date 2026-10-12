@@ -6,7 +6,7 @@ This edition uses the supplied college records and generated supporting operatio
 
 The public links are Student `https://aura-student-portal.vercel.app`, Parent `https://aura-parent-portal.vercel.app`, Mentor `https://aura-faculty-portal.vercel.app`, HoD `https://aura-hod-portal.vercel.app`, AI Activity `https://aura-ai-governance.vercel.app` and LMS `https://aura-lms-portal.vercel.app`.
 
-The private login card and exact six-portal presentation steps are in `runtime/hosted-project/PRESENTATION_GUIDE.md`. Student021 and its Family account are paired; Mentor3 is assigned to that student. LMS uses the same Student identity. Old PINless persona entry is disabled. Use separate browser profiles or sign out of Identity when switching roles.
+The private login card and exact six-portal presentation steps are in `runtime/hosted-project/PRESENTATION_GUIDE.md`. Student021 and its Family account are paired; Mentor3 is assigned to that student. LMS uses the same Student identity. Old PINless persona entry is disabled. Each portal requests a fresh account sign-in. Keep the six tabs open and enter the matching credentials.
 
 The current source/deployment map, acceptance and model limitations are in `HOSTED_PROJECT_RELEASE_REPORT.md`. Stored Qwen runs originated locally. A new hosted review can use the validated rule path; activating new cloud model calls requires a funded reachable provider. Gateway returned 403 requiring a card on file.
 
