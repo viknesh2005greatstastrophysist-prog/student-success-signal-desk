@@ -121,10 +121,24 @@ try{
     const replay=operations.getByRole("button",{name:"Verify recorded run",exact:true}).first();await replay.waitFor();
     const [replayed]=await Promise.all([operations.waitForResponse(r=>r.url().endsWith("/replay")&&r.request().method()==="POST"),replay.click()]);
     const verified=await replayed.json();assert.equal(verified.ok,true);assert.equal(verified.data.replay.matched,true);checks.push({journey:"operations UI verifies stored run",passed:true});
+    if(hosted){
+      const planning=await json(faculty,"/api/bff/chapter11/overview");assert.equal(planning.body.ok,true);
+      const selected=cohort.students.find((s,i)=>i>=36&&s.mentorId===cohort.students[studentIndex].mentorId&&i%4===0);assert.ok(selected);
+      const policy=planning.body.data.policies.find(p=>p.faculty_person_id===person.faculty.id);assert.ok(policy);
+      const created=await post(faculty,"/api/bff/chapter11/plans",{request:"Hosted acceptance: review scoped academic support evidence",studentIds:[selected.id],domain:"academic",policyId:policy.id,feedback:"Preserve unknown college source units and require mentor approval.",mode:"deterministic"});assert.equal(created.body.ok,true);
+      const plan=created.body.data;
+      const locked=await post(faculty,`/api/bff/chapter11/plans/${plan.id}/lock`,{expectedRevision:plan.revision});assert.equal(locked.body.ok,true);
+      const ran=await post(faculty,`/api/bff/chapter11/plans/${plan.id}/execute`,{});assert.equal(ran.body.ok,true);assert.ok(ran.body.data.results.every(r=>!r.error));
+      const exported=await json(faculty,`/api/bff/chapter11/plans/${plan.id}/export`);assert.equal(exported.body.ok,true);assert.equal(exported.body.data.jobs.length,1);
+      const job=exported.body.data.jobs[0];assert.equal(job.status,"awaiting_faculty");assert.equal(job.stage,"complete");assert.ok(job.checkpoint.evidenceRevision);assert.deepEqual(Object.keys(job.checkpoint.evidence).sort(),["academic","internship","lms","placement"]);assert.equal(job.checkpoint.composed.validation.valid,true);
+      const repeated=await post(faculty,`/api/bff/chapter11/plans/${plan.id}/execute`,{});assert.equal(repeated.body.ok,true);assert.equal(repeated.body.data.results.length,0);
+      await writeFile(new URL("agent-execution-hosted.json",folder),JSON.stringify({status:"passed",planId:plan.id,jobId:job.id,sourceCount:4,evidenceRevision:job.checkpoint.evidenceRevision,mode:job.checkpoint.composed.mode,validation:job.checkpoint.composed.validation,statusBeforeMentorDecision:job.status,repeatCreatedJobs:0},null,2)+"\n",{mode:0o600});
+      checks.push({journey:"hosted plan, lock, four-source collection, risk, validation, draft and duplicate execution",passed:true});
+    }
     const urlBefore=hod.url();await Promise.all([hod.waitForResponse(r=>r.url().endsWith("/api/session/logout")&&r.request().method()==="POST"),hod.getByRole("button",{name:"Sign out",exact:true}).click()]);assert.notEqual(urlBefore,undefined);const loggedOut=await json(hod,"/api/bff/experience/overview");assert.equal(loggedOut.status,401);checks.push({journey:"logout invalidates portal session",passed:true});
   }
   assert.deepEqual(errors,[]);
   const result={status:"passed",hosted,studentIndex,checks,pageErrors:errors,institutionalAccountsClaimed:false,visualBaseline:"not established",screenReader:"not assessed"};
   await writeFile(new URL(process.argv.includes("--smoke")?"browser-smoke.json":process.argv.includes("--portals-only")?"browser-restart.json":"browser-acceptance.json",folder),JSON.stringify(result,null,2)+"\n",{mode:0o600});console.log(JSON.stringify({status:result.status,checks:checks.length,actualProjectLogins:checks.filter(c=>c.actualProjectOidcLogin).length,pageErrors:errors.length}));
-}catch(error){await writeFile(new URL("browser-failure.json",folder),JSON.stringify({portal:currentPortal,message:error.message,completedChecks:checks},null,2)+"\n",{mode:0o600});console.error(error.message);process.exitCode=1;}finally{await Promise.all(Object.values(contexts).map(c=>c.close()));await browser.close();}
+}catch(error){await writeFile(new URL("browser-failure.json",folder),JSON.stringify({portal:currentPortal,message:error.message.split("\nCall log:")[0],completedChecks:checks},null,2)+"\n",{mode:0o600});console.error(error.message.split("\nCall log:")[0]);process.exitCode=1;}finally{await Promise.all(Object.values(contexts).map(c=>c.close()));await browser.close();}
 function pageDelay(ms){return new Promise(done=>setTimeout(done,ms));}
