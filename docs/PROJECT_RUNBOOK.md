@@ -1,8 +1,16 @@
 # AURA project runbook
 
-This edition uses the supplied college records and generated supporting operations. Everything runs on this computer. Original report units and academic periods remain unknown.
+This edition uses the supplied college records and generated supporting operations. The hosted edition uses the six existing Vercel URLs; a separate private local launcher remains available. Original report units and academic periods remain unknown.
 
-## Start the delivered project
+## Open the hosted project
+
+The public links are Student `https://aura-student-portal.vercel.app`, Parent `https://aura-parent-portal.vercel.app`, Mentor `https://aura-faculty-portal.vercel.app`, HoD `https://aura-hod-portal.vercel.app`, AI Activity `https://aura-ai-governance.vercel.app` and LMS `https://aura-lms-portal.vercel.app`.
+
+The private login card and exact six-portal presentation steps are in `runtime/hosted-project/PRESENTATION_GUIDE.md`. Student021 and its Family account are paired; Mentor3 is assigned to that student. LMS uses the same Student identity. Old PINless persona entry is disabled. Use separate browser profiles or sign out of Identity when switching roles.
+
+The current source/deployment map, acceptance and model limitations are in `HOSTED_PROJECT_RELEASE_REPORT.md`. Stored Qwen runs originated locally. A new hosted review can use the validated rule path; activating new cloud model calls requires a funded reachable provider. Gateway returned 403 requiring a card on file.
+
+## Start the private local project
 
 Requires Node.js 22 or newer, npm, and a supported macOS/Linux/Windows host for the embedded PostgreSQL binary. Run these commands from `platform/`:
 
@@ -50,7 +58,11 @@ Configuration is generated at `runtime/project-final/environment.json`. It conta
 
 Original report source notes preserve unknown meanings. Generated operational percentages are separate records, never inferred from unexplained source cells.
 
-## Verification
+## Hosted verification
+
+From `platform/`, run `node scripts/verify-project.mjs --hosted --student-index=24`. This changes the selected LMS submission, mentor case and project payment, and creates one fresh bounded rule review. Use a different fresh pending case when rerunning the full journey. Keep Student021/index20 for the presentation. Reports/screenshots are private under `runtime/hosted-project/`; call logs are sanitized to omit session cookies.
+
+## Private local verification
 
 ```sh
 node scripts/verify-project.mjs
@@ -62,4 +74,4 @@ Use `npm run check` for lint, type checking, eight application/service builds an
 
 ## Delivery boundaries
 
-The source archive includes the six original workbooks and their parsed private inputs, so keep the entire archive private. It excludes credentials, environment secrets, model weights, node_modules, build output and the current PostgreSQL cluster. Fresh setup creates new credentials and current operational dates. Nothing further is required to run this private edition. Verified institutional access, official report definitions and public hosting remain separate launch inputs.
+The source archive includes the six original workbooks and their parsed private inputs, so keep the entire archive private. It excludes credentials, environment secrets, model weights, node_modules, build output and the current PostgreSQL cluster. Fresh setup creates new credentials and current operational dates. Nothing further is required to run this private edition. Public hosting is now implemented with named-data authorization and individual account logins. Verified institutional mappings and official report definitions remain separate inputs.

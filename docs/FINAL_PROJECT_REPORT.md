@@ -1,13 +1,13 @@
 # AURA: final implementation and operating report
 
-12 October 2026. This is the completed private project edition. It combines the supplied college exports with a generated operational layer and six authenticated workspaces. It has not been publicly deployed or certified by the college.
+12 October 2026. The project now has a hosted college-project edition at the six existing Vercel URLs, alongside the private local edition. It combines supplied college exports with generated operations and individual password accounts. See `HOSTED_PROJECT_RELEASE_REPORT.md` for the current release map and hosted acceptance. College certification and verified real-world family/faculty relationships are not asserted.
 
 ## Delivered scope
 
 | Workspace | Working capabilities |
 |---|---|
 | Student | Own dashboard, course registration, timetable, progress/results, confirmed support and original college source records |
-| Parent | Linked student progress, attendance, results, field-controlled access, mentor updates, local test fee payments and receipts |
+| Parent | Linked student progress, attendance, results, field-controlled access, mentor updates, project payment records and receipts |
 | Faculty | Assigned classes/students, attendance and assessment management, support planning, exact-version edits/approval, intervention outcomes and withdrawal |
 | HoD | Department people, courses, timetable, mentor assignments and department support trends |
 | AI Operations | Review planning/execution, job history, evidence export and recorded-run verification; academic writes and mentor decisions denied |
@@ -61,7 +61,11 @@ flowchart LR
 
 The browser never supplies its own trusted role. The identity service authenticates the password, issues the OAuth authorization code with PKCE, and the portal establishes its protected session. Its BFF forwards authenticated requests. Core resolves the current role and assignment from stored relationships, enforces scope and records command receipts. Writes use CSRF protection, command idempotency and expected revisions to reject stale updates.
 
-All eight application/service processes and PostgreSQL bind to 127.0.0.1. The database is pinned to port 55432, database `aura_project`, and the dedicated Core/identity schemas. Runtime secrets and account credentials live outside Git under private permissions. No source records were uploaded to a cloud database. A discovered local-secret exposure during diagnostic output was corrected by rotating database/session secrets and invalidating local signing keys and sessions; account passwords were preserved and never printed.
+The private edition binds its eight application processes and PostgreSQL to 127.0.0.1, port 55432/database `aura_project`. The hosted edition uses eight existing Vercel projects and separate Core/Identity schemas in the approved remote PostgreSQL database. A fail-closed configuration guard pins the remote database host/name, schema pair and `college-project` identity realm, requires TLS and rejects local URLs. Existing demonstration schemas are preserved for rollback.
+
+Named records were uploaded only after the user explicitly authorized individual-account access at the existing URLs. Public sign-up and PINless entry are disabled in the hosted realm. Password hashes and subject bindings were copied; local sessions, tokens and encrypted signing keys were not. Runtime secrets, credentials, browser traces and private source exports are excluded from deployment inputs. Source API responses require authentication and current scope. An unused copied provisioning identity has no active password. Its metadata remains for provenance, outside the 647 project accounts.
+
+Local secrets exposed during an earlier diagnostic were rotated. Hosted acceptance later exposed an encrypted Mentor portal session cookie through a Playwright call log; the harness now strips those logs and the affected portal session key was rotated in the corrective release.
 
 ## Agent pipeline
 
@@ -95,13 +99,13 @@ The architecture audit reviewed data/tool/authority boundaries and resulted in t
 | Legacy fixture commands could reset project data | Dedicated project guards reject demo reset/population/legacy execution while allowing the project payment ledger |
 | Automated acceptance outran sign-in/logout/data rendering | Pace sign-ins, await logout completion, load the correct workspace route and wait for data/animations before screenshots |
 
-No unresolved code defect was retained from those reviews. Local source checks cannot establish public deployment readiness or institutional authorization.
+Hosted acceptance found a staff-source timeout caused by per-student database authorization requests. Staff authorization now uses one scoped query inside a read snapshot; hosted database checks measured about 0.6 seconds for 107 Mentor or 321 HoD source records. Local checks and platform builds remain distinct from actual hosted acceptance and institutional authorization.
 
 ## Verification and evidence
 
 The private evidence directory is `runtime/project-final/`. Final manifests identify the consumed source and archive fingerprints. Successful verification includes:
 
-- Lint, type checking and builds of all six portals, identity and Core services. Seven platform tests and 56 Core tests passed; six opt-in database tests were skipped in the default command.
+- Lint, type checking and builds of all six portals, identity and Core services. Seven platform tests and 60 Core tests passed; six opt-in database tests were skipped in the default command.
 - Platform and Core unit tests, plus the dedicated PostgreSQL integration test for policy, evidence capture across restart, edit/approval, replay, duplicate execution, outcomes and mentor transfer.
 - Ten Python parser checks; original workbook hashes, 321-student map and 7,265-value preservation.
 - Actual project-account OIDC sign-in across all six portals; source scope of one Student/Parent, 107 Faculty students and 321 department students. Operations sees aggregate original-source information without individual raw records.
@@ -109,7 +113,7 @@ The private evidence directory is `runtime/project-final/`. Final manifests iden
 - Student peer denial, LMS activity/submission persistence, mentor edit and stale decision denial, approval visibility, withdrawal/restore, Operations edit denial, recorded-run verification, Parent test payment/receipt and logout session invalidation.
 - Private source table update rejection and Parent source-grant revocation with exact restoration.
 
-Coverage is representative, not exhaustive over every record or browser. Manual screen-reader assessment, a historical visual baseline, production load testing and cross-browser certification were not performed. Six conditional database tests in the default unit command require opt-in isolated databases; the Chapter 11 integration suite was run separately and passed.
+Coverage is representative, not exhaustive over every record or browser. Manual screen-reader assessment, a historical visual baseline, production load testing and cross-browser certification were not performed. All six conditional database suites were also run against isolated disposable schemas and passed.
 
 Dependency audit found zero production dependency vulnerabilities and five high findings in the development lint dependency chain through `braces`. The audit offered a major downgrade of eslint-config-next rather than a safe patch. The dependency chain is retained and documented; it is not treated as a clean audit.
 
@@ -117,6 +121,6 @@ Dependency audit found zero production dependency vulnerabilities and five high 
 
 Use `PROJECT_RUNBOOK.md` for setup, credentials, ports, agent execution and the presentation route. The private delivery ZIP contains source plus the six preserved originals and parsed source inputs. It excludes current credentials, environment files, database cluster, model weights and build dependencies. A fresh install provisions new credentials and operational dates. Keep the ZIP private because it contains college student records.
 
-Nothing further is required from you to use this private completed project edition. For actual institutional rollout, the remaining inputs are precise: official source definitions/periods, verified account and Parent/mentor mappings, an authorized academic policy and coordinator approval, and approved hosting/model/payment/messaging configuration if those services are required. The separate institutional mode remains gated on those inputs. Generating data cannot substitute for those permissions.
+Nothing further is required to run the private edition or use the hosted project-account workspaces. New hosted model inference still needs a reachable funded provider. Vercel AI Gateway rejected the actual probe because no card is on file. Recorded Qwen inference retains its original local lineage; it is not claimed as cloud inference. For actual institutional rollout, the remaining inputs are precise: official source definitions/periods, verified account and Parent/mentor mappings, an authorized academic policy and coordinator approval, and approved hosting/model/payment/messaging configuration if those services are required. The separate institutional mode remains gated on those inputs. Generating data cannot substitute for those permissions.
 
-The account-wide budget ceiling was 30%. Starting usage was 10%; completion usage was 13%, below the 30% ceiling. The account observation is recorded in `runtime/project-final/FINAL_VERIFICATION.json`. These shared readings are approximate account observations, not exact project costs.
+The account-wide budget ceiling was 30%. The previous local phase started at 10% and completed at 13%. Hosted work started at 14%; see the hosted release report for its completion reading. The account observation is recorded in `runtime/project-final/FINAL_VERIFICATION.json`. These shared readings are approximate account observations, not exact project costs.

@@ -4,11 +4,14 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import zipfile
 
 os.umask(0o077)
 root = Path(__file__).resolve().parents[1]
-runtime = root / "runtime/project-final"
+local_runtime = root / "runtime/project-final"
+hosted = "--hosted" in sys.argv
+runtime = root / ("runtime/hosted-project" if hosted else "runtime/project-final")
 delivery = runtime / "delivery"
 delivery.mkdir(mode=0o700, exist_ok=True)
 
@@ -16,7 +19,11 @@ browser = json.loads((runtime / "browser-acceptance.json").read_text())
 assert browser["status"] == "passed", "Successful final browser acceptance required"
 data = json.loads((runtime / "data-acceptance.json").read_text())
 assert data["status"] == "passed", "Source integrity acceptance required"
-assert json.loads((runtime / "platform-check-status.json").read_text())["exitCode"] == 0
+assert json.loads((local_runtime / "platform-check-status.json").read_text())["exitCode"] == 0
+if hosted:
+    assert browser.get("hosted") is True
+    assert json.loads((runtime / "agent-execution-hosted.json").read_text())["status"] == "passed"
+    assert all(row["exitCode"] == 0 for row in json.loads((runtime / "database-tests.json").read_text()))
 
 names = subprocess.check_output(
     ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=root,
@@ -40,10 +47,15 @@ assert len(private) == 12, "Six source inputs and six original workbooks require
 files = [(str(path), root / path, False) for path in source]
 files += [(str(path.relative_to(root)), path, True) for path in private]
 
-env = json.loads((runtime / "environment.json").read_text())
+env = json.loads((local_runtime / "environment.json").read_text())
 secrets = [env[key].encode() for key in ["BETTER_AUTH_SECRET", "PORTAL_SESSION_SECRET", "DATABASE_URL", "DATABASE_URL_UNPOOLED"]]
-secrets += [account["password"].encode() for account in json.loads((runtime / "accounts.json").read_text())]
-manifest = {"edition": "private six-portal project", "datasetHash": data["datasetHash"], "rawValues": data["rawValues"], "files": []}
+secrets += [account["password"].encode() for account in json.loads((local_runtime / "accounts.json").read_text())]
+if hosted:
+    hosted_env = json.loads((runtime / "environment.json").read_text())
+    secrets += [hosted_env[key].encode() for key in ["BETTER_AUTH_SECRET", "DATABASE_URL", "DATABASE_URL_UNPOOLED"]]
+    settings = json.loads((runtime / "service-settings.json").read_text())
+    secrets += [values["PORTAL_SESSION_SECRET"].encode() for values in settings.values() if "PORTAL_SESSION_SECRET" in values]
+manifest = {"edition": "hosted six-portal college project" if hosted else "private six-portal project", "datasetHash": data["datasetHash"], "rawValues": data["rawValues"], "files": []}
 archive = delivery / "AURA-complete-project.zip"
 directories = set()
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
