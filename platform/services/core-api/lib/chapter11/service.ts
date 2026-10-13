@@ -14,6 +14,8 @@ import { configuredComposer } from "./provider";
 import { readApprovedCollegeSource } from "../college-normalized";
 import { loadAuthenticatedCollegeSources } from "../college-vault";
 
+import { compositeRiskView } from "./dashboard";
+
 type PlanBody = ReturnType<typeof planSkill>;
 type PlanRow = { id: string; generation_id: string; created_by: string; department_id: string; revision: number; status: string; paused: boolean; body: PlanBody; plan_hash: string };
 type Job = { id: string; generation_id: string; plan_id: string; student_id: string; faculty_person_id: string; status: string; stage: string; checkpoint: Checkpoint; lease_token: string; support_case_id: string | null };
@@ -328,7 +330,7 @@ export async function overview(actor: ActorContext) {
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
     const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends=await client.query("SELECT date_trunc('day',j.created_at)::date::text AS day,count(*)::int AS reviewed FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) GROUP BY 1 ORDER BY 1",[generation,department]);
-    return { trends:trends.rows, students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
+    return { trends:trends.rows, riskView:compositeRiskView(students.rows,jobs.rows), students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
   });
 }
 

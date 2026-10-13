@@ -1230,11 +1230,110 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             )
 
 
+def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None:
+    if actor.get("role") != "faculty":
+        return
+    st.subheader("Composite risk view")
+    rows = review.get("riskView") or []
+    plan_options = {
+        p["id"]: (p.get("body") or {}).get("request", "Review plan")
+        for p in review.get("plans", [])
+    }
+    plan_filter = st.selectbox(
+        "Risk cycle",
+        [None, *plan_options],
+        format_func=lambda item: (
+            "All assigned cycles" if item is None else plan_options[item]
+        ),
+        key="risk_cycle",
+    )
+    flagged_only = st.checkbox("Flagged students only", key="risk_flagged")
+    scoped = [
+        row
+        for row in rows
+        if (not plan_filter or row.get("planId") == plan_filter)
+        and (not flagged_only or row.get("flagged"))
+    ]
+    dataframe(
+        [
+            {
+                "Student": row["studentName"],
+                "Register number": row["registerNumber"],
+                "Score": row["score"],
+                "Band": row["band"],
+                "Status": row["status"],
+                "Contributing signals": ", ".join(
+                    signal["code"] for signal in row["signals"]
+                ),
+            }
+            for row in scoped
+        ]
+    )
+    for row in scoped:
+        if row.get("flagged"):
+            with st.expander(f"{row['studentName']} · {row['band']} · {row['score']}"):
+                st.write(row["reviewPath"])
+                dataframe(
+                    [
+                        {
+                            "Signal": signal["code"],
+                            "Source": signal["source"],
+                            "Value": signal["value"],
+                            "Threshold": signal["threshold"],
+                            "Points": signal["points"],
+                            "Reason": signal["explanation"],
+                        }
+                        for signal in row["signals"]
+                    ]
+                )
+
+
 def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     plans = queue.get("plans") or []
     if not plans:
         return
     st.subheader("Intervention outcomes")
+    log_rows = [
+        {
+            "Student": row.get("display_name"),
+            "Approved actions": "; ".join(
+                action.get("label", "")
+                for action in (row.get("plan") or {}).get("actions", [])
+            ),
+            "Status": row.get("status"),
+            "Outcome": row.get("outcome"),
+            "Visible": "Yes" if row.get("visible_to_student") else "No",
+            "Decision": row.get("decision"),
+            "Decided by": row.get("decided_by"),
+            "Decision time": row.get("decided_at"),
+            "Rationale": row.get("rationale"),
+        }
+        for row in plans
+    ]
+    log_rows.extend(
+        {
+            "Student": event.get("student_name"),
+            "Approved actions": "",
+            "Status": (event.get("payload") or {}).get("status"),
+            "Outcome": (event.get("payload") or {}).get("outcome"),
+            "Visible": "Recorded event",
+            "Decision": event.get("event_type"),
+            "Decided by": event.get("actor_name"),
+            "Decision time": event.get("occurred_at"),
+            "Rationale": "Immutable intervention history",
+        }
+        for event in queue.get("interventionLog", [])
+    )
+    st.markdown("#### Intervention log")
+    dataframe(log_rows)
+    st.download_button(
+        "Download intervention log CSV",
+        pd.DataFrame(log_rows).to_csv(index=False),
+        file_name="intervention-log.csv",
+        mime="text/csv",
+        on_click="ignore",
+    )
+
     dataframe(
         [
             {
@@ -1308,10 +1407,37 @@ def render_draft_reviews(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         key="support_draft",
     )
     packet = selected.get("recommendation") or {}
+    validation = selected.get("validation") or {}
+    st.markdown("#### Recorded validation report")
+    st.write(
+        f"Recorded packet checks: {'passed' if validation.get('valid') else 'not passed'} · Mode: {selected.get('mode', 'not recorded')} · Model: {selected.get('model_id') or 'none'}"
+    )
+    st.write(
+        f"Fallback: {'yes' if validation.get('fallback') else 'no'} · Provider issue: {validation.get('providerError') or 'none'}"
+    )
+    st.caption(
+        "Historical reports describe the checks implemented when the artifact was recorded. They do not certify additional checks introduced later."
+    )
+    dataframe(
+        [
+            {
+                "Attempt": item.get("attempt"),
+                "Failures": json.dumps(item.get("failures", [])),
+            }
+            for item in validation.get("repairs", [])
+        ]
+    )
+    if validation.get("failures"):
+        st.json(validation["failures"])
+    if validation.get("checks"):
+        dataframe(validation["checks"])
+
     st.write(
         f"**Current version:** {selected.get('artifact_id')} · **Status:** {selected.get('status')}"
     )
     st.write(packet.get("summary", "No summary recorded."))
+    if validation.get("mentorEdited"):
+        st.caption("This artifact includes edits by the mentor account.")
     st.caption("Evidence references")
     dataframe(
         [
@@ -1431,6 +1557,7 @@ def render_review_page(actor: dict[str, Any]) -> None:
     st.write("Review saved plans, source references and the current workflow status.")
     review = load("review_overview")
     render_plan_workbench(review, actor)
+    render_composite_risk(review, actor)
     role = actor.get("role")
     if role in {"faculty", "hod"}:
         queue = load("review_queue")

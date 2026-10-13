@@ -70,16 +70,17 @@ export async function reviewQueue(actor: ActorContext) {
   requireRole(actor, "faculty", "hod");
   return withCoreTransaction(async client => {
     const generation = await getCurrentGeneration(client);
-    const plans = await client.query(`SELECT p.id,p.student_id,p.visible_to_student,p.plan,s.register_number,person.display_name,
+    const plans = await client.query(`SELECT p.id,p.student_id,p.visible_to_student,p.plan,s.register_number,person.display_name,d.decision,d.rationale,d.decided_at,dp.display_name AS decided_by,
       COALESCE(i.status,'planned') AS status,COALESCE(i.revision,0) AS revision,COALESCE(i.outcome,'') AS outcome
-      FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN student_profiles s ON s.id=p.student_id
+      FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN people dp ON dp.id=d.faculty_person_id JOIN student_profiles s ON s.id=p.student_id
       JOIN people person ON person.id=s.person_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id
       WHERE p.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$2))) ORDER BY p.created_at DESC`, [generation, actor.personId,actor.role,actor.departmentId]);
-    const drafts = await client.query(`SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,person.display_name
+    const drafts = await client.query(`SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,a.validation,r.mode,r.model_id,person.display_name
       FROM ch11_jobs j JOIN support_cases c ON c.id=j.support_case_id JOIN agent_runs r ON r.support_case_id=c.id
       JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id
       WHERE j.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2))) AND c.status='awaiting_faculty'
       AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`, [generation, actor.personId,actor.role,actor.departmentId]);
-    return { plans: plans.rows, drafts: drafts.rows };
+    const log = await client.query(`SELECT e.id,e.aggregate_id AS plan_id,e.event_type,e.payload,e.occurred_at,actor.display_name AS actor_name,p.student_id,student.display_name AS student_name FROM domain_events e JOIN support_plans p ON p.id=e.aggregate_id AND p.generation_id=e.generation_id JOIN student_profiles sp ON sp.id=p.student_id JOIN people student ON student.id=sp.person_id JOIN people actor ON actor.id=e.actor_person_id WHERE e.generation_id=$1 AND e.aggregate_type='support_plan' AND e.aggregate_id=ANY($2::uuid[]) ORDER BY e.occurred_at DESC`,[generation,plans.rows.map(row=>row.id)]);
+    return { plans: plans.rows, drafts: drafts.rows, interventionLog:log.rows };
   });
 }
