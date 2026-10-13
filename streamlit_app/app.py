@@ -2367,6 +2367,39 @@ def render_department_home(overview: dict[str, Any]) -> None:
     )
 
 
+def render_agent_graph(review: dict[str, Any]) -> None:
+    st.subheader("Agent graph and execution")
+    graph = review.get("graph") or {}
+    edges = graph.get("edges") or []
+    if edges:
+        dot = (
+            "digraph AURA { rankdir=LR; "
+            + " ".join(
+                f'"{edge["from"]}" -> "{edge["to"]}" [label="{edge["condition"]}"];'
+                for edge in edges
+            )
+            + " }"
+        )
+        st.graphviz_chart(dot, width="stretch")
+        st.caption(
+            "The executor follows this graph. Validation can regenerate at most twice. Publication requires the assigned mentor's exact-artifact approval."
+        )
+    for job in review.get("jobs", []):
+        if job.get("node_trace"):
+            with st.expander("Node activity · " + str(job["id"])[:8]):
+                dataframe(
+                    [
+                        {
+                            "Node": node,
+                            "Status": state["status"],
+                            "Visits": state["visits"],
+                            "Milliseconds": round(state["elapsedMs"], 2),
+                        }
+                        for node, state in job["node_trace"].items()
+                    ]
+                )
+
+
 def render_governance(actor: dict[str, Any]) -> None:
     st.title("Review operations")
     review = load("review_overview")
@@ -2375,6 +2408,7 @@ def render_governance(actor: dict[str, Any]) -> None:
     )
     render_plan_workbench(review, actor)
     render_evaluation_metrics(review)
+    render_agent_graph(review)
     jobs = review.get("jobs") or []
     dataframe(
         [

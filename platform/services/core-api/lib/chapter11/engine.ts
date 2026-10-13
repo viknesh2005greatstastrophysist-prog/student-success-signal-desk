@@ -1,89 +1,231 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { validationRoute, type RunNode } from "./graph";
 
-export const sourceNames = ["academic", "lms", "internship", "placement"] as const;
-export const domainNames = ["academic", "attendance", "wellbeing-referral"] as const;
-export type SourceName = typeof sourceNames[number];
-export const policySchema = z.object({
-  version: z.string().min(3).max(80),
-  attendanceMinimum: z.number().min(0).max(100), markMinimum: z.number().min(0).max(100),
-  inactivityMaximum: z.number().int().min(1).max(90),
-  mediumScore: z.number().min(1).max(99), highScore: z.number().min(2).max(100),
-  freshnessDays: z.number().int().min(1).max(365),
-  attendanceWeight: z.number().int().min(0).max(100).default(20),
-  markWeight: z.number().int().min(0).max(100).default(20),
-  inactivityWeight: z.number().int().min(0).max(100).default(20),
-  overdueWeight: z.number().int().min(0).max(100).default(10),
-  internshipWeight: z.number().int().min(0).max(100).default(15),
-  placementWeight: z.number().int().min(0).max(100).default(15),
-  overdueMinimum: z.number().int().min(1).max(100).default(1),
-  internshipMinimum: z.number().int().min(1).max(100).default(1),
-  placementMinimum: z.number().int().min(1).max(100).default(1),
-
-}).strict().refine(p => p.highScore > p.mediumScore, "High threshold must exceed medium threshold");
+export const sourceNames = [
+  "academic",
+  "lms",
+  "internship",
+  "placement",
+] as const;
+export const domainNames = [
+  "academic",
+  "attendance",
+  "wellbeing-referral",
+] as const;
+export type SourceName = (typeof sourceNames)[number];
+export const policySchema = z
+  .object({
+    version: z.string().min(3).max(80),
+    attendanceMinimum: z.number().min(0).max(100),
+    markMinimum: z.number().min(0).max(100),
+    inactivityMaximum: z.number().int().min(1).max(90),
+    mediumScore: z.number().min(1).max(99),
+    highScore: z.number().min(2).max(100),
+    freshnessDays: z.number().int().min(1).max(365),
+    attendanceWeight: z.number().int().min(0).max(100).default(20),
+    markWeight: z.number().int().min(0).max(100).default(20),
+    inactivityWeight: z.number().int().min(0).max(100).default(20),
+    overdueWeight: z.number().int().min(0).max(100).default(10),
+    internshipWeight: z.number().int().min(0).max(100).default(15),
+    placementWeight: z.number().int().min(0).max(100).default(15),
+    overdueMinimum: z.number().int().min(1).max(100).default(1),
+    internshipMinimum: z.number().int().min(1).max(100).default(1),
+    placementMinimum: z.number().int().min(1).max(100).default(1),
+  })
+  .strict()
+  .refine(
+    (p) => p.highScore > p.mediumScore,
+    "High threshold must exceed medium threshold",
+  );
 export type Policy = z.infer<typeof policySchema>;
-export const demoPolicy: Policy = { version: "CH11-DEMO-1", attendanceMinimum: 75, markMinimum: 60, inactivityMaximum: 7, mediumScore: 20, highScore: 50, freshnessDays: 30, attendanceWeight: 20, markWeight: 20, inactivityWeight: 20, overdueWeight: 10, internshipWeight: 15, placementWeight: 15, overdueMinimum: 1, internshipMinimum: 1, placementMinimum: 1 };
+export const demoPolicy: Policy = {
+  version: "CH11-DEMO-1",
+  attendanceMinimum: 75,
+  markMinimum: 60,
+  inactivityMaximum: 7,
+  mediumScore: 20,
+  highScore: 50,
+  freshnessDays: 30,
+  attendanceWeight: 20,
+  markWeight: 20,
+  inactivityWeight: 20,
+  overdueWeight: 10,
+  internshipWeight: 15,
+  placementWeight: 15,
+  overdueMinimum: 1,
+  internshipMinimum: 1,
+  placementMinimum: 1,
+};
 
-export const planInputSchema = z.object({
-  request: z.string().trim().min(3).max(2000),
-  studentIds: z.array(z.string().uuid()).min(1).max(50).optional(),
-  domain: z.enum(domainNames).optional(),
-  policyId: z.string().uuid().optional(),
-  feedback: z.string().trim().max(1000).default(""),
-  mode: z.enum(["deterministic", "model"]).default("deterministic"),
-}).strict();
+export const planInputSchema = z
+  .object({
+    request: z.string().trim().min(3).max(2000),
+    studentIds: z.array(z.string().uuid()).min(1).max(50).optional(),
+    domain: z.enum(domainNames).optional(),
+    policyId: z.string().uuid().optional(),
+    feedback: z.string().trim().max(1000).default(""),
+    mode: z.enum(["deterministic", "model"]).default("deterministic"),
+  })
+  .strict();
 export type PlanInput = z.infer<typeof planInputSchema>;
 /** Explicit feedback directives revise typed constraints; scope is rechecked by
  * savePlan. Other notes inform retrieval and steps without inventing answers. */
-export function applyPlanningFeedback(input:PlanInput):PlanInput {
- const focus=input.feedback.match(/(?:^|\n)focus:\s*(academic|attendance|wellbeing-referral)\s*(?:$|\n)/i)?.[1]?.toLowerCase();
- const students=input.feedback.match(/(?:^|\n)students:\s*([^\n]+)/i)?.[1];
- const policy=input.feedback.match(/(?:^|\n)policy:\s*([^\n]+)/i)?.[1]?.trim();
- return planInputSchema.parse({...input,...(focus?{domain:focus}:{}),...(students?{studentIds:students.split(',').map(id=>id.trim())}:{}),...(policy?{policyId:policy}:{})});
+export function applyPlanningFeedback(input: PlanInput): PlanInput {
+  const focus = input.feedback
+    .match(
+      /(?:^|\n)focus:\s*(academic|attendance|wellbeing-referral)\s*(?:$|\n)/i,
+    )?.[1]
+    ?.toLowerCase();
+  const students = input.feedback.match(/(?:^|\n)students:\s*([^\n]+)/i)?.[1];
+  const policy = input.feedback
+    .match(/(?:^|\n)policy:\s*([^\n]+)/i)?.[1]
+    ?.trim();
+  return planInputSchema.parse({
+    ...input,
+    ...(focus ? { domain: focus } : {}),
+    ...(students
+      ? { studentIds: students.split(",").map((id) => id.trim()) }
+      : {}),
+    ...(policy ? { policyId: policy } : {}),
+  });
 }
 export function planSkill(raw: PlanInput) {
-  const input=applyPlanningFeedback(raw);
+  const input = applyPlanningFeedback(raw);
   const questions: string[] = [];
-  if (!input.studentIds?.length) questions.push("Which students should this review cover?");
-  if (!input.domain) questions.push("Should this review focus on academics, attendance, or a wellbeing referral?");
-  if (!input.policyId) questions.push("Which mentor-approved threshold policy should this review use?");
+  if (!input.studentIds?.length)
+    questions.push("Which students should this review cover?");
+  if (!input.domain)
+    questions.push(
+      "Should this review focus on academics, attendance, or a wellbeing referral?",
+    );
+  if (!input.policyId)
+    questions.push(
+      "Which mentor-approved threshold policy should this review use?",
+    );
   return {
-    ...input, questions, ready: questions.length === 0,
-    steps: [`Collect four sources concurrently for ${input.studentIds?.length??'unconfirmed'} scoped students`, "Check freshness, completeness and privacy scope", `Compute faculty-approved policy ${input.policyId??'(awaiting selection)'}`, `Retrieve references tagged ${input.domain??'(awaiting focus)'}${input.feedback?'; apply the saved planning feedback':''}`, `Draft ${input.domain??'focused'} support options and validate four acceptance checks`, "Wait for the assigned mentor's exact-artifact approval", "Publish and track approved interventions"],
-    budget: { maxStudents: 50, concurrency: 4, maxRepairs: 2, modelTimeoutMs: 45000 },
+    ...input,
+    questions,
+    ready: questions.length === 0,
+    steps: [
+      `Collect four sources concurrently for ${input.studentIds?.length ?? "unconfirmed"} scoped students`,
+      "Check freshness, completeness and privacy scope",
+      `Compute faculty-approved policy ${input.policyId ?? "(awaiting selection)"}`,
+      `Retrieve references tagged ${input.domain ?? "(awaiting focus)"}${input.feedback ? "; apply the saved planning feedback" : ""}`,
+      `Draft ${input.domain ?? "focused"} support options and validate four acceptance checks`,
+      "Wait for the assigned mentor's exact-artifact approval",
+      "Publish and track approved interventions",
+    ],
+    budget: {
+      maxStudents: 50,
+      concurrency: 4,
+      maxRepairs: 2,
+      modelTimeoutMs: 45000,
+    },
   };
 }
 
-export const sourceSchema = z.object({
-  source: z.enum(sourceNames), studentId: z.string().uuid(), recordId: z.string().min(1),
-  observedAt: z.string().datetime(), semester: z.string().min(1),
-  state: z.enum(["present", "missing", "not_applicable"]), synthetic: z.boolean(),
-  values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-}).strict();
+export const sourceSchema = z
+  .object({
+    source: z.enum(sourceNames),
+    studentId: z.string().uuid(),
+    recordId: z.string().min(1),
+    observedAt: z.string().datetime(),
+    semester: z.string().min(1),
+    state: z.enum(["present", "missing", "not_applicable"]),
+    synthetic: z.boolean(),
+    values: z.record(
+      z.string(),
+      z.union([z.string(), z.number(), z.boolean()]),
+    ),
+  })
+  .strict();
 export type Source = z.infer<typeof sourceSchema>;
 export type Evidence = Record<SourceName, Source>;
-export type Signal = { code: string; source: SourceName; path: string; value: number; threshold: number; points: number; explanation: string };
-export type Risk = { score: number; band: "low" | "medium" | "high"; flagged: boolean; signals: Signal[]; policyVersion: string; reviewRequired: true };
+export type Signal = {
+  code: string;
+  source: SourceName;
+  path: string;
+  value: number;
+  threshold: number;
+  points: number;
+  explanation: string;
+};
+export type Risk = {
+  score: number;
+  band: "low" | "medium" | "high";
+  flagged: boolean;
+  signals: Signal[];
+  policyVersion: string;
+  reviewRequired: true;
+};
 export function digest(value: unknown): string {
-  const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, canonical(x)])) : v;
-  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+  const canonical = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(canonical)
+      : v && typeof v === "object"
+        ? Object.fromEntries(
+            Object.entries(v)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([k, x]) => [k, canonical(x)]),
+          )
+        : v;
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(value)))
+    .digest("hex");
 }
-export class DataBlocked extends Error { constructor(readonly reasons: string[]) { super(reasons.join("; ")); } }
-export function validateEvidence(evidence: Evidence, studentId: string, policy: Policy, at: string, semester: string) {
+export class DataBlocked extends Error {
+  constructor(readonly reasons: string[]) {
+    super(reasons.join("; "));
+  }
+}
+export function validateEvidence(
+  evidence: Evidence,
+  studentId: string,
+  policy: Policy,
+  at: string,
+  semester: string,
+) {
   const failures: string[] = [];
   for (const name of sourceNames) {
     const parsed = sourceSchema.safeParse(evidence[name]);
-    if (!parsed.success) { failures.push(`${name}: invalid source contract`); continue; }
+    if (!parsed.success) {
+      failures.push(`${name}: invalid source contract`);
+      continue;
+    }
     const record = parsed.data;
-    if (record.studentId !== studentId || record.source !== name || record.semester !== semester) failures.push(`${name}: scope mismatch`);
+    if (
+      record.studentId !== studentId ||
+      record.source !== name ||
+      record.semester !== semester
+    )
+      failures.push(`${name}: scope mismatch`);
     const age = Date.parse(at) - Date.parse(record.observedAt);
-    if (age < -60000 || age > policy.freshnessDays * 86400000) failures.push(`${name}: stale or future evidence`);
-    if (record.state === "missing" || ((name === "academic" || name === "lms") && record.state !== "present")) failures.push(`${name}: required evidence missing`);
+    if (age < -60000 || age > policy.freshnessDays * 86400000)
+      failures.push(`${name}: stale or future evidence`);
+    if (
+      record.state === "missing" ||
+      ((name === "academic" || name === "lms") && record.state !== "present")
+    )
+      failures.push(`${name}: required evidence missing`);
     if (record.state === "present") {
-      const keys = name === "academic" ? ["attendancePct", "markPct"] : name === "lms" ? ["inactivityDays", "overdueAssignments"] : name === "internship" ? ["missedMilestones"] : ["missedActivities"];
+      const keys =
+        name === "academic"
+          ? ["attendancePct", "markPct"]
+          : name === "lms"
+            ? ["inactivityDays", "overdueAssignments"]
+            : name === "internship"
+              ? ["missedMilestones"]
+              : ["missedActivities"];
       for (const key of keys) {
         const value = record.values[key];
-        if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || ((key.endsWith("Pct")) && value > 100)) failures.push(`${name}.${key}: invalid or absent number`);
+        if (
+          typeof value !== "number" ||
+          !Number.isFinite(value) ||
+          value < 0 ||
+          (key.endsWith("Pct") && value > 100)
+        )
+          failures.push(`${name}.${key}: invalid or absent number`);
       }
     }
   }
@@ -91,19 +233,92 @@ export function validateEvidence(evidence: Evidence, studentId: string, policy: 
 }
 export function riskAnalysis(evidence: Evidence, policy: Policy): Risk {
   const signals: Signal[] = [];
-  const check = (source: SourceName, key: string, threshold: number, below: boolean, points: number, code: string) => {
+  const check = (
+    source: SourceName,
+    key: string,
+    threshold: number,
+    below: boolean,
+    points: number,
+    code: string,
+  ) => {
     if (evidence[source].state !== "present") return;
     const value = evidence[source].values[key] as number;
-    if (below ? value < threshold : value >= threshold) signals.push({ code, source, path: `evidence.${source}.values.${key}`, value, threshold, points, explanation: `${key} is ${value}; policy threshold is ${below ? "below" : "at least"} ${threshold}.` });
+    if (below ? value < threshold : value >= threshold)
+      signals.push({
+        code,
+        source,
+        path: `evidence.${source}.values.${key}`,
+        value,
+        threshold,
+        points,
+        explanation: `${key} is ${value}; policy threshold is ${below ? "below" : "at least"} ${threshold}.`,
+      });
   };
-  check("academic", "attendancePct", policy.attendanceMinimum, true, policy.attendanceWeight, "ATTENDANCE_LOW");
-  check("academic", "markPct", policy.markMinimum, true, policy.markWeight, "MARK_LOW");
-  check("lms", "inactivityDays", policy.inactivityMaximum, false, policy.inactivityWeight, "LMS_INACTIVE");
-  check("lms", "overdueAssignments", policy.overdueMinimum, false, policy.overdueWeight, "ASSIGNMENT_OVERDUE");
-  check("internship", "missedMilestones", policy.internshipMinimum, false, policy.internshipWeight, "INTERNSHIP_MILESTONE");
-  check("placement", "missedActivities", policy.placementMinimum, false, policy.placementWeight, "PLACEMENT_ACTIVITY");
-  const score = Math.min(100, signals.reduce((sum, s) => sum + s.points, 0));
-  return { score, band: score >= policy.highScore ? "high" : score >= policy.mediumScore ? "medium" : "low", flagged: score >= policy.mediumScore, signals, policyVersion: policy.version, reviewRequired: true };
+  check(
+    "academic",
+    "attendancePct",
+    policy.attendanceMinimum,
+    true,
+    policy.attendanceWeight,
+    "ATTENDANCE_LOW",
+  );
+  check(
+    "academic",
+    "markPct",
+    policy.markMinimum,
+    true,
+    policy.markWeight,
+    "MARK_LOW",
+  );
+  check(
+    "lms",
+    "inactivityDays",
+    policy.inactivityMaximum,
+    false,
+    policy.inactivityWeight,
+    "LMS_INACTIVE",
+  );
+  check(
+    "lms",
+    "overdueAssignments",
+    policy.overdueMinimum,
+    false,
+    policy.overdueWeight,
+    "ASSIGNMENT_OVERDUE",
+  );
+  check(
+    "internship",
+    "missedMilestones",
+    policy.internshipMinimum,
+    false,
+    policy.internshipWeight,
+    "INTERNSHIP_MILESTONE",
+  );
+  check(
+    "placement",
+    "missedActivities",
+    policy.placementMinimum,
+    false,
+    policy.placementWeight,
+    "PLACEMENT_ACTIVITY",
+  );
+  const score = Math.min(
+    100,
+    signals.reduce((sum, s) => sum + s.points, 0),
+  );
+  return {
+    score,
+    band:
+      score >= policy.highScore
+        ? "high"
+        : score >= policy.mediumScore
+          ? "medium"
+          : "low",
+    flagged: score >= policy.mediumScore,
+    signals,
+    policyVersion: policy.version,
+    reviewRequired: true,
+  };
 }
 
 // A reproducible lexical embedding, not a pretrained semantic model. Its identity is
@@ -115,146 +330,533 @@ export function embed(text: string): number[] {
     vector[h[0]! % 128]! += h[1]! % 2 ? 1 : -1;
   }
   const norm = Math.hypot(...vector) || 1;
-  return vector.map(v => v / norm);
+  return vector.map((v) => v / norm);
 }
-export type Reference = { id: string; text: string; tags: string[]; departmentId: string | null; studentId?: string; actionCodes?: string[]; embedding?: number[] };
-export function retrieve(query: string, tags: string[], references: Reference[], departmentId: string, studentId: string) {
+export type Reference = {
+  id: string;
+  text: string;
+  tags: string[];
+  departmentId: string | null;
+  studentId?: string;
+  actionCodes?: string[];
+  embedding?: number[];
+};
+export function retrieve(
+  query: string,
+  tags: string[],
+  references: Reference[],
+  departmentId: string,
+  studentId: string,
+) {
   const q = embed(query);
-  return references.filter(r => (r.departmentId === null || r.departmentId === departmentId) && (!r.studentId || r.studentId === studentId) && tags.some(t => r.tags.includes(t)))
-    .map(r => ({ id: r.id, text: r.text, tags: r.tags, actionCodes:r.actionCodes??[], similarity: q.reduce((n, x, i) => n + x * (r.embedding ?? embed(r.text))[i]!, 0), embeddingModel: "sha256-lexical-128-v1" }))
-    .sort((a, b) => b.similarity - a.similarity || a.id.localeCompare(b.id)).slice(0, 5);
+  return references
+    .filter(
+      (r) =>
+        (r.departmentId === null || r.departmentId === departmentId) &&
+        (!r.studentId || r.studentId === studentId) &&
+        tags.some((t) => r.tags.includes(t)),
+    )
+    .map((r) => ({
+      id: r.id,
+      text: r.text,
+      tags: r.tags,
+      actionCodes: r.actionCodes ?? [],
+      similarity: q.reduce(
+        (n, x, i) => n + x * (r.embedding ?? embed(r.text))[i]!,
+        0,
+      ),
+      embeddingModel: "sha256-lexical-128-v1",
+    }))
+    .sort((a, b) => b.similarity - a.similarity || a.id.localeCompare(b.id))
+    .slice(0, 5);
 }
 
 export const actions = {
-  "faculty-check-in": "Schedule a 20-minute academic check-in with the assigned mentor",
+  "faculty-check-in":
+    "Schedule a 20-minute academic check-in with the assigned mentor",
   "student-study-plan": "Agree a weekly study plan with the assigned mentor",
-  "attendance-review": "Review attendance barriers and agree an attendance plan with the mentor",
+  "attendance-review":
+    "Review attendance barriers and agree an attendance plan with the mentor",
   "lms-catch-up": "Agree a catch-up schedule for overdue learning activities",
-  "internship-review": "Review missed internship milestones with the assigned mentor",
-  "placement-review": "Review placement preparation activities with the assigned mentor",
-  "wellbeing-referral": "Ask the mentor whether an optional support-service referral is appropriate",
+  "internship-review":
+    "Review missed internship milestones with the assigned mentor",
+  "placement-review":
+    "Review placement preparation activities with the assigned mentor",
+  "wellbeing-referral":
+    "Ask the mentor whether an optional support-service referral is appropriate",
 } as const;
-export const packetSchema = z.object({
-  summary: z.string().min(12).max(600),
-  actions: z.array(z.object({ code: z.enum(Object.keys(actions) as [keyof typeof actions, ...Array<keyof typeof actions>]), label: z.string().min(8).max(180), owner: z.enum(["assigned_faculty", "student"]), dueInDays: z.number().int().min(1).max(14) }).strict()).min(1).max(4),
-  citations: z.array(z.object({ evidencePath: z.string(), statement: z.string().min(4).max(180) }).strict()).min(1).max(10),
-  prohibited: z.array(z.string()).max(0),
-}).strict();
+export const packetSchema = z
+  .object({
+    summary: z.string().min(12).max(600),
+    actions: z
+      .array(
+        z
+          .object({
+            code: z.enum(
+              Object.keys(actions) as [
+                keyof typeof actions,
+                ...Array<keyof typeof actions>,
+              ],
+            ),
+            label: z.string().min(8).max(180),
+            owner: z.enum(["assigned_faculty", "student"]),
+            dueInDays: z.number().int().min(1).max(14),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(4),
+    citations: z
+      .array(
+        z
+          .object({
+            evidencePath: z.string(),
+            statement: z.string().min(4).max(180),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(10),
+    prohibited: z.array(z.string()).max(0),
+  })
+  .strict();
 export type Packet = z.infer<typeof packetSchema>;
-export const specialists: Record<typeof domainNames[number], { codes: Array<keyof typeof actions>; instruction: string }> = {
-  academic: { codes: ["faculty-check-in", "student-study-plan", "lms-catch-up", "internship-review", "placement-review"], instruction: "Explain academic support options without diagnosing or predicting failure." },
-  attendance: { codes: ["faculty-check-in", "attendance-review", "lms-catch-up"], instruction: "Focus on attendance barriers and feasible mentor-led catch-up." },
-  "wellbeing-referral": { codes: ["faculty-check-in", "wellbeing-referral"], instruction: "Never infer a mental-health condition. Only offer an optional mentor-led referral." },
+export const specialistRegistry: Record<
+  (typeof domainNames)[number],
+  { codes: Array<keyof typeof actions>; instruction: string }
+> = {
+  academic: {
+    codes: [
+      "faculty-check-in",
+      "student-study-plan",
+      "lms-catch-up",
+      "internship-review",
+      "placement-review",
+    ],
+    instruction:
+      "Explain academic support options without diagnosing or predicting failure.",
+  },
+  attendance: {
+    codes: ["faculty-check-in", "attendance-review", "lms-catch-up"],
+    instruction:
+      "Focus on attendance barriers and feasible mentor-led catch-up.",
+  },
+  "wellbeing-referral": {
+    codes: ["faculty-check-in", "wellbeing-referral"],
+    instruction:
+      "Never infer a mental-health condition. Only offer an optional mentor-led referral.",
+  },
 };
-export function formatSkill(risk: Risk, domain: typeof domainNames[number]): Packet {
+export const specialists = specialistRegistry;
+export function formatSkill(
+  risk: Risk,
+  domain: (typeof domainNames)[number],
+): Packet {
   const codes = specialists[domain].codes;
-  const relevant: Array<keyof typeof actions> = domain === "attendance" ? ["attendance-review"] : domain === "wellbeing-referral" ? ["wellbeing-referral"] : risk.signals.map(s => s.source === "lms" ? "lms-catch-up" : s.source === "internship" ? "internship-review" : s.source === "placement" ? "placement-review" : "student-study-plan");
+  const relevant: Array<keyof typeof actions> =
+    domain === "attendance"
+      ? ["attendance-review"]
+      : domain === "wellbeing-referral"
+        ? ["wellbeing-referral"]
+        : risk.signals.map((s) =>
+            s.source === "lms"
+              ? "lms-catch-up"
+              : s.source === "internship"
+                ? "internship-review"
+                : s.source === "placement"
+                  ? "placement-review"
+                  : "student-study-plan",
+          );
   return {
-    summary: `Mentor review requested: ${risk.signals.map(s => s.code.toLowerCase().replaceAll("_", " ")).join(", ") || "routine evidence review"}.`,
-    actions: [...new Set<keyof typeof actions>(["faculty-check-in", ...relevant])].filter(c => codes.includes(c)).slice(0, 4).map(code => ({ code, label: actions[code], owner: "assigned_faculty", dueInDays: 7 })),
-    citations: risk.signals.length ? risk.signals.map(s => ({ evidencePath: s.path, statement: s.explanation })) : [{ evidencePath: "evidence.academic.values.attendancePct", statement: "The academic record is available for routine review." }],
+    summary: `Mentor review requested: ${risk.signals.map((s) => s.code.toLowerCase().replaceAll("_", " ")).join(", ") || "routine evidence review"}.`,
+    actions: [
+      ...new Set<keyof typeof actions>(["faculty-check-in", ...relevant]),
+    ]
+      .filter((c) => codes.includes(c))
+      .slice(0, 4)
+      .map((code) => ({
+        code,
+        label: actions[code],
+        owner: "assigned_faculty",
+        dueInDays: 7,
+      })),
+    citations: risk.signals.length
+      ? risk.signals.map((s) => ({
+          evidencePath: s.path,
+          statement: s.explanation,
+        }))
+      : [
+          {
+            evidencePath: "evidence.academic.values.attendancePct",
+            statement: "The academic record is available for routine review.",
+          },
+        ],
     prohibited: [],
   };
 }
-export type Diagnosis = { field: "summary" | "actions" | "citations" | "prohibited"; code: string };
-export function validatePacket(candidate: unknown, evidence: Evidence, risk: Risk, domain: typeof domainNames[number]): { valid: boolean; failures: Diagnosis[] } {
+export type Diagnosis = {
+  field: "summary" | "actions" | "citations" | "prohibited";
+  code: string;
+};
+export function validatePacket(
+  candidate: unknown,
+  evidence: Evidence,
+  risk: Risk,
+  domain: (typeof domainNames)[number],
+): { valid: boolean; failures: Diagnosis[] } {
   const parsed = packetSchema.safeParse(candidate);
-  if (!parsed.success && (typeof candidate !== "object" || candidate === null || Array.isArray(candidate))) return { valid: false, failures: (["summary", "actions", "citations", "prohibited"] as const).map(field => ({ field, code: "SCHEMA_INVALID" })) };
-  if (!parsed.success) return { valid: false, failures: parsed.error.issues.map(i => ({ field: (["summary", "actions", "citations", "prohibited"].includes(String(i.path[0])) ? i.path[0] : "summary") as Diagnosis["field"], code: "SCHEMA_INVALID" })) };
+  if (
+    !parsed.success &&
+    (typeof candidate !== "object" ||
+      candidate === null ||
+      Array.isArray(candidate))
+  )
+    return {
+      valid: false,
+      failures: (
+        ["summary", "actions", "citations", "prohibited"] as const
+      ).map((field) => ({ field, code: "SCHEMA_INVALID" })),
+    };
+  if (!parsed.success)
+    return {
+      valid: false,
+      failures: parsed.error.issues.map((i) => ({
+        field: (["summary", "actions", "citations", "prohibited"].includes(
+          String(i.path[0]),
+        )
+          ? i.path[0]
+          : "summary") as Diagnosis["field"],
+        code: "SCHEMA_INVALID",
+      })),
+    };
   const p = parsed.data;
   const failures: Diagnosis[] = [];
-  const unsafe = /diagnos|depress|suicid|automatically contact|email the parent|send.*message|change.*mark|guarantee|will fail|punish|expel/i;
-  if (unsafe.test(p.summary)) failures.push({ field: "summary", code: "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS" });
-  if (p.actions.some(a => !specialists[domain].codes.includes(a.code) || a.label !== actions[a.code] || a.owner !== "assigned_faculty")) failures.push({ field: "actions", code: "CATALOGUE_OR_DOMAIN_MISMATCH" });
-  const canonicalClaims = new Map(formatSkill(risk, domain).citations.map(c => [c.evidencePath, c.statement]));
+  const unsafe =
+    /diagnos|depress|suicid|automatically contact|email the parent|send.*message|change.*mark|guarantee|will fail|punish|expel/i;
+  if (unsafe.test(p.summary))
+    failures.push({
+      field: "summary",
+      code: "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS",
+    });
+  if (
+    p.actions.some(
+      (a) =>
+        !specialists[domain].codes.includes(a.code) ||
+        a.label !== actions[a.code] ||
+        a.owner !== "assigned_faculty",
+    )
+  )
+    failures.push({ field: "actions", code: "CATALOGUE_OR_DOMAIN_MISMATCH" });
+  const canonicalClaims = new Map(
+    formatSkill(risk, domain).citations.map((c) => [
+      c.evidencePath,
+      c.statement,
+    ]),
+  );
   for (const c of p.citations) {
     const parts = c.evidencePath.split(".");
     const source = parts[1] as SourceName;
-    if (parts.length !== 4 || parts[0] !== "evidence" || parts[2] !== "values" || !sourceNames.includes(source) || evidence[source]?.values[parts[3]!] === undefined || canonicalClaims.get(c.evidencePath) !== c.statement) failures.push({ field: "citations", code: "UNSUPPORTED_CITATION" });
+    if (
+      parts.length !== 4 ||
+      parts[0] !== "evidence" ||
+      parts[2] !== "values" ||
+      !sourceNames.includes(source) ||
+      evidence[source]?.values[parts[3]!] === undefined ||
+      canonicalClaims.get(c.evidencePath) !== c.statement
+    )
+      failures.push({ field: "citations", code: "UNSUPPORTED_CITATION" });
   }
-  if (risk.signals.some(s => !p.citations.some(c => c.evidencePath === s.path))) failures.push({ field: "citations", code: "MISSING_TRIGGER_COVERAGE" });
+  if (
+    risk.signals.some(
+      (s) => !p.citations.some((c) => c.evidencePath === s.path),
+    )
+  )
+    failures.push({ field: "citations", code: "MISSING_TRIGGER_COVERAGE" });
   // A closed evidence-derived language also rejects nonnumeric hallucinations.
-  const allowedSummaries = [formatSkill(risk, domain).summary, ...risk.signals.map(s => s.explanation)];
-  if (!allowedSummaries.includes(p.summary)) failures.push({ field: "summary", code: "UNSUPPORTED_SUMMARY" });
+  const allowedSummaries = [
+    formatSkill(risk, domain).summary,
+    ...risk.signals.map((s) => s.explanation),
+  ];
+  if (!allowedSummaries.includes(p.summary))
+    failures.push({ field: "summary", code: "UNSUPPORTED_SUMMARY" });
   // Numerical factual assertions in the prose must appear in frozen evidence or policy explanations.
-  const permittedNumbers = new Set(risk.signals.flatMap(s => [String(s.value), String(s.threshold)]));
-  if ((p.summary.match(/\b\d+(?:\.\d+)?\b/g) ?? []).some(n => !permittedNumbers.has(n))) failures.push({ field: "summary", code: "UNSUPPORTED_NUMBER" });
+  const permittedNumbers = new Set(
+    risk.signals.flatMap((s) => [String(s.value), String(s.threshold)]),
+  );
+  if (
+    (p.summary.match(/\b\d+(?:\.\d+)?\b/g) ?? []).some(
+      (n) => !permittedNumbers.has(n),
+    )
+  )
+    failures.push({ field: "summary", code: "UNSUPPORTED_NUMBER" });
   return { valid: failures.length === 0, failures };
 }
 
 export type PolicyGuard = { version: string; facultyApproved: boolean };
-export function acceptanceChecks(candidate: unknown, evidence: Evidence, risk: Risk, domain: typeof domainNames[number], policyGuard?: PolicyGuard) {
-  const report = validatePacket(candidate,evidence,risk,domain);
+export function acceptanceChecks(
+  candidate: unknown,
+  evidence: Evidence,
+  risk: Risk,
+  domain: (typeof domainNames)[number],
+  policyGuard?: PolicyGuard,
+) {
+  const report = validatePacket(candidate, evidence, risk, domain);
   const p = packetSchema.safeParse(candidate);
   const checks = {
-    alerts_cite_triggers: p.success && risk.signals.every(signal=>p.data.citations.some(c=>c.evidencePath===signal.path && c.statement===signal.explanation)) && !report.failures.some(f=>f.field==='citations'),
-    thresholds_faculty_set: policyGuard ? policyGuard.facultyApproved && policyGuard.version===risk.policyVersion : null,
-    advisor_review_required: p.success && p.data.actions.every(a=>a.owner==='assigned_faculty') && !report.failures.some(f=>f.code==='UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS'),
-    privacy_scope_enforced: sourceNames.every(name=>evidence[name].studentId===evidence.academic.studentId),
+    alerts_cite_triggers:
+      p.success &&
+      risk.signals.every((signal) =>
+        p.data.citations.some(
+          (c) =>
+            c.evidencePath === signal.path &&
+            c.statement === signal.explanation,
+        ),
+      ) &&
+      !report.failures.some((f) => f.field === "citations"),
+    thresholds_faculty_set: policyGuard
+      ? policyGuard.facultyApproved &&
+        policyGuard.version === risk.policyVersion
+      : null,
+    advisor_review_required:
+      p.success &&
+      p.data.actions.every((a) => a.owner === "assigned_faculty") &&
+      !report.failures.some(
+        (f) => f.code === "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS",
+      ),
+    privacy_scope_enforced: sourceNames.every(
+      (name) => evidence[name].studentId === evidence.academic.studentId,
+    ),
   };
   const failures = [...report.failures];
-  if(checks.thresholds_faculty_set===false) failures.push({field:'citations',code:'THRESHOLDS_NOT_FACULTY_SET'});
-  if(!checks.privacy_scope_enforced) failures.push({field:'citations',code:'PRIVACY_SCOPE_MISMATCH'});
-  if(!checks.advisor_review_required) failures.push({field:'actions',code:'ADVISOR_REVIEW_REQUIRED'});
-  return {valid:failures.length===0,failures,checks};
+  if (checks.thresholds_faculty_set === false)
+    failures.push({ field: "citations", code: "THRESHOLDS_NOT_FACULTY_SET" });
+  if (!checks.privacy_scope_enforced)
+    failures.push({ field: "citations", code: "PRIVACY_SCOPE_MISMATCH" });
+  if (!checks.advisor_review_required)
+    failures.push({ field: "actions", code: "ADVISOR_REVIEW_REQUIRED" });
+  return { valid: failures.length === 0, failures, checks };
 }
 
-export type GenerationContext = { evidence: Evidence; risk: Risk; domain: typeof domainNames[number]; references: Array<{id:string;text:string;tags:string[];similarity:number;embeddingModel:string;actionCodes?:string[]}>; baseline: Packet; policyGuard?: PolicyGuard };
-export interface Composer { modelId: string; generate(context: GenerationContext, failing?: Diagnosis[], prior?: unknown): Promise<unknown> }
+export type GenerationContext = {
+  evidence: Evidence;
+  risk: Risk;
+  domain: (typeof domainNames)[number];
+  references: Array<{
+    id: string;
+    text: string;
+    tags: string[];
+    similarity: number;
+    embeddingModel: string;
+    actionCodes?: string[];
+  }>;
+  baseline: Packet;
+  policyGuard?: PolicyGuard;
+};
+export interface Composer {
+  modelId: string;
+  generate(
+    context: GenerationContext,
+    failing?: Diagnosis[],
+    prior?: unknown,
+  ): Promise<unknown>;
+}
 function providerFailure(error: unknown): string {
   if (error instanceof SyntaxError) return "MODEL_INVALID_JSON";
-  if (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)) return "MODEL_TIMEOUT";
-  if (error instanceof Error && /^MODEL_(HTTP_[0-9]{3}|EMPTY_RESPONSE)$/.test(error.message)) return error.message;
+  if (
+    error instanceof Error &&
+    ["TimeoutError", "AbortError"].includes(error.name)
+  )
+    return "MODEL_TIMEOUT";
+  if (
+    error instanceof Error &&
+    /^MODEL_(HTTP_[0-9]{3}|EMPTY_RESPONSE)$/.test(error.message)
+  )
+    return error.message;
   return "MODEL_UNAVAILABLE";
 }
-export async function compose(context: GenerationContext, provider?: Composer) {
+export async function compose(
+  context: GenerationContext,
+  provider?: Composer,
+  runNode: RunNode = async (_id, work) => work(),
+) {
   let candidate: unknown = context.baseline;
   let mode: "deterministic" | "model" = "deterministic";
   let providerError: string | null = null;
   let baselineRepair = false;
   const repairs: Array<{ attempt: number; failures: Diagnosis[] }> = [];
-  const modelAttempts: Array<{ attempt: number; inputHash: string; output: unknown; outputHash: string }> = [];
+  const modelAttempts: Array<{
+    attempt: number;
+    inputHash: string;
+    output: unknown;
+    outputHash: string;
+  }> = [];
   if (provider) {
-    try { candidate = await provider.generate(context); mode = "model"; modelAttempts.push({ attempt: 0, inputHash: digest(context), output: candidate, outputHash: digest(candidate) }); }
-    catch (error) { providerError = providerFailure(error); }
+    try {
+      candidate = await provider.generate(context);
+      mode = "model";
+      modelAttempts.push({
+        attempt: 0,
+        inputHash: digest(context),
+        output: candidate,
+        outputHash: digest(candidate),
+      });
+    } catch (error) {
+      providerError = providerFailure(error);
+    }
   }
-  let report = acceptanceChecks(candidate, context.evidence, context.risk, context.domain, context.policyGuard);
-  for (let attempt = 1; !report.valid && attempt <= 2; attempt++) {
+  let report = await runNode("PacketValidator", () =>
+    acceptanceChecks(
+      candidate,
+      context.evidence,
+      context.risk,
+      context.domain,
+      context.policyGuard,
+    ),
+  );
+  for (
+    let attempt = 1;
+    validationRoute(report.valid, repairs.length) === "regenerate";
+    attempt++
+  ) {
     repairs.push({ attempt, failures: report.failures });
     let patch: unknown = context.baseline;
-    if (provider) { try { patch = await provider.generate(context, report.failures, candidate); modelAttempts.push({ attempt, inputHash: digest({ context, failures: report.failures, candidate }), output: patch, outputHash: digest(patch) }); } catch (error) { providerError = providerFailure(error); } }
-    const current = candidate && typeof candidate === "object" && !Array.isArray(candidate) ? candidate as Record<string, unknown> : {};
-    const supplied = patch && typeof patch === "object" && !Array.isArray(patch) ? patch as Record<string, unknown> : {};
+    if (provider) {
+      try {
+        patch = await runNode("Regenerator", () =>
+          provider.generate(context, report.failures, candidate),
+        );
+        modelAttempts.push({
+          attempt,
+          inputHash: digest({ context, failures: report.failures, candidate }),
+          output: patch,
+          outputHash: digest(patch),
+        });
+      } catch (error) {
+        providerError = providerFailure(error);
+      }
+    }
+    const current =
+      candidate && typeof candidate === "object" && !Array.isArray(candidate)
+        ? (candidate as Record<string, unknown>)
+        : {};
+    const supplied =
+      patch && typeof patch === "object" && !Array.isArray(patch)
+        ? (patch as Record<string, unknown>)
+        : {};
     candidate = { ...current };
     for (const { field } of report.failures) {
       if (supplied[field] === undefined) baselineRepair = true;
-      (candidate as Record<string, unknown>)[field] = supplied[field] ?? context.baseline[field];
+      (candidate as Record<string, unknown>)[field] =
+        supplied[field] ?? context.baseline[field];
     }
-    report = acceptanceChecks(candidate, context.evidence, context.risk, context.domain, context.policyGuard);
+    report = await runNode("PacketValidator", () =>
+      acceptanceChecks(
+        candidate,
+        context.evidence,
+        context.risk,
+        context.domain,
+        context.policyGuard,
+      ),
+    );
   }
   const needsHuman = !!providerError || !report.valid || baselineRepair;
-  const offeredTemplate = acceptanceChecks(context.baseline, context.evidence, context.risk, context.domain,context.policyGuard);
-  return { packet: needsHuman ? context.baseline : packetSchema.parse(candidate), mode: needsHuman ? "deterministic" as const : mode, modelId: !needsHuman && mode === "model" ? provider!.modelId : null, validation: { ...report, valid: !needsHuman && report.valid, repairs, fallback: needsHuman, escalated:needsHuman, templateValid:offeredTemplate.valid, providerError, modelAttempts, selection: { candidates: provider ? ["validated-baseline", "model-candidate"] : ["validated-baseline"], selected: needsHuman ? "template-offered-for-human-review" : mode === "model" ? "model-candidate" : "validated-baseline", rule: "Require full trigger coverage, scope, advisor review and approved policy. Persistent faults or provider failures stop at a human gate; templates are never auto-advanced." } } };
-
+  const offeredTemplate = acceptanceChecks(
+    context.baseline,
+    context.evidence,
+    context.risk,
+    context.domain,
+    context.policyGuard,
+  );
+  return {
+    packet: needsHuman ? context.baseline : packetSchema.parse(candidate),
+    mode: needsHuman ? ("deterministic" as const) : mode,
+    modelId: !needsHuman && mode === "model" ? provider!.modelId : null,
+    validation: {
+      ...report,
+      valid: !needsHuman && report.valid,
+      repairs,
+      fallback: needsHuman,
+      escalated: needsHuman,
+      templateValid: offeredTemplate.valid,
+      providerError,
+      modelAttempts,
+      selection: {
+        candidates: provider
+          ? ["validated-baseline", "model-candidate"]
+          : ["validated-baseline"],
+        selected: needsHuman
+          ? "template-offered-for-human-review"
+          : mode === "model"
+            ? "model-candidate"
+            : "validated-baseline",
+        rule: "Require full trigger coverage, scope, advisor review and approved policy. Persistent faults or provider failures stop at a human gate; templates are never auto-advanced.",
+      },
+    },
+  };
 }
 
-export async function parallelMap<T, R>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
+export async function parallelMap<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
   const results = new Array<R>(items.length);
   let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
-    while (cursor < items.length) { const index = cursor++; results[index] = await worker(items[index]!, index); }
-  }));
+  await Promise.all(
+    Array.from(
+      { length: Math.min(Math.max(1, concurrency), items.length) },
+      async () => {
+        while (cursor < items.length) {
+          const index = cursor++;
+          results[index] = await worker(items[index]!, index);
+        }
+      },
+    ),
+  );
   return results;
 }
-export type Connector = { read(studentId: string, source: SourceName): Promise<Source> };
-export async function collectSources(connector: Connector, studentId: string): Promise<Evidence> {
-  const collected = await Promise.all(sourceNames.map(async name => [name, sourceSchema.parse(await connector.read(studentId, name))] as const));
+export type Connector = {
+  read(studentId: string, source: SourceName): Promise<Source>;
+};
+export async function collectSources(
+  connector: Connector,
+  studentId: string,
+): Promise<Evidence> {
+  const collected = await Promise.all(
+    sourceNames.map(
+      async (name) =>
+        [
+          name,
+          sourceSchema.parse(await connector.read(studentId, name)),
+        ] as const,
+    ),
+  );
   return Object.fromEntries(collected) as Evidence;
 }
 
 export const referenceLibrary: Reference[] = [
-  { id: "GUIDE-ACADEMIC-1", text: "Academic marks study plan attendance mentor review weekly catch-up", tags: ["academic", "attendance"], departmentId: null },
-  { id: "GUIDE-LMS-1", text: "LMS inactivity overdue assignments quiz learning catch-up schedule", tags: ["academic", "attendance"], departmentId: null },
-  { id: "GUIDE-CAREER-1", text: "Internship placement missed milestones preparation mentor review", tags: ["academic"], departmentId: null },
-  { id: "GUIDE-REFERRAL-1", text: "Optional wellbeing support referral only with mentor judgement no diagnosis", tags: ["wellbeing-referral"], departmentId: null },
+  {
+    id: "GUIDE-ACADEMIC-1",
+    text: "Academic marks study plan attendance mentor review weekly catch-up",
+    tags: ["academic", "attendance"],
+    departmentId: null,
+  },
+  {
+    id: "GUIDE-LMS-1",
+    text: "LMS inactivity overdue assignments quiz learning catch-up schedule",
+    tags: ["academic", "attendance"],
+    departmentId: null,
+  },
+  {
+    id: "GUIDE-CAREER-1",
+    text: "Internship placement missed milestones preparation mentor review",
+    tags: ["academic"],
+    departmentId: null,
+  },
+  {
+    id: "GUIDE-REFERRAL-1",
+    text: "Optional wellbeing support referral only with mentor judgement no diagnosis",
+    tags: ["wellbeing-referral"],
+    departmentId: null,
+  },
 ];

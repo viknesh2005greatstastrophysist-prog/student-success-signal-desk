@@ -1,78 +1,28 @@
 # Chapter 11 completion ledger
 
-Authority: Chapter 11 of `Agentic_AI_15_Worklets_14Lab_Build_Book.docx`, read on 7 September 2026. This ledger supersedes the older requirements mapping wherever it claimed equivalence without testing the actual lab acceptance criterion.
+Authority: Chapter 11 of the supplied `Agentic_AI_15_Worklets_14Lab_Build_Book.docx`, reread on 13 October 2026, and the repo's code-level gap briefs. This ledger replaces earlier claims based on the paused Vercel portals and controlled sleep benchmarks.
 
-## Objective
+The six roles share one Streamlit app and Core database. Original college values remain intact. Reporting year/period, units, 0/NA/TNS meanings and mark maxima remain unknown. Additional operational records and account relationships are project-created, not verified institutional records.
 
-One deployed, connected student-support workflow: clarify and lock a plan; collect four authorized sources; calculate transparent risk; retrieve scoped references; draft and validate recommendations; repair bounded failures; pause for mentor approval; publish, track, export and roll back. The six portals share the same backend state.
+| Brief | Status | Implemented and verified locally |
+|---|---|---|
+| 1 | Done | Scoped mentor composite risk, contributing signals, pre-draft reasoning, recorded validation/repairs and immutable intervention history/CSV. Actual mentor RPC and AppTest checks. |
+| 2 | Done | Per-plan aggregate counts and average risk by band; HoD bar/line charts; old portal contract corrected. Counts independently compared with scoped jobs. |
+| 3 | Done | Four separate read connections import one exported repeatable-read snapshot. Per-source timings and locked-plan merge alignment recorded. Real executePlan comparison: identical quality, sequential median 22 ms versus parallel 17 ms on this machine; six technical reviews stayed pending. This is not a production load guarantee. |
+| 4 | Done | Persistent faults and exhausted job retries stop at needs-human; diagnosis remains visible; offered templates do not auto-advance. Four acceptance-fault injections and real executor retry-cap checks. |
+| 5 | Done | Per-run/cycle validation, repairs, fallback/escalation, mode, edit distance, approve-as-is and decision latency, derived from durable facts. One-action restoration copies an earlier approved publication into a new immutable version. Fictional isolated integration verified exact Student/Parent visibility, stale and unauthorized denial. |
+| 6 | Done | All weights/cutoffs are explicit; additive scoring fields preserve old policy bodies. Only owning faculty accounts approve policies. Actual approver attestations and policy version enforce thresholds_faculty_set. HoD cannot delegate approval. |
+| 7 | Done | Same-plan answer/revision RPC and UI, typed feedback scope/focus/policy changes, dynamic steps, revision-checked pause/resume. Actual local UI clarified, revised, locked and paused/resumed without execution or approval. |
+| 8 | Done | Scoped audited priorInterventions connector, cross-student approved action categories, tags from earlier actions, lexical top-k references in anonymized remote composition, replaceable adapters and visible reference evidence. |
+| 9 | Done locally | Named executable graph, bounded validator/regenerator loop, node states in AI Activity, specialist registry instructions used by composer. The approval command alone completes publication. |
+| 10 | Owner action pending | A real case and an actual mentor's one-session sign-off have not been performed or simulated by Codex. |
 
-## Execution milestones
+Final local verification: 71 enabled Core tests passed; six unrelated opt-in DB tests remained skipped. The Chapter11 durable integration ran separately in fresh fictional schemas and passed. Six actual local logins and 21 workspace pages passed AppTest. Core/portal-kit typechecks, Ruff and diff checks passed. Scoped gstack native review found and then cleared approval-provenance and stale-audit defects. External Claude review was not run under the zero-spend constraint.
 
-1. Correct acceptance mapping and establish the current baseline.
-2. Implement typed coordinator, connector, specialist workers, retrieval, policy and validation contracts in the current backend.
-3. Add durable plans, checkpoints, cohort execution and mentor decisions to the shared database and portals.
-4. Verify failure recovery, privacy, citations, model/fallback behavior, approval and rollback.
-5. Verify the complete browser journey and deploy the exact tested release.
-6. Produce submission guide, architecture, lab evidence, demo script and limitations.
+Student 021 has one preserved historical rejected case; its latest presentation case remains awaiting faculty with no decision and no published plan. The release guard now checks the latest case status and its decision count, in addition to no approvals/publications.
 
-## Acceptance requirements
+Deployment verification and current release reference will be appended after redeployment. A local pass is not a hosted pass.
 
-| Lab | Implementation and evidence | Remaining boundary |
-| --- | --- | --- |
-| 1 | Typed coordinator asks three missing constraints; editable, versioned plan then hash lock; unit and browser checks | No arbitrary natural-language tool autonomy |
-| 2 | Four source envelopes, normalized percentages and transparent policy arithmetic; boundary tests | Academic and LMS sources use actual demo records; career sources use synthetic fixtures |
-| 3 | Reusable `planSkill` and `formatSkill`; executable notebook | None for the demonstrated scope |
-| 4 | Scoped tags plus cosine ranking of lexical embeddings; prior support history separate from checkpoints | Not a pretrained semantic embedding model |
-| 5 | Authenticated Core connector routes and typed source interface; assignment scope checks | Native LMS is connected; external institution adapters require authorized source contracts |
-| 6 | PostgreSQL checkpoints, leases, timeout, concurrency and repair budgets; reconnect/resume test | Four jobs per request; repeat to continue larger cohorts |
-| 7 | Explicit collection, validation, risk, recommendation, repair and mentor stages | Implemented in TypeScript; book pseudocode is language-neutral |
-| 8 | Eight-student sequential/parallel comparison with identical output hashes; candidate selection recorded | Controlled source-I/O timing, not a production load test |
-| 9 | Exact evidence paths/statements and full trigger coverage; unsupported prose rejected | Synthetic evidence is not verified institutional evidence |
-| 10 | Field-level repairs, two-attempt budget, injected failures and labelled fallback | Model availability is external |
-| 11 | `npm run chapter11:build` emits artifact, hashes and acceptance report; publish hard gate | Credential-free build does not publish |
-| 12 | Assigned mentor edits, exact-version approval, outcomes, withdrawal/restoration, role and browser tests | Test identities are not actual faculty approval |
-| 13 | Academic, attendance and wellbeing-referral registry; all three validated in cohort build | Approved action catalogue intentionally bounds model freedom |
-| 14 | Six connected portals; prior local model journey and hosted publication/rollback journey verified | Real-case demonstration and actual mentor approval remain external |
+Remaining institutional boundary: the owner must confirm source definitions/year/period, real account ownership and mentor relationships, supply authorized external LMS/career records if needed, and conduct the actual mentor session. No direct contact, payment-provider integration, autonomous approvals or diagnosis is enabled. Lexical retrieval is not claimed to be pretrained semantic retrieval.
 
-## Claim boundaries
-
-- Existing Python tests passing does not prove all labs are satisfied.
-- Synthetic records and demonstration thresholds are not institutional data or faculty approval.
-- Model execution, fallback execution and test doubles must be separately reported.
-- No agent directly contacts students or changes marks, attendance or financial records.
-- A real-case demonstration requires authorized data, or faculty acceptance of a synthetic substitute. Neither may be invented.
-- Automated release scheduling remains paused; this user-authorized run performs work directly.
-
-## Verification log
-
-7 September 2026:
-- `npm run check`: 25 build/lint/type tasks, 7 platform tests and 14 Core tests passed; 2 database tests deliberately skipped in the generic suite.
-- Explicit Chapter 11 database suite passed, including reconnect/resume, scoped approval, edited-artifact replay and withdrawal/restoration.
-- Existing full database regression passed after migration table/trigger counts were updated.
-- `npm audit --omit=dev --audit-level=high`: zero vulnerabilities.
-- Credential-free build: 8 students, 3 specialists, identical sequential/parallel results. Exact measured timing is in `platform/artifacts/chapter11/build-acceptance.json`.
-- Notebook: all four code cells executed successfully; outputs retained.
-- Live local model `qwen3.8:27b-mlx` passed the standalone packet check. A later browser run exposed a 20-second timeout; the bounded timeout is now 45 seconds with a 180-second job lease. Final browser rerun passed with real-model execution after correcting the local reasoning-channel response format.
-- Earlier full browser checks also identified low-contrast Governance text and a stale expected label in the older journey test; both corrected before the rerun.
-- Submission report DOCX and PDF rendered and inspected across all three pages. Source, notebook and demo script are in `submission/`.
-- Production Core environment has no Chapter 11 model credential or endpoint. Cloud live-model execution must not be claimed.
-
-Final local acceptance:
-- Chapter 11 live-model browser journey: passed in 2.1 minutes. Evidence exported before mentor approval; the subsequent browser assertions verified approval, separate student/parent views, withdrawal, restoration, responsive layouts and accessibility.
-- Existing J01-J10 browser journey: passed in 2.2 minutes after updating its renamed label and reusing the already authenticated Governance session.
-- All-portal quality suite: passed after fixing Governance text contrast.
-- Latest explicit database integration rerun: passed after a transient network interruption. No failed or cancelled run is counted as a pass.
-- Ten Chapter 11 unit tests pass, including final-answer decoding and malformed-output repair.
-- Model transport follows the distinction between thinking and final content described in https://docs.ollama.com/capabilities/thinking; the observed local compatibility response included a closing thinking delimiter, now decoded before packet validation.
-
-- Final `npm run check` after all fixes: 25 tasks passed, 7 platform tests passed, 16 Core tests passed; 2 database-only tests skipped there and exercised separately.
-
-Deployment and reproducibility:
-- Release `34424ecb136433a91d37fcafd1663ee637eaeedf` has the identical application tree to tested commit `dc98bd4db2de6dac795bda4c051c11dbc6803733`. Its verified GitHub author identity resolved Vercel's initial deployment block without rewriting history.
-- All seven public health endpoints report that release and all checked security headers. Production acceptance passed: three consecutive J01–J10 journeys, the 22-view quality suite and the Chapter 11 publication/rollback journey. See `RELEASE_EVIDENCE.md`.
-- Added local initialization and corrected new-client provisioning: local loopback clients and production HTTPS clients use separate profiles; fixed public PKCE IDs match the checked-in portal contract.
-- Initialized isolated identity/Core schemas successfully, linked five demo identities, and reran initialization with zero new identities while preserving the institutional generation. Auth provisioning passed lint and type checks.
-
-## 8 September six-portal rebuild
-
-The agreed Student, Parent, Mentor, HoD, AI Activity and LMS workflows are implemented and deployed. Actual native LMS activity replaces fixed LMS fixtures for new reviews. Hosted registration/academic/parent, LMS feedback, mentor publication and six-portal quality checks passed; source and evidence versions are in RELEASE_EVIDENCE.md. Mentor reassignment revokes former-mentor historical reads while preserving evidence and HoD oversight. The professor's real-case and actual mentor acceptance requirement is unchanged.
+Details and per-brief verification: `CHAPTER11_GAP_IMPLEMENTATION.md`. Briefs 11–16 are a subsequent authorized phase and are not yet implemented or claimed complete here.

@@ -82,15 +82,8 @@ c = Client()
 login = c.login(account["email"], account["password"], "faculty")
 try:
     saved = c.request("plan_export", {"planId": plan_id}, token=login["token"])
-    assert (
-        saved["plan"]["body"]["domain"] == "attendance"
-        and saved["plan"]["revision"] == 4,
-        {
-            "domain": saved["plan"]["body"]["domain"],
-            "feedback": saved["plan"]["body"]["feedback"],
-            "revision": saved["plan"]["revision"],
-        },
-    )
+    assert saved["plan"]["body"]["domain"] == "attendance"
+    assert saved["plan"]["revision"] == 4
     assert saved["jobs"][0]["status"] == "queued"
     assert any(e["event_type"] == "plan.revised" for e in saved["events"])
 finally:

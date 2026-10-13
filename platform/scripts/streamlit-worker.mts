@@ -255,7 +255,14 @@ async function dispatch(
   if (action === "policy_approve") return approvePolicy(a, body, cmd);
   if (action === "plan_save")
     return savePlan(a, body, undefined, undefined, cmd);
-  if(action === "plan_revise") return savePlan(a,p.input,uuid(p.planId),z.number().int().nonnegative().parse(p.expectedRevision),cmd);
+  if (action === "plan_revise")
+    return savePlan(
+      a,
+      p.input,
+      uuid(p.planId),
+      z.number().int().nonnegative().parse(p.expectedRevision),
+      cmd,
+    );
   if (action === "plan_lock")
     return lockPlan(
       a,
@@ -289,7 +296,10 @@ async function dispatch(
       supportDecisionInput.parse(body),
     );
   }
-  if(action === "version_restore") {delete body.planId;return restoreVersion(a,uuid(p.planId),cmd,body);}
+  if (action === "version_restore") {
+    delete body.planId;
+    return restoreVersion(a, uuid(p.planId), cmd, body);
+  }
   if (action === "outcome") {
     delete body.planId;
     return recordOutcome(a, uuid(p.planId), cmd, body);

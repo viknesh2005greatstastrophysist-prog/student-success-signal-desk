@@ -269,10 +269,10 @@ export async function decideSupportCase(
     }
     const result = await client.query<{
       case_id: string; student_id: string; department_id: string; status: string; revision: number;
-      artifact_id: string; content_hash: string; recommendation: Recommendation; assigned_faculty_person_id: string;
+      artifact_id: string; content_hash: string; recommendation: Recommendation; assigned_faculty_person_id: string; artifact_validation:{valid?:boolean;chapter11?:boolean;policyVersion?:string;checks?:Record<string,boolean>}; source:string;
     }>(
       `SELECT support_case.id AS case_id, support_case.student_id, student.department_id, support_case.status, support_case.revision,
-              artifact.id AS artifact_id, artifact.content_hash, artifact.recommendation,
+              artifact.id AS artifact_id, artifact.content_hash, artifact.recommendation, artifact.validation AS artifact_validation, support_case.source,
               evidence.evidence->>'assignedFacultyPersonId' AS assigned_faculty_person_id
        FROM support_cases support_case
        JOIN student_profiles student ON student.id = support_case.student_id
@@ -288,9 +288,20 @@ export async function decideSupportCase(
     if (!result.rowCount) throw new NotFoundError("Assigned support case not found");
     const current = result.rows[0]!;
     if (current.status !== "awaiting_faculty") throw new ConflictError("CASE_NOT_AWAITING_DECISION", "This support case is no longer awaiting a decision");
+    if (current.assigned_faculty_person_id !== actor.personId) {
+      throw new ConflictError("MENTOR_ASSIGNMENT_CHANGED", "This artifact was prepared for a different mentor; create a new review before deciding");
+    }
     if (current.revision !== input.expectedRevision) throw new ConflictError("STALE_VERSION", "The support case changed after this page loaded");
     if (current.artifact_id !== input.artifactId || current.content_hash !== input.contentHash) {
       throw new ConflictError("STALE_ARTIFACT", "Approve or reject only the exact current artifact");
+    }
+    if(input.decision==='approved') {
+      if(current.artifact_validation.valid!==true)throw new ConflictError('VALIDATION_REQUIRED','The exact current artifact must have a passing validation report');
+      if(current.source.startsWith('chapter11:')){
+        if(!['alerts_cite_triggers','thresholds_faculty_set','advisor_review_required','privacy_scope_enforced'].every(key=>current.artifact_validation.checks?.[key]===true))throw new ConflictError('VALIDATION_REQUIRED','Revalidate this legacy draft before approval; all four acceptance checks are required');
+        const authority=await client.query(`SELECT pa.policy_version FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id JOIN ch11_policy_attestations pa ON pa.policy_id=(p.body->>'policyId')::uuid AND pa.generation_id=j.generation_id WHERE j.support_case_id=$1 AND j.generation_id=$2 AND pa.approved_role='faculty' AND pa.policy_version=$3`,[caseId,generationId,current.artifact_validation.policyVersion??'']);
+        if(!authority.rowCount)throw new ConflictError('POLICY_VALIDATION_REQUIRED','Faculty policy provenance must be verified before approving this artifact. Revalidate the draft or create a new review.');
+      }
     }
     const decisionId = randomUUID();
     await client.query(
@@ -308,6 +319,7 @@ export async function decideSupportCase(
       );
       plan = { id: planId, plan: current.recommendation, visibleToStudent: true };
     }
+    await client.query(`UPDATE ch11_jobs SET checkpoint=jsonb_set(jsonb_set(checkpoint,'{nodeTrace,HumanGate}',$3::jsonb,true),'{nodeTrace,DashboardPublisher}',$4::jsonb,true) WHERE generation_id=$1 AND support_case_id=$2 AND checkpoint ? 'nodeTrace'`,[generationId,caseId,JSON.stringify({status:'completed',visits:1,elapsedMs:0,decisionId}),JSON.stringify({status:input.decision==='approved'?'completed':'cancelled',visits:input.decision==='approved'?1:0,elapsedMs:0,decisionId})]);
     const nextStatus = input.decision === "approved" ? "approved" : "rejected";
     const updated = await client.query<{ revision: number }>(
       "UPDATE support_cases SET status = $2, revision = revision + 1 WHERE id = $1 RETURNING revision",
