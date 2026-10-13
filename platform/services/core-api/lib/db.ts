@@ -51,8 +51,58 @@ export async function withCoreSnapshot<T>(work:(client:PoolClient)=>Promise<T>):
 }
 
 export async function closePool(): Promise<void> {
+  if(sourcePool) { await sourcePool.end(); sourcePool=undefined; }
   if (pool) {
     await pool.end();
     pool = undefined;
   }
 }
+
+let sourcePool: Pool | undefined;
+let captureTail: Promise<void> = Promise.resolve();
+/** Four independent read connections import one exported MVCC snapshot. A capture
+ * gate bounds source connections and prevents concurrent jobs starving exporters. */
+export async function collectSnapshot<T>(readers: Array<() => Promise<T>>, concurrency = 4) {
+  const previous = captureTail;
+  let unlock!: () => void;
+  captureTail = new Promise<void>(resolve => { unlock = resolve; });
+  await previous;
+  let exporter: PoolClient | undefined;
+  const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
+  try {
+    exporter = await getPool().connect();
+    await exporter.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    await exporter.query(`SET LOCAL search_path TO ${schema}, public`);
+    await exporter.query("SELECT pg_advisory_xact_lock_shared($1)", [420042]);
+    const revision = (await exporter.query<{revision:string}>("SELECT revision::text FROM institution_revisions WHERE singleton=true FOR SHARE")).rows[0]!.revision;
+    const snapshot = (await exporter.query<{snapshot:string}>("SELECT pg_export_snapshot() AS snapshot")).rows[0]!.snapshot;
+    if (!/^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i.test(snapshot)) throw new Error("Invalid exported snapshot identifier");
+    sourcePool ??= new Pool({ connectionString: loadCoreConfig().databaseUrl, max: 4, idleTimeoutMillis: 20000, connectionTimeoutMillis:10000 });
+    if (!sourcePool.listeners("error").length) sourcePool.on("error", sourcePoolError);
+    const results: T[] = [];
+    const timings: number[] = [];
+    let cursor = 0;
+    const settled = await Promise.allSettled(Array.from({length:Math.min(concurrency,readers.length)}, async () => {
+      while(cursor < readers.length) {
+        const index = cursor++;
+        const client = await sourcePool!.connect();
+        const started = performance.now();
+        try {
+          await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          await client.query(`SET TRANSACTION SNAPSHOT '${snapshot}'`);
+          await client.query(`SET LOCAL search_path TO ${schema}, public`);
+          results[index] = await snapshotClient.run(client, readers[index]!);
+          await client.query("COMMIT");
+          timings[index] = performance.now()-started;
+        } catch(error) { await client.query("ROLLBACK"); throw error; }
+        finally {client.release();}
+      }
+    }));
+    const failure = settled.find(r => r.status === 'rejected');
+    if(failure?.status === 'rejected') throw failure.reason;
+    await exporter.query("COMMIT");
+    return {results,timings,evidenceRevision:revision,capturedAt:new Date().toISOString()};
+  } catch(error) { if(exporter) await exporter.query("ROLLBACK"); throw error; }
+  finally { exporter?.release(); unlock(); }
+}
+function sourcePoolError() { console.error("A source reader closed; the pool will replace it."); }

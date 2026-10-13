@@ -1229,6 +1229,20 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 ]
             )
 
+    for job in review_jobs:
+        if job.get("source_timings"):
+            with st.expander("Collector timings · " + str(job["id"])[:8]):
+                st.caption(
+                    "Independent source readers use one exported database snapshot. Revision: "
+                    + str(job.get("evidence_revision"))
+                )
+                dataframe(
+                    [
+                        {"Source": name, "Milliseconds": round(elapsed, 2)}
+                        for name, elapsed in job["source_timings"].items()
+                    ]
+                )
+
 
 def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None:
     if actor.get("role") != "faculty":

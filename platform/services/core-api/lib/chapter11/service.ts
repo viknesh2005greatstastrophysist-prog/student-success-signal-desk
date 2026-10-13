@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
 import { lmsEvidence } from "../lms-queries";
-import { withCoreSnapshot, withCoreTransaction } from "../db";
+import { collectSnapshot, withCoreTransaction } from "../db";
 import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
 import { ConflictError, NotFoundError } from "../http";
 import { AuthorizationError, requireRole, requireDemoInstitution } from "../security";
@@ -19,7 +19,7 @@ import { compositeRiskView } from "./dashboard";
 type PlanBody = ReturnType<typeof planSkill>;
 type PlanRow = { id: string; generation_id: string; created_by: string; department_id: string; revision: number; status: string; paused: boolean; body: PlanBody; plan_hash: string };
 type Job = { id: string; generation_id: string; plan_id: string; student_id: string; faculty_person_id: string; status: string; stage: string; checkpoint: Checkpoint; lease_token: string; support_case_id: string | null };
-type Checkpoint = { evidence?: Evidence; evidenceRevision?: string; capturedAt?: string; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy };
+type Checkpoint = { evidence?: Evidence; evidenceRevision?: string; capturedAt?: string; sourceTimings?: Record<string,number>; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy };
 
 async function audit(client: PoolClient, generation: string, actor: ActorContext, subject: string, event: string, input: unknown, output: unknown) {
   await client.query("INSERT INTO ch11_events(id,generation_id,subject_id,actor_person_id,event_type,input_hash,output_hash,detail) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)", [randomUUID(), generation, subject, actor.personId, event, digest(input), digest(output), JSON.stringify({ input, output })]);
@@ -243,7 +243,7 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
   });
 }
 
-export async function executePlan(actor: ActorContext, planId: string, options: { concurrency?: number; composer?: Composer; stopAfterStage?: string } = {}) {
+export async function executePlan(actor: ActorContext, planId: string, options: { concurrency?: number; composer?: Composer; stopAfterStage?: string; collectorConcurrency?: 1 | 4 } = {}) {
   requireRole(actor, "faculty", "hod", "governance");
   const start = performance.now();
   const initial = await withCoreTransaction(async client => {
@@ -268,14 +268,8 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
     try {
       await ensureReviewRunning(actor,planId);
       if (!job.checkpoint.evidence || !job.checkpoint.evidenceRevision) {
-        // Holding the revision row prevents ordinary domain writes from committing
-        // while the four collectors read. The lock is released before model work.
-        const capture=await withCoreSnapshot(async client=>{
-          const revision=await client.query<{revision:string}>("SELECT revision::text FROM institution_revisions WHERE singleton=true FOR SHARE");
-          const evidence={} as Evidence;
-          for(const source of sourceNames) evidence[source]=await readSource(actor,job.student_id,source);
-          return {evidence,evidenceRevision:revision.rows[0]!.revision,capturedAt:new Date().toISOString()};
-        });
+        const snapshot=await collectSnapshot(sourceNames.map(source=>()=>readSource(actor,job.student_id,source)),options.collectorConcurrency??4);
+        const capture={evidence:Object.fromEntries(sourceNames.map((source,i)=>[source,snapshot.results[i]])) as Evidence,evidenceRevision:snapshot.evidenceRevision,capturedAt:snapshot.capturedAt,sourceTimings:Object.fromEntries(sourceNames.map((source,i)=>[source,snapshot.timings[i]]))};
         const {evidence,capturedAt}=capture;
         validateEvidence(evidence, job.student_id, initial.policy, capturedAt, evidence.academic.semester);
         job.checkpoint={};
@@ -312,7 +306,8 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
       return { id, error: code };
     }
   });
-  const report = { planId, elapsedMs: Math.round(performance.now() - start), concurrency: options.concurrency ?? initial.plan.body.budget.concurrency, results };
+  const alignment = { planHash:initial.plan.plan_hash, policyVersion:initial.policy.version, domain:initial.plan.body.domain, scopedStudentIds:initial.plan.body.studentIds, selectedJobIds:results.filter(r=>"completed" in r && r.completed).map(r=>r.id), rejectedJobIds:results.filter(r=>!("completed" in r && r.completed)).map(r=>r.id), rule:"Merge only completed jobs from this locked plan, with the same approved policy and scoped student list; failures remain separately visible." };
+  const report = { planId, alignment, elapsedMs: Math.round(performance.now() - start), concurrency: options.concurrency ?? initial.plan.body.budget.concurrency, results };
   await withCoreTransaction(client => audit(client, initial.plan.generation_id, actor, planId, "execution.merged", { studentIds: initial.plan.body.studentIds, planHash: initial.plan.plan_hash }, report));
   return report;
 }
@@ -328,7 +323,7 @@ export async function overview(actor: ActorContext) {
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
-    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
+    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends=await client.query(`SELECT p.id AS cycle_id,
       to_char(p.created_at,'YYYY-MM-DD') || ' / ' || left(p.id::text,8) AS day,
       count(*) FILTER (WHERE j.checkpoint ? 'risk')::int AS reviewed,

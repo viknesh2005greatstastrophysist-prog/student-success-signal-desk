@@ -26824,10 +26824,73 @@ async function withCoreSnapshot(work) {
   return withCoreTransaction((client) => snapshotClient.run(client, () => work(client)));
 }
 async function closePool() {
+  if (sourcePool) {
+    await sourcePool.end();
+    sourcePool = void 0;
+  }
   if (pool) {
     await pool.end();
     pool = void 0;
   }
+}
+var sourcePool;
+var captureTail = Promise.resolve();
+async function collectSnapshot(readers, concurrency = 4) {
+  const previous = captureTail;
+  let unlock;
+  captureTail = new Promise((resolve) => {
+    unlock = resolve;
+  });
+  await previous;
+  let exporter;
+  const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
+  try {
+    exporter = await getPool().connect();
+    await exporter.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    await exporter.query(`SET LOCAL search_path TO ${schema}, public`);
+    await exporter.query("SELECT pg_advisory_xact_lock_shared($1)", [420042]);
+    const revision2 = (await exporter.query("SELECT revision::text FROM institution_revisions WHERE singleton=true FOR SHARE")).rows[0].revision;
+    const snapshot = (await exporter.query("SELECT pg_export_snapshot() AS snapshot")).rows[0].snapshot;
+    if (!/^[0-9A-F]+-[0-9A-F]+-[0-9]+$/i.test(snapshot)) throw new Error("Invalid exported snapshot identifier");
+    sourcePool ??= new Pool({ connectionString: loadCoreConfig().databaseUrl, max: 4, idleTimeoutMillis: 2e4, connectionTimeoutMillis: 1e4 });
+    if (!sourcePool.listeners("error").length) sourcePool.on("error", sourcePoolError);
+    const results = [];
+    const timings = [];
+    let cursor = 0;
+    const settled = await Promise.allSettled(Array.from({ length: Math.min(concurrency, readers.length) }, async () => {
+      while (cursor < readers.length) {
+        const index = cursor++;
+        const client = await sourcePool.connect();
+        const started = performance.now();
+        try {
+          await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          await client.query(`SET TRANSACTION SNAPSHOT '${snapshot}'`);
+          await client.query(`SET LOCAL search_path TO ${schema}, public`);
+          results[index] = await snapshotClient.run(client, readers[index]);
+          await client.query("COMMIT");
+          timings[index] = performance.now() - started;
+        } catch (error61) {
+          await client.query("ROLLBACK");
+          throw error61;
+        } finally {
+          client.release();
+        }
+      }
+    }));
+    const failure = settled.find((r) => r.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    await exporter.query("COMMIT");
+    return { results, timings, evidenceRevision: revision2, capturedAt: (/* @__PURE__ */ new Date()).toISOString() };
+  } catch (error61) {
+    if (exporter) await exporter.query("ROLLBACK");
+    throw error61;
+  } finally {
+    exporter?.release();
+    unlock();
+  }
+}
+function sourcePoolError() {
+  console.error("A source reader closed; the pool will replace it.");
 }
 
 // services/core-api/lib/command-ledger.ts
@@ -29736,12 +29799,8 @@ async function executePlan(actor, planId, options = {}) {
     try {
       await ensureReviewRunning(actor, planId);
       if (!job.checkpoint.evidence || !job.checkpoint.evidenceRevision) {
-        const capture = await withCoreSnapshot(async (client) => {
-          const revision2 = await client.query("SELECT revision::text FROM institution_revisions WHERE singleton=true FOR SHARE");
-          const evidence2 = {};
-          for (const source of sourceNames) evidence2[source] = await readSource(actor, job.student_id, source);
-          return { evidence: evidence2, evidenceRevision: revision2.rows[0].revision, capturedAt: (/* @__PURE__ */ new Date()).toISOString() };
-        });
+        const snapshot = await collectSnapshot(sourceNames.map((source) => () => readSource(actor, job.student_id, source)), options.collectorConcurrency ?? 4);
+        const capture = { evidence: Object.fromEntries(sourceNames.map((source, i) => [source, snapshot.results[i]])), evidenceRevision: snapshot.evidenceRevision, capturedAt: snapshot.capturedAt, sourceTimings: Object.fromEntries(sourceNames.map((source, i) => [source, snapshot.timings[i]])) };
         const { evidence, capturedAt } = capture;
         validateEvidence(evidence, job.student_id, initial.policy, capturedAt, evidence.academic.semester);
         job.checkpoint = {};
@@ -29781,7 +29840,8 @@ async function executePlan(actor, planId, options = {}) {
       return { id, error: code };
     }
   });
-  const report = { planId, elapsedMs: Math.round(performance.now() - start), concurrency: options.concurrency ?? initial.plan.body.budget.concurrency, results };
+  const alignment = { planHash: initial.plan.plan_hash, policyVersion: initial.policy.version, domain: initial.plan.body.domain, scopedStudentIds: initial.plan.body.studentIds, selectedJobIds: results.filter((r) => "completed" in r && r.completed).map((r) => r.id), rejectedJobIds: results.filter((r) => !("completed" in r && r.completed)).map((r) => r.id), rule: "Merge only completed jobs from this locked plan, with the same approved policy and scoped student list; failures remain separately visible." };
+  const report = { planId, alignment, elapsedMs: Math.round(performance.now() - start), concurrency: options.concurrency ?? initial.plan.body.budget.concurrency, results };
   await withCoreTransaction((client) => audit(client, initial.plan.generation_id, actor, planId, "execution.merged", { studentIds: initial.plan.body.studentIds, planHash: initial.plan.plan_hash }, report));
   return report;
 }
@@ -29796,7 +29856,7 @@ async function overview(actor) {
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
-    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
+    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends = await client.query(`SELECT p.id AS cycle_id,
       to_char(p.created_at,'YYYY-MM-DD') || ' / ' || left(p.id::text,8) AS day,
       count(*) FILTER (WHERE j.checkpoint ? 'risk')::int AS reviewed,
