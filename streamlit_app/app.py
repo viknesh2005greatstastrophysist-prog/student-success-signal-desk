@@ -100,6 +100,7 @@ def load(action: str, data: dict[str, Any] | None = None) -> Any:
         if error.status == 401:
             st.session_state.pop("token", None)
             st.session_state.pop("actor", None)
+            st.session_state.pop("success_notice", None)
             st.warning("Your session has ended. Sign in again to continue.")
         else:
             st.error(str(error))
@@ -110,12 +111,19 @@ def save_action(action: str, data: dict[str, Any], success: str) -> Any | None:
     try:
         with st.spinner("Saving your changes…"):
             result = request(action, data)
-        st.success(success)
+        if action == "replay":
+            st.success(success)
+            return result
+        if action == "plan_save":
+            st.session_state.pop("review_plan", None)
+        st.session_state["success_notice"] = success
+        st.rerun()
         return result
     except BridgeError as error:
         if error.status == 401:
             st.session_state.pop("token", None)
             st.session_state.pop("actor", None)
+            st.session_state.pop("success_notice", None)
             st.warning("Your session has ended. Sign in again to continue.")
         else:
             st.error(str(error))
@@ -132,7 +140,10 @@ def attachment_payload(uploaded: Any) -> tuple[dict[str, str] | None, str | None
     if len(uploaded.name) > 100 or not all(
         character.isalnum() or character in " ._()-" for character in uploaded.name
     ):
-        return None, "Use a file name with letters, numbers, spaces, dots, brackets, underscores, or hyphens."
+        return (
+            None,
+            "Use a file name with letters, numbers, spaces, dots, brackets, underscores, or hyphens.",
+        )
     return {
         "name": uploaded.name,
         "data": base64.b64encode(uploaded.getvalue()).decode("ascii"),
@@ -179,6 +190,7 @@ def login_view() -> None:
             st.error("This account cannot enter the selected workspace.")
             return
         # Keep only the opaque session token and the authenticated actor in session state.
+        st.session_state.pop("success_notice", None)
         st.session_state["token"] = result["token"]
         st.session_state["actor"] = {**actor, "portal": portal}
         st.rerun()
@@ -479,7 +491,7 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
                     "Record payment attempt", type="primary"
                 )
             if submitted:
-                result = save_action(
+                save_action(
                     "payment",
                     {
                         "invoiceId": invoice["id"],
@@ -488,11 +500,6 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
                     },
                     "Payment attempt recorded.",
                 )
-                if result:
-                    transaction = result.get("transaction") or {}
-                    st.write(
-                        f"Recorded amount: {money(transaction.get('amountPaise'))} · Status: {transaction.get('status', 'not recorded')}"
-                    )
         elif any(
             row.get("payment_simulation_allowed")
             and int(row.get("amount_paise") or 0) > int(row.get("paid_paise") or 0)
@@ -603,8 +610,7 @@ def render_parent_records(
                 sum(
                     max(
                         0,
-                        int(i.get("amount_paise") or 0)
-                        - int(i.get("paid_paise") or 0),
+                        int(i.get("amount_paise") or 0) - int(i.get("paid_paise") or 0),
                     )
                     for i in detail.get("invoices", [])
                 )
@@ -1172,25 +1178,11 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
     if selected_plan.get("status") == "locked":
         st.caption("This plan is locked. Its saved scope and policy cannot be edited.")
         if st.button("Run review", type="primary", key=f"run_{selected_plan['id']}"):
-            result = save_action(
+            save_action(
                 "plan_execute",
                 {"planId": selected_plan["id"]},
-                "Review run finished. Check each result below.",
+                "Review run recorded. Saved activity has been refreshed.",
             )
-            if result is not None:
-                dataframe(
-                    [
-                        {
-                            "Job": row.get("id"),
-                            "Result": "Completed"
-                            if row.get("completed")
-                            else "Skipped"
-                            if row.get("skipped")
-                            else row.get("error", "Not recorded"),
-                        }
-                        for row in result.get("results", [])
-                    ]
-                )
     elif selected_plan.get("status") != "locked" and not questions:
         if st.button(
             "Lock review plan", type="primary", key=f"lock_{selected_plan['id']}"
@@ -1375,7 +1367,6 @@ def render_draft_reviews(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         )
         edit_rationale = st.text_area("Reason for this edit", max_chars=600)
         edit_submitted = st.form_submit_button("Save new draft version")
-    saved_this_run = False
     if edit_submitted:
         edited = edited_actions.to_dict(orient="records")
         original_codes = [row.get("code") for row in actions]
@@ -1397,7 +1388,7 @@ def render_draft_reviews(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         if len(edit_rationale.strip()) < 12:
             st.error("Enter an edit reason of at least twelve characters.")
         else:
-            result = save_action(
+            save_action(
                 "draft_edit",
                 {
                     "caseId": selected["id"],
@@ -1408,12 +1399,6 @@ def render_draft_reviews(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                 },
                 "A new draft version was saved.",
             )
-            saved_this_run = result is not None
-    if saved_this_run:
-        st.info(
-            "Reload the support review to confirm the saved version before deciding on it."
-        )
-        return
     with st.form(f"decide_draft_{selected['id']}_{selected.get('artifact_id')}"):
         decision = st.radio(
             "Decision",
@@ -1747,7 +1732,9 @@ def render_lms(actor: dict[str, Any]) -> None:
                         payload.update(
                             {
                                 "id": selected_assignment["id"],
-                                "expectedRevision": int(selected_assignment["revision"]),
+                                "expectedRevision": int(
+                                    selected_assignment["revision"]
+                                ),
                             }
                         )
                     save_action("lms_command", payload, "Assignment saved.")
@@ -1808,9 +1795,8 @@ def render_lms(actor: dict[str, Any]) -> None:
                     except BridgeError as error:
                         st.error(str(error))
                         attachment = None
-                if (
-                    attachment is not None
-                    or not (current_submission and current_submission.get("attachment_name"))
+                if attachment is not None or not (
+                    current_submission and current_submission.get("attachment_name")
                 ):
                     payload = {
                         "action": "submit-assignment",
@@ -2051,9 +2037,13 @@ def main() -> None:
     if role not in PORTAL_ROLES.get(portal, set()):
         st.session_state.pop("actor", None)
         st.session_state.pop("token", None)
+        st.session_state.pop("success_notice", None)
         st.error("Your session no longer matches this workspace. Sign in again.")
         st.stop()
     sign_in_sidebar(actor)
+    success_notice = st.session_state.pop("success_notice", None)
+    if success_notice:
+        st.success(success_notice)
     pages = portal_pages(portal)
     page = (
         st.sidebar.radio("Workspace", pages, label_visibility="collapsed")
