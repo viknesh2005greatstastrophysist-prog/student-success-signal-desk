@@ -18,7 +18,7 @@ import { compositeRiskView } from "./dashboard";
 
 type PlanBody = ReturnType<typeof planSkill>;
 type PlanRow = { id: string; generation_id: string; created_by: string; department_id: string; revision: number; status: string; paused: boolean; body: PlanBody; plan_hash: string };
-type Job = { id: string; generation_id: string; plan_id: string; student_id: string; faculty_person_id: string; status: string; stage: string; checkpoint: Checkpoint; lease_token: string; support_case_id: string | null };
+type Job = { id: string; generation_id: string; plan_id: string; student_id: string; faculty_person_id: string; status: string; stage: string; checkpoint: Checkpoint; lease_token: string; support_case_id: string | null; attempts:number };
 type Checkpoint = { evidence?: Evidence; evidenceRevision?: string; capturedAt?: string; sourceTimings?: Record<string,number>; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy };
 
 async function audit(client: PoolClient, generation: string, actor: ActorContext, subject: string, event: string, input: unknown, output: unknown) {
@@ -253,7 +253,7 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
     const policy = await client.query<{ policy: Policy; faculty_person_id: string }>("SELECT policy,faculty_person_id FROM ch11_policies WHERE id=$1 AND generation_id=$2", [plan.body.policyId, plan.generation_id]);
     if (!policy.rowCount) throw new ConflictError("POLICY_REQUIRED", "Approved policy missing");
     await requireAssignedStudents(client, plan.generation_id, policy.rows[0]!.faculty_person_id, plan.body.studentIds!);
-    const jobs = await client.query<{ id: string }>("SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4", [plan.id, plan.generation_id]);
+    const jobs = await client.query<{ id: string }>("SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4", [plan.id, plan.generation_id]);
     return { plan, policy: policySchema.parse(policy.rows[0]!.policy), jobs: jobs.rows };
   });
   const results = await parallelMap(initial.jobs, options.concurrency ?? initial.plan.body.budget.concurrency, async ({ id }) => {
@@ -261,7 +261,7 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
       const plan=await getPlan(client,actor,planId,true);
       if(plan.paused)return undefined;
       const lease = randomUUID();
-      const claimed = await client.query<Job>("UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *", [id, lease]);
+      const claimed = await client.query<Job>("UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *", [id, lease]);
       return claimed.rows[0];
     });
     if (!job) return { id, skipped: true };
@@ -290,17 +290,24 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
       if (job.checkpoint.risk!.flagged && !job.checkpoint.composed) {
         const provider = initial.plan.body.mode === "model" ? options.composer ?? configuredComposer() : undefined;
         const composed = await compose({ evidence: job.checkpoint.evidence!, risk: job.checkpoint.risk!, domain: initial.plan.body.domain!, references: job.checkpoint.retrieval!, baseline: formatSkill(job.checkpoint.risk!, initial.plan.body.domain!) }, provider);
-        if (initial.plan.body.mode === "model" && !provider) { composed.validation.providerError = "MODEL_NOT_CONFIGURED"; composed.validation.fallback = true; }
+        if (initial.plan.body.mode === "model" && !provider) { composed.validation.providerError = "MODEL_NOT_CONFIGURED"; composed.validation.fallback = true; composed.validation.escalated=true; composed.validation.valid=false; }
         await saveCheckpoint(actor, job, "publish", { ...job.checkpoint, composed });
       }
       await ensureReviewRunning(actor,planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
+      if(job.checkpoint.composed?.validation.escalated) {
+        await withCoreTransaction(async client=>{
+          await client.query("UPDATE ch11_jobs SET status='failed',stage='needs_human',escalated_at=now(),failure_diagnosis=$2::jsonb,error_code='REPAIR_BUDGET_EXHAUSTED',lease_until=NULL WHERE id=$1 AND lease_token=$3",[job.id,JSON.stringify(job.checkpoint.composed!.validation),job.lease_token]);
+          await audit(client,job.generation_id,actor,job.id,'execution.escalated',{stage:job.stage},{diagnosis:job.checkpoint.composed!.validation});
+        });
+        return {id,escalated:true};
+      }
       await publishDraft(actor, job, initial.plan);
       return { id, completed: true };
     } catch (error) {
       const code = error instanceof DataBlocked ? "DATA_BLOCKED" : error instanceof ConflictError ? error.code : error instanceof Error && error.message === "INJECTED_STOP" ? "INJECTED_STOP" : "EXECUTION_FAILED";
       await withCoreTransaction(async client => {
-        await client.query("UPDATE ch11_jobs SET status=$2,error_code=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running'", [job.id, code === "PLAN_PAUSED" ? "queued" : code === "DATA_BLOCKED" ? "blocked" : "failed", code, job.lease_token]);
+        await client.query("UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3<>'PLAN_PAUSED' THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,attempts=CASE WHEN $3='PLAN_PAUSED' THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running'", [job.id, code === "PLAN_PAUSED" ? "queued" : code === "DATA_BLOCKED" ? "blocked" : "failed", code, job.lease_token,JSON.stringify({code,attempts:job.attempts,reasons:error instanceof DataBlocked ? error.reasons : []})]);
         await audit(client, job.generation_id, actor, job.id, "execution.stopped", { stage: job.stage }, { code, reasons: error instanceof DataBlocked ? error.reasons : [] });
       });
       return { id, error: code };
@@ -323,7 +330,7 @@ export async function overview(actor: ActorContext) {
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
-    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
+    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.checkpoint->'composed'->'packet' AS offered_template,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends=await client.query(`SELECT p.id AS cycle_id,
       to_char(p.created_at,'YYYY-MM-DD') || ' / ' || left(p.id::text,8) AS day,
       count(*) FILTER (WHERE j.checkpoint ? 'risk')::int AS reviewed,

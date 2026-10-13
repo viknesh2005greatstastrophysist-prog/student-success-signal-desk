@@ -27166,6 +27166,21 @@ function validatePacket(candidate, evidence, risk, domain2) {
   if ((p.summary.match(/\b\d+(?:\.\d+)?\b/g) ?? []).some((n) => !permittedNumbers.has(n))) failures.push({ field: "summary", code: "UNSUPPORTED_NUMBER" });
   return { valid: failures.length === 0, failures };
 }
+function acceptanceChecks(candidate, evidence, risk, domain2, policyGuard) {
+  const report = validatePacket(candidate, evidence, risk, domain2);
+  const p = packetSchema.safeParse(candidate);
+  const checks = {
+    alerts_cite_triggers: p.success && risk.signals.every((signal) => p.data.citations.some((c) => c.evidencePath === signal.path && c.statement === signal.explanation)) && !report.failures.some((f) => f.field === "citations"),
+    thresholds_faculty_set: policyGuard ? policyGuard.facultyApproved && policyGuard.version === risk.policyVersion : null,
+    advisor_review_required: p.success && p.data.actions.every((a) => a.owner === "assigned_faculty") && !report.failures.some((f) => f.code === "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS"),
+    privacy_scope_enforced: sourceNames.every((name) => evidence[name].studentId === evidence.academic.studentId)
+  };
+  const failures = [...report.failures];
+  if (checks.thresholds_faculty_set === false) failures.push({ field: "citations", code: "THRESHOLDS_NOT_FACULTY_SET" });
+  if (!checks.privacy_scope_enforced) failures.push({ field: "citations", code: "PRIVACY_SCOPE_MISMATCH" });
+  if (!checks.advisor_review_required) failures.push({ field: "actions", code: "ADVISOR_REVIEW_REQUIRED" });
+  return { valid: failures.length === 0, failures, checks };
+}
 function providerFailure(error61) {
   if (error61 instanceof SyntaxError) return "MODEL_INVALID_JSON";
   if (error61 instanceof Error && ["TimeoutError", "AbortError"].includes(error61.name)) return "MODEL_TIMEOUT";
@@ -27188,7 +27203,7 @@ async function compose(context, provider) {
       providerError = providerFailure(error61);
     }
   }
-  let report = validatePacket(candidate, context.evidence, context.risk, context.domain);
+  let report = acceptanceChecks(candidate, context.evidence, context.risk, context.domain, context.policyGuard);
   for (let attempt = 1; !report.valid && attempt <= 2; attempt++) {
     repairs.push({ attempt, failures: report.failures });
     let patch = context.baseline;
@@ -27207,16 +27222,11 @@ async function compose(context, provider) {
       if (supplied[field] === void 0) baselineRepair = true;
       candidate[field] = supplied[field] ?? context.baseline[field];
     }
-    report = validatePacket(candidate, context.evidence, context.risk, context.domain);
+    report = acceptanceChecks(candidate, context.evidence, context.risk, context.domain, context.policyGuard);
   }
-  const fallback = !!providerError || !report.valid || baselineRepair;
-  if (fallback) {
-    candidate = context.baseline;
-    mode = "deterministic";
-    report = validatePacket(candidate, context.evidence, context.risk, context.domain);
-  }
-  if (!report.valid) throw new Error("VALIDATION_BLOCKED");
-  return { packet: packetSchema.parse(candidate), mode, modelId: mode === "model" ? provider.modelId : null, validation: { ...report, repairs, fallback, providerError, modelAttempts, selection: { candidates: provider ? ["validated-baseline", "model-candidate"] : ["validated-baseline"], selected: mode === "model" ? "model-candidate" : "validated-baseline", rule: "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage." } } };
+  const needsHuman = !!providerError || !report.valid || baselineRepair;
+  const offeredTemplate = acceptanceChecks(context.baseline, context.evidence, context.risk, context.domain, context.policyGuard);
+  return { packet: needsHuman ? context.baseline : packetSchema.parse(candidate), mode: needsHuman ? "deterministic" : mode, modelId: !needsHuman && mode === "model" ? provider.modelId : null, validation: { ...report, valid: !needsHuman && report.valid, repairs, fallback: needsHuman, escalated: needsHuman, templateValid: offeredTemplate.valid, providerError, modelAttempts, selection: { candidates: provider ? ["validated-baseline", "model-candidate"] : ["validated-baseline"], selected: needsHuman ? "template-offered-for-human-review" : mode === "model" ? "model-candidate" : "validated-baseline", rule: "Require full trigger coverage, scope, advisor review and approved policy. Persistent faults or provider failures stop at a human gate; templates are never auto-advanced." } } };
 }
 async function parallelMap(items, concurrency, worker) {
   const results = new Array(items.length);
@@ -29784,7 +29794,7 @@ async function executePlan(actor, planId, options = {}) {
     const policy = await client.query("SELECT policy,faculty_person_id FROM ch11_policies WHERE id=$1 AND generation_id=$2", [plan.body.policyId, plan.generation_id]);
     if (!policy.rowCount) throw new ConflictError("POLICY_REQUIRED", "Approved policy missing");
     await requireAssignedStudents(client, plan.generation_id, policy.rows[0].faculty_person_id, plan.body.studentIds);
-    const jobs = await client.query("SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4", [plan.id, plan.generation_id]);
+    const jobs = await client.query("SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4", [plan.id, plan.generation_id]);
     return { plan, policy: policySchema.parse(policy.rows[0].policy), jobs: jobs.rows };
   });
   const results = await parallelMap(initial.jobs, options.concurrency ?? initial.plan.body.budget.concurrency, async ({ id }) => {
@@ -29792,7 +29802,7 @@ async function executePlan(actor, planId, options = {}) {
       const plan = await getPlan(client, actor, planId, true);
       if (plan.paused) return void 0;
       const lease = randomUUID6();
-      const claimed = await client.query("UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *", [id, lease]);
+      const claimed = await client.query("UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *", [id, lease]);
       return claimed.rows[0];
     });
     if (!job) return { id, skipped: true };
@@ -29824,17 +29834,26 @@ async function executePlan(actor, planId, options = {}) {
         if (initial.plan.body.mode === "model" && !provider) {
           composed.validation.providerError = "MODEL_NOT_CONFIGURED";
           composed.validation.fallback = true;
+          composed.validation.escalated = true;
+          composed.validation.valid = false;
         }
         await saveCheckpoint(actor, job, "publish", { ...job.checkpoint, composed });
       }
       await ensureReviewRunning(actor, planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
+      if (job.checkpoint.composed?.validation.escalated) {
+        await withCoreTransaction(async (client) => {
+          await client.query("UPDATE ch11_jobs SET status='failed',stage='needs_human',escalated_at=now(),failure_diagnosis=$2::jsonb,error_code='REPAIR_BUDGET_EXHAUSTED',lease_until=NULL WHERE id=$1 AND lease_token=$3", [job.id, JSON.stringify(job.checkpoint.composed.validation), job.lease_token]);
+          await audit(client, job.generation_id, actor, job.id, "execution.escalated", { stage: job.stage }, { diagnosis: job.checkpoint.composed.validation });
+        });
+        return { id, escalated: true };
+      }
       await publishDraft(actor, job, initial.plan);
       return { id, completed: true };
     } catch (error61) {
       const code = error61 instanceof DataBlocked ? "DATA_BLOCKED" : error61 instanceof ConflictError ? error61.code : error61 instanceof Error && error61.message === "INJECTED_STOP" ? "INJECTED_STOP" : "EXECUTION_FAILED";
       await withCoreTransaction(async (client) => {
-        await client.query("UPDATE ch11_jobs SET status=$2,error_code=$3,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running'", [job.id, code === "PLAN_PAUSED" ? "queued" : code === "DATA_BLOCKED" ? "blocked" : "failed", code, job.lease_token]);
+        await client.query("UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3<>'PLAN_PAUSED' THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,attempts=CASE WHEN $3='PLAN_PAUSED' THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running'", [job.id, code === "PLAN_PAUSED" ? "queued" : code === "DATA_BLOCKED" ? "blocked" : "failed", code, job.lease_token, JSON.stringify({ code, attempts: job.attempts, reasons: error61 instanceof DataBlocked ? error61.reasons : [] })]);
         await audit(client, job.generation_id, actor, job.id, "execution.stopped", { stage: job.stage }, { code, reasons: error61 instanceof DataBlocked ? error61.reasons : [] });
       });
       return { id, error: code };
@@ -29856,7 +29875,7 @@ async function overview(actor) {
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
-    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,COALESCE(c.status,j.status) AS status,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
+    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.checkpoint->'composed'->'packet' AS offered_template,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends = await client.query(`SELECT p.id AS cycle_id,
       to_char(p.created_at,'YYYY-MM-DD') || ' / ' || left(p.id::text,8) AS day,
       count(*) FILTER (WHERE j.checkpoint ? 'risk')::int AS reviewed,

@@ -1230,6 +1230,18 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             )
 
     for job in review_jobs:
+        if job.get("status") == "needs_human":
+            st.error(
+                "Mentor attention required: the repair or execution budget is exhausted."
+            )
+            st.json(job.get("failure_diagnosis") or {})
+            if job.get("offered_template"):
+                with st.expander("Rule template offered for human consideration"):
+                    st.caption(
+                        "This template has not advanced to approval or publication. Review the diagnosis before creating another review."
+                    )
+                    st.json(job["offered_template"])
+    for job in review_jobs:
         if job.get("source_timings"):
             with st.expander("Collector timings · " + str(job["id"])[:8]):
                 st.caption(

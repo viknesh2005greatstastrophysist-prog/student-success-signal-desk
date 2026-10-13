@@ -163,7 +163,24 @@ export function validatePacket(candidate: unknown, evidence: Evidence, risk: Ris
   return { valid: failures.length === 0, failures };
 }
 
-export type GenerationContext = { evidence: Evidence; risk: Risk; domain: typeof domainNames[number]; references: ReturnType<typeof retrieve>; baseline: Packet };
+export type PolicyGuard = { version: string; facultyApproved: boolean };
+export function acceptanceChecks(candidate: unknown, evidence: Evidence, risk: Risk, domain: typeof domainNames[number], policyGuard?: PolicyGuard) {
+  const report = validatePacket(candidate,evidence,risk,domain);
+  const p = packetSchema.safeParse(candidate);
+  const checks = {
+    alerts_cite_triggers: p.success && risk.signals.every(signal=>p.data.citations.some(c=>c.evidencePath===signal.path && c.statement===signal.explanation)) && !report.failures.some(f=>f.field==='citations'),
+    thresholds_faculty_set: policyGuard ? policyGuard.facultyApproved && policyGuard.version===risk.policyVersion : null,
+    advisor_review_required: p.success && p.data.actions.every(a=>a.owner==='assigned_faculty') && !report.failures.some(f=>f.code==='UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS'),
+    privacy_scope_enforced: sourceNames.every(name=>evidence[name].studentId===evidence.academic.studentId),
+  };
+  const failures = [...report.failures];
+  if(checks.thresholds_faculty_set===false) failures.push({field:'citations',code:'THRESHOLDS_NOT_FACULTY_SET'});
+  if(!checks.privacy_scope_enforced) failures.push({field:'citations',code:'PRIVACY_SCOPE_MISMATCH'});
+  if(!checks.advisor_review_required) failures.push({field:'actions',code:'ADVISOR_REVIEW_REQUIRED'});
+  return {valid:failures.length===0,failures,checks};
+}
+
+export type GenerationContext = { evidence: Evidence; risk: Risk; domain: typeof domainNames[number]; references: ReturnType<typeof retrieve>; baseline: Packet; policyGuard?: PolicyGuard };
 export interface Composer { modelId: string; generate(context: GenerationContext, failing?: Diagnosis[], prior?: unknown): Promise<unknown> }
 function providerFailure(error: unknown): string {
   if (error instanceof SyntaxError) return "MODEL_INVALID_JSON";
@@ -182,7 +199,7 @@ export async function compose(context: GenerationContext, provider?: Composer) {
     try { candidate = await provider.generate(context); mode = "model"; modelAttempts.push({ attempt: 0, inputHash: digest(context), output: candidate, outputHash: digest(candidate) }); }
     catch (error) { providerError = providerFailure(error); }
   }
-  let report = validatePacket(candidate, context.evidence, context.risk, context.domain);
+  let report = acceptanceChecks(candidate, context.evidence, context.risk, context.domain, context.policyGuard);
   for (let attempt = 1; !report.valid && attempt <= 2; attempt++) {
     repairs.push({ attempt, failures: report.failures });
     let patch: unknown = context.baseline;
@@ -194,12 +211,12 @@ export async function compose(context: GenerationContext, provider?: Composer) {
       if (supplied[field] === undefined) baselineRepair = true;
       (candidate as Record<string, unknown>)[field] = supplied[field] ?? context.baseline[field];
     }
-    report = validatePacket(candidate, context.evidence, context.risk, context.domain);
+    report = acceptanceChecks(candidate, context.evidence, context.risk, context.domain, context.policyGuard);
   }
-  const fallback = !!providerError || !report.valid || baselineRepair;
-  if (fallback) { candidate = context.baseline; mode = "deterministic"; report = validatePacket(candidate, context.evidence, context.risk, context.domain); }
-  if (!report.valid) throw new Error("VALIDATION_BLOCKED");
-  return { packet: packetSchema.parse(candidate), mode, modelId: mode === "model" ? provider!.modelId : null, validation: { ...report, repairs, fallback, providerError, modelAttempts, selection: { candidates: provider ? ["validated-baseline", "model-candidate"] : ["validated-baseline"], selected: mode === "model" ? "model-candidate" : "validated-baseline", rule: "Reject failed candidates; require full trigger coverage and domain catalogue alignment; prefer a validated model candidate on equal coverage." } } };
+  const needsHuman = !!providerError || !report.valid || baselineRepair;
+  const offeredTemplate = acceptanceChecks(context.baseline, context.evidence, context.risk, context.domain,context.policyGuard);
+  return { packet: needsHuman ? context.baseline : packetSchema.parse(candidate), mode: needsHuman ? "deterministic" as const : mode, modelId: !needsHuman && mode === "model" ? provider!.modelId : null, validation: { ...report, valid: !needsHuman && report.valid, repairs, fallback: needsHuman, escalated:needsHuman, templateValid:offeredTemplate.valid, providerError, modelAttempts, selection: { candidates: provider ? ["validated-baseline", "model-candidate"] : ["validated-baseline"], selected: needsHuman ? "template-offered-for-human-review" : mode === "model" ? "model-candidate" : "validated-baseline", rule: "Require full trigger coverage, scope, advisor review and approved policy. Persistent faults or provider failures stop at a human gate; templates are never auto-advanced." } } };
+
 }
 
 export async function parallelMap<T, R>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
