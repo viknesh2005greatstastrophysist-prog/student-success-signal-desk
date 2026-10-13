@@ -27038,7 +27038,14 @@ var planInputSchema = external_exports.object({
   feedback: external_exports.string().trim().max(1e3).default(""),
   mode: external_exports.enum(["deterministic", "model"]).default("deterministic")
 }).strict();
-function planSkill(input2) {
+function applyPlanningFeedback(input2) {
+  const focus = input2.feedback.match(/(?:^|\n)focus:\s*(academic|attendance|wellbeing-referral)\s*(?:$|\n)/i)?.[1]?.toLowerCase();
+  const students = input2.feedback.match(/(?:^|\n)students:\s*([^\n]+)/i)?.[1];
+  const policy = input2.feedback.match(/(?:^|\n)policy:\s*([^\n]+)/i)?.[1]?.trim();
+  return planInputSchema.parse({ ...input2, ...focus ? { domain: focus } : {}, ...students ? { studentIds: students.split(",").map((id) => id.trim()) } : {}, ...policy ? { policyId: policy } : {} });
+}
+function planSkill(raw) {
+  const input2 = applyPlanningFeedback(raw);
   const questions = [];
   if (!input2.studentIds?.length) questions.push("Which students should this review cover?");
   if (!input2.domain) questions.push("Should this review focus on academics, attendance, or a wellbeing referral?");
@@ -27047,7 +27054,7 @@ function planSkill(input2) {
     ...input2,
     questions,
     ready: questions.length === 0,
-    steps: ["Collect four scoped sources in parallel", "Check freshness and completeness", "Compute approved risk policy", "Retrieve tagged references", "Draft and validate a plan", "Wait for mentor approval", "Publish and track approved interventions"],
+    steps: [`Collect four sources concurrently for ${input2.studentIds?.length ?? "unconfirmed"} scoped students`, "Check freshness, completeness and privacy scope", `Compute faculty-approved policy ${input2.policyId ?? "(awaiting selection)"}`, `Retrieve references tagged ${input2.domain ?? "(awaiting focus)"}${input2.feedback ? "; apply the saved planning feedback" : ""}`, `Draft ${input2.domain ?? "focused"} support options and validate four acceptance checks`, "Wait for the assigned mentor's exact-artifact approval", "Publish and track approved interventions"],
     budget: { maxStudents: 50, concurrency: 4, maxRepairs: 2, modelTimeoutMs: 45e3 }
   };
 }
@@ -29669,7 +29676,7 @@ async function approvePolicy(actor, raw, commandId = randomUUID6()) {
 async function savePlan(actor, raw, id, expectedRevision, commandId = randomUUID6()) {
   requireRole(actor, "faculty", "hod", "governance");
   external_exports.string().uuid().parse(commandId);
-  const input2 = planInputSchema.parse(raw);
+  const input2 = applyPlanningFeedback(planInputSchema.parse(raw));
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     let department = actor.departmentId;
@@ -29858,7 +29865,7 @@ async function executePlan(actor, planId, options = {}) {
           const prior = await client.query("SELECT id,plan FROM support_plans WHERE generation_id=$1 AND student_id=$2 ORDER BY created_at DESC LIMIT 20", [job.generation_id, job.student_id]);
           return prior.rows.map((r) => ({ id: r.id, text: r.plan.summary, tags: [initial.plan.body.domain], studentId: job.student_id, departmentId: initial.plan.department_id }));
         });
-        await saveCheckpoint(actor, job, "recommend", { ...job.checkpoint, risk, retrieval: retrieve(risk.signals.map((s) => s.explanation).join(" "), [initial.plan.body.domain], [...referenceLibrary, ...history], initial.plan.department_id, job.student_id) });
+        await saveCheckpoint(actor, job, "recommend", { ...job.checkpoint, risk, retrieval: retrieve([risk.signals.map((s) => s.explanation).join(" "), initial.plan.body.feedback].join(" "), [initial.plan.body.domain], [...referenceLibrary, ...history], initial.plan.department_id, job.student_id) });
       }
       await ensureReviewRunning(actor, planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
@@ -30406,6 +30413,7 @@ async function dispatch(action, p, token) {
   if (action === "policy_approve") return approvePolicy(a, body, cmd);
   if (action === "plan_save")
     return savePlan(a, body, void 0, void 0, cmd);
+  if (action === "plan_revise") return savePlan(a, p.input, uuid5(p.planId), external_exports.number().int().nonnegative().parse(p.expectedRevision), cmd);
   if (action === "plan_lock")
     return lockPlan(
       a,

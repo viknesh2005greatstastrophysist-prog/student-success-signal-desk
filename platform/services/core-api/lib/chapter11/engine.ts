@@ -33,14 +33,23 @@ export const planInputSchema = z.object({
   mode: z.enum(["deterministic", "model"]).default("deterministic"),
 }).strict();
 export type PlanInput = z.infer<typeof planInputSchema>;
-export function planSkill(input: PlanInput) {
+/** Explicit feedback directives revise typed constraints; scope is rechecked by
+ * savePlan. Other notes inform retrieval and steps without inventing answers. */
+export function applyPlanningFeedback(input:PlanInput):PlanInput {
+ const focus=input.feedback.match(/(?:^|\n)focus:\s*(academic|attendance|wellbeing-referral)\s*(?:$|\n)/i)?.[1]?.toLowerCase();
+ const students=input.feedback.match(/(?:^|\n)students:\s*([^\n]+)/i)?.[1];
+ const policy=input.feedback.match(/(?:^|\n)policy:\s*([^\n]+)/i)?.[1]?.trim();
+ return planInputSchema.parse({...input,...(focus?{domain:focus}:{}),...(students?{studentIds:students.split(',').map(id=>id.trim())}:{}),...(policy?{policyId:policy}:{})});
+}
+export function planSkill(raw: PlanInput) {
+  const input=applyPlanningFeedback(raw);
   const questions: string[] = [];
   if (!input.studentIds?.length) questions.push("Which students should this review cover?");
   if (!input.domain) questions.push("Should this review focus on academics, attendance, or a wellbeing referral?");
   if (!input.policyId) questions.push("Which mentor-approved threshold policy should this review use?");
   return {
     ...input, questions, ready: questions.length === 0,
-    steps: ["Collect four scoped sources in parallel", "Check freshness and completeness", "Compute approved risk policy", "Retrieve tagged references", "Draft and validate a plan", "Wait for mentor approval", "Publish and track approved interventions"],
+    steps: [`Collect four sources concurrently for ${input.studentIds?.length??'unconfirmed'} scoped students`, "Check freshness, completeness and privacy scope", `Compute faculty-approved policy ${input.policyId??'(awaiting selection)'}`, `Retrieve references tagged ${input.domain??'(awaiting focus)'}${input.feedback?'; apply the saved planning feedback':''}`, `Draft ${input.domain??'focused'} support options and validate four acceptance checks`, "Wait for the assigned mentor's exact-artifact approval", "Publish and track approved interventions"],
     budget: { maxStudents: 50, concurrency: 4, maxRepairs: 2, modelTimeoutMs: 45000 },
   };
 }

@@ -255,6 +255,7 @@ async function dispatch(
   if (action === "policy_approve") return approvePolicy(a, body, cmd);
   if (action === "plan_save")
     return savePlan(a, body, undefined, undefined, cmd);
+  if(action === "plan_revise") return savePlan(a,p.input,uuid(p.planId),z.number().int().nonnegative().parse(p.expectedRevision),cmd);
   if (action === "plan_lock")
     return lockPlan(
       a,

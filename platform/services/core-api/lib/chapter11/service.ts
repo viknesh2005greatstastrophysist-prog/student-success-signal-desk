@@ -9,7 +9,7 @@ import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
 import { ConflictError, NotFoundError } from "../http";
 import { AuthorizationError, requireRole, requireDemoInstitution } from "../security";
 import { hashJson } from "../support-commands";
-import { compose, DataBlocked, demoPolicy, digest, formatSkill, parallelMap, planInputSchema, planSkill, policySchema, referenceLibrary, retrieve, riskAnalysis, sourceNames, sourceSchema, validateEvidence, type Evidence, type Policy, type Risk, type Source, type SourceName, type Composer, type Reference, type PolicyGuard } from "./engine";
+import { applyPlanningFeedback, compose, DataBlocked, demoPolicy, digest, formatSkill, parallelMap, planInputSchema, planSkill, policySchema, referenceLibrary, retrieve, riskAnalysis, sourceNames, sourceSchema, validateEvidence, type Evidence, type Policy, type Risk, type Source, type SourceName, type Composer, type Reference, type PolicyGuard } from "./engine";
 import { configuredComposer } from "./provider";
 import { readApprovedCollegeSource } from "../college-normalized";
 import { loadAuthenticatedCollegeSources } from "../college-vault";
@@ -78,7 +78,7 @@ export async function approvePolicy(actor: ActorContext, raw: unknown, commandId
 export async function savePlan(actor: ActorContext, raw: unknown, id?: string, expectedRevision?: number, commandId: string = randomUUID()) {
   requireRole(actor, "faculty", "hod", "governance");
   z.string().uuid().parse(commandId);
-  const input = planInputSchema.parse(raw);
+  const input = applyPlanningFeedback(planInputSchema.parse(raw));
   return withCoreTransaction(async client => {
     const generation = await getCurrentGeneration(client);
     let department = actor.departmentId;
@@ -289,7 +289,7 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
           const prior = await client.query<{ id: string; plan: { summary: string } }>("SELECT id,plan FROM support_plans WHERE generation_id=$1 AND student_id=$2 ORDER BY created_at DESC LIMIT 20", [job.generation_id, job.student_id]);
           return prior.rows.map(r => ({ id: r.id, text: r.plan.summary, tags: [initial.plan.body.domain!], studentId: job.student_id, departmentId: initial.plan.department_id } satisfies Reference));
         });
-        await saveCheckpoint(actor, job, "recommend", { ...job.checkpoint, risk, retrieval: retrieve(risk.signals.map(s => s.explanation).join(" "), [initial.plan.body.domain!], [...referenceLibrary, ...history], initial.plan.department_id, job.student_id) });
+        await saveCheckpoint(actor, job, "recommend", { ...job.checkpoint, risk, retrieval: retrieve([risk.signals.map(s => s.explanation).join(" "),initial.plan.body.feedback].join(" "), [initial.plan.body.domain!], [...referenceLibrary, ...history], initial.plan.department_id, job.student_id) });
       }
       await ensureReviewRunning(actor,planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");

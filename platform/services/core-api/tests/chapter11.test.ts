@@ -118,3 +118,10 @@ test('Faculty policy controls every weight and career/overdue cutoff',()=>{
  const changed=riskAnalysis(e,{...demoPolicy,attendanceWeight:1,markWeight:2,inactivityWeight:3,overdueWeight:4,internshipWeight:5,placementWeight:6,overdueMinimum:3,internshipMinimum:2,placementMinimum:2});
  assert.equal(changed.score,6);assert.equal(changed.signals.length,3);assert.equal(original.score,100);
 });
+
+test('Explicit planning feedback changes typed scope, focus and steps',()=>{
+ const selected=randomUUID(),policyId=randomUUID();
+ const p=planSkill(planInputSchema.parse({request:'Review the cohort',domain:'academic',feedback:`focus: attendance\nstudents: ${selected}\npolicy: ${policyId}`}));
+ assert.equal(p.domain,'attendance');assert.deepEqual(p.studentIds,[selected]);assert.equal(p.policyId,policyId);assert.equal(p.ready,true);assert.ok(p.steps.some(s=>s.includes('attendance')));
+ assert.throws(()=>planSkill(planInputSchema.parse({request:'Review',feedback:'students: not-an-id'})));
+});

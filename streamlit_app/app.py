@@ -114,8 +114,13 @@ def save_action(action: str, data: dict[str, Any], success: str) -> Any | None:
         if action == "replay":
             st.success(success)
             return result
-        if action == "plan_save":
-            st.session_state.pop("review_plan", None)
+        if action in {"plan_save", "plan_revise", "plan_pause", "plan_lock"}:
+            st.session_state["review_plan_selector_revision"] = (
+                st.session_state.get("review_plan_selector_revision", 0) + 1
+            )
+            st.session_state["review_selected_id"] = result.get(
+                "id", data.get("planId")
+            )
         st.session_state["success_notice"] = success
         st.rerun()
         return result
@@ -1201,14 +1206,25 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         st.caption("No review plans are available in this workspace yet.")
         return
     plan_options = [row for row in plans if row.get("id")]
-    selected_plan = st.selectbox(
-        "Plan",
-        plan_options,
-        format_func=lambda row: (
-            f"{row.get('status', 'Not recorded').replace('_', ' ').title()} · {((row.get('body') or {}).get('request') or 'Review plan')[:70]}"
-        ),
-        key="review_plan",
+    plan_by_id = {row["id"]: row for row in plan_options}
+    ids = list(plan_by_id)
+    prior = st.session_state.get("review_selected_id")
+    selector_revision = st.session_state.get("review_plan_selector_revision", 0)
+    default_index = st.session_state.setdefault(
+        f"review_plan_default_{selector_revision}",
+        ids.index(prior) if prior in ids else 0,
     )
+    selected_id = st.selectbox(
+        "Plan",
+        ids,
+        index=min(default_index, len(ids) - 1),
+        format_func=lambda key: (
+            f"{key[:8]} · {plan_by_id[key]['status'].replace('_', ' ').title()} · {plan_by_id[key]['body']['request'][:70]}"
+        ),
+        key=f"review_plan_{selector_revision}",
+    )
+    selected_plan = plan_by_id[selected_id]
+    st.session_state["review_selected_id"] = selected_id
     body = selected_plan.get("body") or {}
     st.write(
         f"**Status:** {selected_plan.get('status', 'Not recorded')} · **Revision:** {selected_plan.get('revision', 'Not recorded')}"
@@ -1219,9 +1235,105 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         st.warning(
             "Complete these details before locking the plan: " + " ".join(questions)
         )
+    st.markdown("#### Planned steps")
+    for number, step in enumerate(body.get("steps", []), 1):
+        st.write(f"{number}. {step}")
+    if selected_plan.get("status") != "locked":
+        with st.form(f"revise_plan_{selected_id}_{selected_plan['revision']}"):
+            revised_request = st.text_area(
+                "Revised review request", value=body.get("request", ""), max_chars=2000
+            )
+            revised_students = st.multiselect(
+                "Revised students in scope",
+                student_options,
+                default=[
+                    sid for sid in body.get("studentIds", []) if sid in student_options
+                ],
+                format_func=lambda sid: student_labels.get(sid, sid),
+                max_selections=50,
+            )
+            focuses = [None, *PLAN_DOMAINS]
+            revised_focus = st.selectbox(
+                "Revised focus",
+                focuses,
+                index=focuses.index(body.get("domain")),
+                format_func=lambda item: item or "Choose a focus",
+            )
+            policy_ids = [None, *policy_by_id]
+            revised_policy = st.selectbox(
+                "Revised policy",
+                policy_ids,
+                index=policy_ids.index(body.get("policyId"))
+                if body.get("policyId") in policy_ids
+                else 0,
+                format_func=lambda item: (
+                    policy_by_id[item]["Policy version"] if item else "Choose a policy"
+                ),
+            )
+            revised_mode = st.selectbox(
+                "Revised mode",
+                ["deterministic", "model"],
+                index=1 if body.get("mode") == "model" else 0,
+            )
+            revised_feedback = st.text_area(
+                "Revision feedback",
+                value=body.get("feedback", ""),
+                max_chars=1000,
+                help="Use the fields above to adjust the review. Notes help focus the planned steps and reference retrieval.",
+            )
+            revise = st.form_submit_button("Save revised plan", type="primary")
+        if revise:
+            revision_input = {
+                "request": revised_request,
+                "feedback": revised_feedback,
+                "mode": revised_mode,
+            }
+            if revised_students:
+                revision_input["studentIds"] = revised_students
+            if revised_focus:
+                revision_input["domain"] = revised_focus
+            if revised_policy:
+                revision_input["policyId"] = revised_policy
+            save_action(
+                "plan_revise",
+                {
+                    "planId": selected_id,
+                    "expectedRevision": selected_plan["revision"],
+                    "input": revision_input,
+                },
+                "Answers saved to the same plan as a new revision.",
+            )
+    if selected_plan.get("status") == "locked":
+        paused = bool(selected_plan.get("paused"))
+        with st.form(f"pause_form_{selected_id}_{selected_plan['revision']}"):
+            reason = st.text_input("Pause or resume reason")
+            change_pause = st.form_submit_button(
+                "Resume review" if paused else "Pause review"
+            )
+        if change_pause:
+            if len(reason.strip()) < 5:
+                st.error("Enter a reason of at least five characters.")
+            else:
+                save_action(
+                    "plan_pause",
+                    {
+                        "planId": selected_id,
+                        "expectedRevision": selected_plan["revision"],
+                        "paused": not paused,
+                        "reason": reason.strip(),
+                    },
+                    "Review resumed." if paused else "Review paused.",
+                )
+        if paused:
+            st.warning("This review is paused. Resume before running.")
     if selected_plan.get("status") == "locked":
         st.caption("This plan is locked. Its saved scope and policy cannot be edited.")
-        if st.button("Run review", type="primary", key=f"run_{selected_plan['id']}"):
+        if st.button(
+            "Run review",
+            type="primary",
+            key=f"run_{selected_plan['id']}",
+            disabled=bool(selected_plan.get("paused")),
+        ):
             save_action(
                 "plan_execute",
                 {"planId": selected_plan["id"]},
