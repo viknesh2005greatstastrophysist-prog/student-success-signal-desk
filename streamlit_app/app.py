@@ -1386,6 +1386,23 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             )
 
     for job in review_jobs:
+        if job.get("retrieval"):
+            with st.expander("Retrieved support references · " + str(job["id"])[:8]):
+                st.caption(
+                    "Prior cases are restricted to this account's student scope and reduced to approved action categories. Similarity uses the recorded lexical embedding."
+                )
+                dataframe(
+                    [
+                        {
+                            "Reference": str(ref["id"])[:12],
+                            "Tags": ", ".join(ref["tags"]),
+                            "Similarity": round(ref["similarity"], 3),
+                            "Summary": ref["text"],
+                        }
+                        for ref in job["retrieval"]
+                    ]
+                )
+    for job in review_jobs:
         if job.get("status") == "needs_human":
             st.error(
                 "Mentor attention required: the repair or execution budget is exhausted."

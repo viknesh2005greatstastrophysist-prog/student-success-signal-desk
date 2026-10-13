@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
   packetSchema,
+  actions,
+  referenceLibrary,
   type Composer,
   type Diagnosis,
   type GenerationContext,
@@ -28,6 +30,7 @@ export function anonymousModelContext(context: GenerationContext) {
   return {
     domain: context.domain,
     triggerCodes: context.risk.signals.map((signal) => signal.code),
+    references: context.references.map((reference,index)=>({reference:`Reference ${index+1}`,tags:reference.tags.filter(tag=>['academic','attendance','wellbeing-referral'].includes(tag)),similarity:reference.similarity,summary:referenceLibrary.find(r=>r.id===reference.id)?.text??(reference.actionCodes??[]).filter(code=>code in actions).map(code=>actions[code as keyof typeof actions]).join('; ')})).filter(r=>r.summary),
     baseline: {
       ...context.baseline,
       citations: context.baseline.citations.map((citation, index) => ({

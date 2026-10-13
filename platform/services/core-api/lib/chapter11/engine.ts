@@ -117,11 +117,11 @@ export function embed(text: string): number[] {
   const norm = Math.hypot(...vector) || 1;
   return vector.map(v => v / norm);
 }
-export type Reference = { id: string; text: string; tags: string[]; departmentId: string | null; studentId?: string; embedding?: number[] };
+export type Reference = { id: string; text: string; tags: string[]; departmentId: string | null; studentId?: string; actionCodes?: string[]; embedding?: number[] };
 export function retrieve(query: string, tags: string[], references: Reference[], departmentId: string, studentId: string) {
   const q = embed(query);
   return references.filter(r => (r.departmentId === null || r.departmentId === departmentId) && (!r.studentId || r.studentId === studentId) && tags.some(t => r.tags.includes(t)))
-    .map(r => ({ id: r.id, text: r.text, tags: r.tags, similarity: q.reduce((n, x, i) => n + x * (r.embedding ?? embed(r.text))[i]!, 0), embeddingModel: "sha256-lexical-128-v1" }))
+    .map(r => ({ id: r.id, text: r.text, tags: r.tags, actionCodes:r.actionCodes??[], similarity: q.reduce((n, x, i) => n + x * (r.embedding ?? embed(r.text))[i]!, 0), embeddingModel: "sha256-lexical-128-v1" }))
     .sort((a, b) => b.similarity - a.similarity || a.id.localeCompare(b.id)).slice(0, 5);
 }
 
@@ -199,7 +199,7 @@ export function acceptanceChecks(candidate: unknown, evidence: Evidence, risk: R
   return {valid:failures.length===0,failures,checks};
 }
 
-export type GenerationContext = { evidence: Evidence; risk: Risk; domain: typeof domainNames[number]; references: ReturnType<typeof retrieve>; baseline: Packet; policyGuard?: PolicyGuard };
+export type GenerationContext = { evidence: Evidence; risk: Risk; domain: typeof domainNames[number]; references: Array<{id:string;text:string;tags:string[];similarity:number;embeddingModel:string;actionCodes?:string[]}>; baseline: Packet; policyGuard?: PolicyGuard };
 export interface Composer { modelId: string; generate(context: GenerationContext, failing?: Diagnosis[], prior?: unknown): Promise<unknown> }
 function providerFailure(error: unknown): string {
   if (error instanceof SyntaxError) return "MODEL_INVALID_JSON";

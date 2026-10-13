@@ -27128,7 +27128,7 @@ function embed(text) {
 }
 function retrieve(query, tags, references, departmentId, studentId) {
   const q = embed(query);
-  return references.filter((r) => (r.departmentId === null || r.departmentId === departmentId) && (!r.studentId || r.studentId === studentId) && tags.some((t) => r.tags.includes(t))).map((r) => ({ id: r.id, text: r.text, tags: r.tags, similarity: q.reduce((n, x, i) => n + x * (r.embedding ?? embed(r.text))[i], 0), embeddingModel: "sha256-lexical-128-v1" })).sort((a, b) => b.similarity - a.similarity || a.id.localeCompare(b.id)).slice(0, 5);
+  return references.filter((r) => (r.departmentId === null || r.departmentId === departmentId) && (!r.studentId || r.studentId === studentId) && tags.some((t) => r.tags.includes(t))).map((r) => ({ id: r.id, text: r.text, tags: r.tags, actionCodes: r.actionCodes ?? [], similarity: q.reduce((n, x, i) => n + x * (r.embedding ?? embed(r.text))[i], 0), embeddingModel: "sha256-lexical-128-v1" })).sort((a, b) => b.similarity - a.similarity || a.id.localeCompare(b.id)).slice(0, 5);
 }
 var actions = {
   "faculty-check-in": "Schedule a 20-minute academic check-in with the assigned mentor",
@@ -28715,6 +28715,7 @@ function anonymousModelContext(context) {
   return {
     domain: context.domain,
     triggerCodes: context.risk.signals.map((signal) => signal.code),
+    references: context.references.map((reference, index) => ({ reference: `Reference ${index + 1}`, tags: reference.tags.filter((tag) => ["academic", "attendance", "wellbeing-referral"].includes(tag)), similarity: reference.similarity, summary: referenceLibrary.find((r) => r.id === reference.id)?.text ?? (reference.actionCodes ?? []).filter((code) => code in actions).map((code) => actions[code]).join("; ") })).filter((r) => r.summary),
     baseline: {
       ...context.baseline,
       citations: context.baseline.citations.map((citation, index) => ({
@@ -29579,6 +29580,32 @@ async function readApprovedCollegeSource(actor, studentId, source) {
   });
 }
 
+// services/core-api/lib/chapter11/connectors.ts
+function createSourceRegistry(defaultAdapter, defaultPrior = async () => []) {
+  const adapters = { academic: defaultAdapter, lms: defaultAdapter, internship: defaultAdapter, placement: defaultAdapter };
+  let prior = defaultPrior;
+  return { readPrior: (actor, studentId) => prior(actor, studentId), replacePrior: (adapter) => {
+    const previous = prior;
+    prior = adapter;
+    return previous;
+  }, read: (actor, studentId, source) => adapters[source](actor, studentId, source), replace: (source, adapter) => {
+    const previous = adapters[source];
+    adapters[source] = adapter;
+    return previous;
+  } };
+}
+function referenceTags(codes) {
+  const tags = [];
+  if (codes.some((c) => ["student-study-plan", "lms-catch-up", "internship-review", "placement-review"].includes(c))) tags.push("academic");
+  if (codes.includes("attendance-review")) tags.push("attendance");
+  if (codes.includes("wellbeing-referral")) tags.push("wellbeing-referral");
+  return tags;
+}
+function anonymousPriorReference(id, codes, departmentId) {
+  const allowed = codes.filter((c) => ["faculty-check-in", "student-study-plan", "attendance-review", "lms-catch-up", "internship-review", "placement-review", "wellbeing-referral"].includes(c));
+  return { id, text: `Earlier approved support actions: ${allowed.join(" ")}`, tags: referenceTags(allowed), departmentId, actionCodes: allowed };
+}
+
 // services/core-api/lib/chapter11/metrics.ts
 function editDistance(before, after) {
   const a = JSON.stringify(before ?? {}), b = JSON.stringify(after ?? {});
@@ -29734,7 +29761,7 @@ async function lockPlan(actor, id, expectedRevision) {
     return getPlan(client, actor, id);
   });
 }
-async function readSource(actor, studentId, source) {
+async function defaultSourceAdapter(actor, studentId, source) {
   if (process.env.CORE_IDENTITY_REALM === "institutional") {
     external_exports.string().uuid().parse(studentId);
     external_exports.enum(sourceNames).parse(source);
@@ -29781,6 +29808,40 @@ async function readSource(actor, studentId, source) {
     }
     return sourceSchema.parse({ source, studentId, recordId: records.rows.map((r) => r.record_id).sort().join(",") || "missing", observedAt: records.rows.length ? new Date(Math.max(...records.rows.map((r) => new Date(r.observed_at).getTime()))).toISOString() : (/* @__PURE__ */ new Date()).toISOString(), semester: "2026-ODD", state: attendance.length && marks.length ? "present" : "missing", synthetic: true, values: { ...attendance.length ? { attendancePct: average(attendance) } : {}, ...marks.length ? { markPct: average(marks) } : {}, ...lineage } });
   });
+}
+var sourceAdapterRegistry = createSourceRegistry(defaultSourceAdapter, defaultPriorAdapter);
+async function authorizeConnector(client, actor, studentId) {
+  const generation = await getCurrentGeneration(client);
+  const student = (await client.query("SELECT department_id FROM student_profiles WHERE id=$1 AND generation_id=$2", [studentId, generation])).rows[0];
+  if (!student) throw new NotFoundError("Student not found");
+  departmentScope(actor, student.department_id);
+  if (actor.role === "faculty") await requireAssignedStudents(client, generation, actor.personId, [studentId]);
+  return { generation, departmentId: student.department_id };
+}
+async function readSource(actor, studentId, source) {
+  if (source === "priorInterventions") return readPriorInterventions(actor, studentId);
+  external_exports.string().uuid().parse(studentId);
+  external_exports.enum(sourceNames).parse(source);
+  await withCoreTransaction((client) => authorizeConnector(client, actor, studentId));
+  const result = sourceSchema.parse(await sourceAdapterRegistry.read(actor, studentId, source));
+  if (result.studentId !== studentId || result.source !== source) throw new DataBlocked(["Connector returned evidence outside the authorized request"]);
+  return result;
+}
+async function defaultPriorAdapter(actor, studentId) {
+  external_exports.string().uuid().parse(studentId);
+  return withCoreTransaction(async (client) => {
+    const { generation, departmentId } = await authorizeConnector(client, actor, studentId);
+    const records = await client.query(`SELECT p.id,p.plan FROM support_plans p JOIN student_profiles s ON s.id=p.student_id JOIN faculty_decisions d ON d.id=p.faculty_decision_id WHERE p.generation_id=$1 AND s.department_id=$2 AND d.decision='approved' AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY p.created_at DESC LIMIT 100`, [generation, departmentId, actor.role === "faculty" ? actor.personId : null]);
+    const references = records.rows.map((row) => anonymousPriorReference(row.id, (row.plan.actions ?? []).map((a) => a.code), departmentId));
+    return references;
+  });
+}
+async function readPriorInterventions(actor, studentId) {
+  const scope = await withCoreTransaction((c) => authorizeConnector(c, actor, studentId));
+  const records = await sourceAdapterRegistry.readPrior(actor, studentId);
+  const references = records.filter((r) => r.departmentId === scope.departmentId).map((r) => anonymousPriorReference(r.id, r.actionCodes ?? [], scope.departmentId));
+  await withCoreTransaction((c) => audit(c, scope.generation, actor, studentId, "connector.priorInterventions", { source: "priorInterventions", studentId, departmentId: scope.departmentId }, { referenceIds: references.map((r) => r.id), count: references.length, anonymousCatalogueOnly: true }));
+  return references;
 }
 async function saveCheckpoint(actor, job, stage, checkpoint) {
   await withCoreTransaction(async (client) => {
@@ -29861,10 +29922,7 @@ async function executePlan(actor, planId, options = {}) {
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
       if (!job.checkpoint.risk) {
         const risk = riskAnalysis(job.checkpoint.evidence, initial.policy);
-        const history = await withCoreTransaction(async (client) => {
-          const prior = await client.query("SELECT id,plan FROM support_plans WHERE generation_id=$1 AND student_id=$2 ORDER BY created_at DESC LIMIT 20", [job.generation_id, job.student_id]);
-          return prior.rows.map((r) => ({ id: r.id, text: r.plan.summary, tags: [initial.plan.body.domain], studentId: job.student_id, departmentId: initial.plan.department_id }));
-        });
+        const history = await readSource(actor, job.student_id, "priorInterventions");
         await saveCheckpoint(actor, job, "recommend", { ...job.checkpoint, risk, retrieval: retrieve([risk.signals.map((s) => s.explanation).join(" "), initial.plan.body.feedback].join(" "), [initial.plan.body.domain], [...referenceLibrary, ...history], initial.plan.department_id, job.student_id) });
       }
       await ensureReviewRunning(actor, planId);
@@ -29916,7 +29974,7 @@ async function overview(actor) {
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
     const policies = await client.query("SELECT ch11_policies.*, policy || scoring AS policy FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
-    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.checkpoint->'composed'->'packet' AS offered_template,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
+    const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.checkpoint->'composed'->'packet' AS offered_template,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends = await client.query(`SELECT p.id AS cycle_id,
       to_char(p.created_at,'YYYY-MM-DD') || ' / ' || left(p.id::text,8) AS day,
       count(*) FILTER (WHERE j.checkpoint ? 'risk')::int AS reviewed,

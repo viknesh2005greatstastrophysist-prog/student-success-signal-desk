@@ -9,7 +9,7 @@ import { migrateCoreDatabase } from "../lib/migrations";
 import { resetSyntheticSeed } from "../lib/reset";
 import { closePool, withCoreTransaction } from "../lib/db";
 import { getCurrentGeneration } from "../lib/command-ledger";
-import { setReviewPaused, approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, savePlan, seedChapterSources } from "../lib/chapter11/service";
+import { setReviewPaused, approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, sourceAdapterRegistry, savePlan, seedChapterSources } from "../lib/chapter11/service";
 import { demoPolicy } from "../lib/chapter11/engine";
 import { decideSupportCase, replayAgentRun } from "../lib/support-commands";
 import { editDraft, recordOutcome, reviewQueue, restoreVersion } from "../lib/chapter11/review";
@@ -115,6 +115,13 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     const parentActor=await withCoreTransaction(async c=>{const row=(await c.query("SELECT p.id,p.email,p.display_name FROM parent_links l JOIN people p ON p.id=l.parent_person_id WHERE l.student_id=$1 AND l.active",[student.studentId])).rows[0];return {personId:row.id,email:row.email,subject:row.email,displayName:row.display_name,role:'parent' as const,clientId:portalOidcClients.parent};});
     const parentSnapshot=await loadPortalSnapshot(parentActor);
     assert.deepEqual(((parentSnapshot as unknown as Record<string,unknown>).childSupportPlans as Array<{plan:unknown}>)[0]!.plan,editedPacket);
+    const references=await readSource(faculty,student.studentId!,'priorInterventions');
+    assert.ok(references.some(r=>r.id===approved.plan!.id));
+    assert.ok(references.every(r=>!r.studentId && !r.text.includes(student.email)));
+    await assert.rejects(()=>readSource(nextMentor,student.studentId!,'priorInterventions'),/assigned/);
+    const adapter=sourceAdapterRegistry.replace('academic',async()=>({source:'academic',studentId:randomUUID()} as never));
+    await assert.rejects(()=>readSource(faculty,student.studentId!,'academic'));
+    sourceAdapterRegistry.replace('academic',adapter);
     const metrics=(await overview(governance)).metrics;
     assert.equal(metrics.cycles[0]!.decidedRuns,1);assert.equal(metrics.perRun[0]!.approveAsIs,false);assert.ok(metrics.perRun[0]!.mentorEditDistance!>0);
 
