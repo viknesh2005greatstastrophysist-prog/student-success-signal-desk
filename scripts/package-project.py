@@ -10,16 +10,23 @@ import zipfile
 os.umask(0o077)
 root = Path(__file__).resolve().parents[1]
 local_runtime = root / "runtime/project-final"
+streamlit = "--streamlit" in sys.argv
 hosted = "--hosted" in sys.argv
-runtime = root / ("runtime/hosted-project" if hosted else "runtime/project-final")
+assert not (streamlit and hosted), "Choose one delivery edition"
+runtime = root / ("runtime/streamlit-project" if streamlit else "runtime/hosted-project" if hosted else "runtime/project-final")
 delivery = runtime / "delivery"
 delivery.mkdir(mode=0o700, exist_ok=True)
 
 browser = json.loads((runtime / "browser-acceptance.json").read_text())
 assert browser["status"] == "passed", "Successful final browser acceptance required"
-data = json.loads((runtime / "data-acceptance.json").read_text())
+data = json.loads(((local_runtime if streamlit else runtime) / "data-acceptance.json").read_text())
 assert data["status"] == "passed", "Source integrity acceptance required"
 assert json.loads((local_runtime / "platform-check-status.json").read_text())["exitCode"] == 0
+if streamlit:
+    for name in ["ui-acceptance", "local-acceptance", "auth-acceptance", "attachment-acceptance", "cloud-backend-acceptance", "cloud-model-acceptance"]:
+        assert json.loads((runtime / f"{name}.json").read_text())["status"] == "passed", name
+    cloud = json.loads((runtime / "cloud-environment.json").read_text())
+    assert cloud["CORE_IDENTITY_REALM"] == "college-project"
 if hosted:
     assert browser.get("hosted") is True
     assert json.loads((runtime / "agent-execution-hosted.json").read_text())["status"] == "passed"
@@ -55,7 +62,9 @@ if hosted:
     secrets += [hosted_env[key].encode() for key in ["BETTER_AUTH_SECRET", "DATABASE_URL", "DATABASE_URL_UNPOOLED"]]
     settings = json.loads((runtime / "service-settings.json").read_text())
     secrets += [values["PORTAL_SESSION_SECRET"].encode() for values in settings.values() if "PORTAL_SESSION_SECRET" in values]
-manifest = {"edition": "hosted six-portal college project" if hosted else "private six-portal project", "datasetHash": data["datasetHash"], "rawValues": data["rawValues"], "files": []}
+if streamlit:
+    secrets += [str(value).encode() for key, value in cloud.items() if "SECRET" in key or "API_KEY" in key or "DATABASE_URL" in key]
+manifest = {"edition": "Streamlit six-workspace college project" if streamlit else "hosted six-portal college project" if hosted else "private six-portal project", "datasetHash": data["datasetHash"], "rawValues": data["rawValues"], "files": []}
 archive = delivery / "AURA-complete-project.zip"
 directories = set()
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:

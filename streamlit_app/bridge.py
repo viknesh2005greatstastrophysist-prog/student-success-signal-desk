@@ -78,10 +78,15 @@ def environment() -> dict[str, str]:
         raise BridgeError(
             "The app requires a dedicated college project runtime.", "SETUP_REQUIRED"
         )
-    return {
+    worker_environment = {
         **os.environ,
         **{key: str(value) for key, value in values.items()},
         "NODE_ENV": "production",
+    }
+    return {
+        key: value
+        for key, value in worker_environment.items()
+        if not key.startswith(("AURA_LOGIN_", "AURA_CLOUD_"))
     }
 
 

@@ -263,7 +263,11 @@ async function dispatch(
   if (action === "plan_execute") return executePlan(a, uuid(p.planId));
   if (action === "plan_export") return exportPlan(a, uuid(p.planId));
   if (action === "plan_pause")
-    return setReviewPaused(a, uuid(p.planId), { paused: p.paused });
+    return setReviewPaused(a, uuid(p.planId), {
+      paused: p.paused,
+      expectedRevision: p.expectedRevision,
+      reason: p.reason,
+    });
   if (action === "source_evidence")
     return readSource(
       a,
