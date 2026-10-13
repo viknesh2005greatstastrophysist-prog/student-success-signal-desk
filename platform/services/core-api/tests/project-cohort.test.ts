@@ -99,7 +99,7 @@ test("Vercel OIDC model authentication is restricted to the Gateway origin",asyn
  try{
   Object.assign(process.env,{CORE_IDENTITY_REALM:"college-project",CH11_MODEL:"TEST",CH11_MODEL_BASE_URL:"https://ai-gateway.vercel.sh/v1",CH11_MODEL_API_KEY:"",VERCEL_OIDC_TOKEN:"FICTIONAL_OIDC_TOKEN"});
   globalThis.fetch=async(_url,init)=>{assert.equal(new Headers(init?.headers).get("Authorization"),"Bearer FICTIONAL_OIDC_TOKEN");assert.equal(init?.redirect,"error");assert.equal(JSON.parse(String(init?.body)).reasoning_effort,undefined);return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({summary:"TEST"})}}]}));};
-  assert.deepEqual(await configuredComposer()!.generate({} as GenerationContext),{summary:"TEST"});
+  assert.deepEqual(await configuredComposer()!.generate({evidence:{} as Evidence,risk:{signals:[],score:0,band:"low",flagged:false,policyVersion:"TEST",reviewRequired:true},domain:"academic",references:[],baseline:{summary:"Mentor review requested for routine support.",actions:[],citations:[],prohibited:[]}}),{summary:"TEST"});
   process.env.CH11_MODEL_BASE_URL="https://other.example/v1";assert.equal(configuredComposer(),undefined);
  }finally{globalThis.fetch=originalFetch;for(const name of names){if(prior[name]===undefined)delete process.env[name];else process.env[name]=prior[name];}}
 });

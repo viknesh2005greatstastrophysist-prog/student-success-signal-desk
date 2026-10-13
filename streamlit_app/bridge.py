@@ -30,6 +30,24 @@ class BridgeError(RuntimeError):
         self.code, self.status = code, status
 
 
+def read_environment_file(path: Path) -> dict[str, str]:
+    if path.suffix == ".json":
+        return json.loads(path.read_text())
+    values = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or not key.replace("_", "").isalnum():
+            raise BridgeError(
+                "Invalid private environment file assignment.", "SETUP_REQUIRED"
+            )
+        value = value.strip()
+        values[key] = json.loads(value) if value.startswith('"') else value.strip("'")
+    return values
+
+
 def environment() -> dict[str, str]:
     """Cloud secrets are explicit; never silently use local settings in cloud mode."""
     try:
@@ -40,7 +58,9 @@ def environment() -> dict[str, str]:
     if section:
         values = section
     elif config_file:
-        values = json.loads(Path(config_file).read_text())
+        values = read_environment_file(Path(config_file))
+    elif (REPO / ".env").is_file():
+        values = read_environment_file(REPO / ".env")
     elif (REPO / "runtime/project-final/environment.json").is_file():
         values = json.loads(
             (REPO / "runtime/project-final/environment.json").read_text()
@@ -49,6 +69,11 @@ def environment() -> dict[str, str]:
         raise BridgeError(
             "Configure the private AURA runtime before signing in.", "SETUP_REQUIRED"
         )
+    values = {
+        key: value
+        for key, value in values.items()
+        if not key.startswith(("AURA_LOGIN_", "AURA_CLOUD_"))
+    }
     if values.get("CORE_IDENTITY_REALM") not in {"project", "college-project"}:
         raise BridgeError(
             "The app requires a dedicated college project runtime.", "SETUP_REQUIRED"

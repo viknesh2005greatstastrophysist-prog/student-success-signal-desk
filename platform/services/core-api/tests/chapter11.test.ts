@@ -3,7 +3,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { collectSources, compose, demoPolicy, digest, domainNames, embed, formatSkill, parallelMap, planInputSchema, planSkill, referenceLibrary, retrieve, riskAnalysis, sourceNames, validateEvidence, validatePacket, type Evidence } from "../lib/chapter11/engine";
 
-import { decodeModelContent } from "../lib/chapter11/provider";
+import { anonymousModelContext, restoreEvidenceCitations, decodeModelContent } from "../lib/chapter11/provider";
 
 const student = randomUUID(), department = randomUUID();
 function fixture(): Evidence {
@@ -99,4 +99,16 @@ test("Model transport keeps the final answer separate from a local reasoning cha
   assert.deepEqual(decodeModelContent('{"wrong":true}\n</think>\n{"final":true}'), { final: true });
   assert.equal(decodeModelContent('{"wrong":true}\n</think>\nmalformed'), "malformed");
   assert.equal(decodeModelContent('{"first":1}{"second":2}'), '{"first":1}{"second":2}');
+});
+
+
+test("remote composition excludes identities, raw evidence and private references while citations rebind locally", () => {
+  const evidence=fixture(); evidence.academic.values.privateName="DO_NOT_SEND_PRIVATE_NAME";
+  const risk=riskAnalysis(evidence,demoPolicy),baseline=formatSkill(risk,"academic");
+  const context={evidence,risk,baseline,domain:"academic" as const,references:[{id:"PRIVATE_REFERENCE",text:"DO_NOT_SEND_PRIVATE_REFERENCE",tags:[],similarity:1,embeddingModel:"test"}]};
+  const anonymous=anonymousModelContext(context),wire=JSON.stringify(anonymous);
+  for(const forbidden of [student,"DO_NOT_SEND_PRIVATE_NAME","DO_NOT_SEND_PRIVATE_REFERENCE","SYNTHETIC-academic",baseline.citations[0]!.statement]) assert.ok(!wire.includes(forbidden));
+  assert.deepEqual(restoreEvidenceCitations(anonymous.baseline,context),baseline);
+  const invalid=structuredClone(anonymous.baseline);invalid.citations[0]!.statement="Invented private claim";
+  assert.equal(validatePacket(restoreEvidenceCitations(invalid,context),evidence,risk,"academic").valid,false);
 });
