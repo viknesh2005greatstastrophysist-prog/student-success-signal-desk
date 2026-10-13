@@ -3,7 +3,7 @@ import test from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {acceptanceChecks,compose,demoPolicy,formatSkill,riskAnalysis,sourceNames,type Evidence} from '../lib/chapter11/engine';
 const id=randomUUID();
-const evidence=Object.fromEntries(sourceNames.map(source=>[source,{source,studentId:id,recordId:source,observedAt:new Date().toISOString(),semester:'TEST',state:'present',synthetic:true,values:source==='academic'?{attendancePct:50,markPct:50}:source==='lms'?{inactivityDays:9,overdueAssignments:2}:source==='internship'?{missedMilestones:1}:{missedActivities:1}}])) as Evidence;
+const evidence=Object.fromEntries(sourceNames.map(source=>[source,{source,studentId:id,recordId:source,observedAt:new Date().toISOString(),semester:'TEST',state:'present',synthetic:true,values:source==='academic'?{attendancePct:50,markPct:50}:source==='lms'?{inactivityDays:9,overdueAssignments:2}:source==='internship'?{missedMilestones:1}:{missedActivities:1}}])) as unknown as Evidence;
 const risk=riskAnalysis(evidence,demoPolicy),baseline=formatSkill(risk,'academic');
 for(const name of ['alerts_cite_triggers','thresholds_faculty_set','advisor_review_required','privacy_scope_enforced'] as const){
  test(`Persistent injected ${name} fault escalates after bounded repair`,async()=>{

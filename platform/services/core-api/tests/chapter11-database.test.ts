@@ -12,7 +12,7 @@ import { getCurrentGeneration } from "../lib/command-ledger";
 import { setReviewPaused, approvePolicy, executePlan, exportPlan, lockPlan, overview, readSource, savePlan, seedChapterSources } from "../lib/chapter11/service";
 import { demoPolicy } from "../lib/chapter11/engine";
 import { decideSupportCase, replayAgentRun } from "../lib/support-commands";
-import { editDraft, recordOutcome, reviewQueue } from "../lib/chapter11/review";
+import { editDraft, recordOutcome, reviewQueue, restoreVersion } from "../lib/chapter11/review";
 
 test("Chapter 11 durable integration: policy, sources, locked plan, recovery, approval and evidence", { skip: process.env.RUN_CH11_DB_TESTS !== "1", timeout: 180000 }, async () => {
   assert.match(process.env.CORE_DATABASE_SCHEMA ?? "", /^aura_core_test_ch11/);
@@ -97,7 +97,25 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     assert.equal(withdrawn.revision, 1);
     assert.equal((await reviewQueue(faculty)).plans[0]!.visible_to_student, false);
     await assert.rejects(() => recordOutcome(governance, approved.plan!.id, randomUUID(), { expectedRevision: 1, status: "completed", outcome: "Attempted unauthorized intervention update" }), /not permitted/);
-    await recordOutcome(faculty, approved.plan!.id, randomUUID(), { expectedRevision: 1, status: "planned", outcome: "Restore the exact originally approved support plan" });
+    const restorationId=randomUUID();
+    const restored=await restoreVersion(faculty,approved.plan!.id,restorationId,{version:1,expectedVersion:1});
+    assert.equal(restored.version,2);
+    assert.equal((await restoreVersion(faculty,approved.plan!.id,restorationId,{version:1,expectedVersion:1})).version,2);
+    await assert.rejects(()=>restoreVersion(governance,approved.plan!.id,randomUUID(),{version:1,expectedVersion:2}),/not permitted/);
+    await assert.rejects(()=>restoreVersion(nextMentor,approved.plan!.id,randomUUID(),{version:1,expectedVersion:2}),/not found/);
+    await assert.rejects(()=>restoreVersion(faculty,approved.plan!.id,randomUUID(),{version:1,expectedVersion:1}),/Reload version/);
+    const versions=(await reviewQueue(faculty)).versions;
+    assert.deepEqual(versions.map(v=>v.version),[2,1]);
+    assert.equal(versions[0].content_hash,versions[1].content_hash);
+    await withCoreTransaction(async c=>{await assert.rejects(()=>c.query("UPDATE agent_artifacts SET recommendation='{}'::jsonb WHERE id=$1",[edited.artifactId]),/append-only/i);});
+    const studentSnapshot=await loadPortalSnapshot(student);
+    assert.deepEqual((studentSnapshot.supportPlans as Array<{plan:unknown}>)[0]!.plan,editedPacket);
+    const parentActor=await withCoreTransaction(async c=>{const row=(await c.query("SELECT p.id,p.email,p.display_name FROM parent_links l JOIN people p ON p.id=l.parent_person_id WHERE l.student_id=$1 AND l.active",[student.studentId])).rows[0];return {personId:row.id,email:row.email,subject:row.email,displayName:row.display_name,role:'parent' as const,clientId:portalOidcClients.parent};});
+    const parentSnapshot=await loadPortalSnapshot(parentActor);
+    assert.deepEqual((parentSnapshot.childSupportPlans as Array<{plan:unknown}>)[0]!.plan,editedPacket);
+    const metrics=(await overview(governance)).metrics;
+    assert.equal(metrics.cycles[0]!.decidedRuns,1);assert.equal(metrics.perRun[0]!.approveAsIs,false);assert.ok(metrics.perRun[0]!.mentorEditDistance!>0);
+
     assert.equal((await reviewQueue(faculty)).plans[0]!.visible_to_student, true);
     assert.equal(await withCoreTransaction(async client => (await client.query("SELECT count(*)::int AS n FROM marks")).rows[0]!.n), before);
     const legacySnapshot = async (actor: typeof faculty): Promise<Record<string, unknown>> => loadPortalSnapshot(actor);

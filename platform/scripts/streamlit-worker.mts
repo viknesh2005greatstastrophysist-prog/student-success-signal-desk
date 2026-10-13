@@ -39,6 +39,7 @@ import {
 import {
   editDraft,
   recordOutcome,
+  restoreVersion,
   reviewQueue,
 } from "../services/core-api/lib/chapter11/review";
 import {
@@ -287,6 +288,7 @@ async function dispatch(
       supportDecisionInput.parse(body),
     );
   }
+  if(action === "version_restore") {delete body.planId;return restoreVersion(a,uuid(p.planId),cmd,body);}
   if (action === "outcome") {
     delete body.planId;
     return recordOutcome(a, uuid(p.planId), cmd, body);

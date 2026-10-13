@@ -29563,6 +29563,26 @@ async function readApprovedCollegeSource(actor, studentId, source) {
   });
 }
 
+// services/core-api/lib/chapter11/metrics.ts
+function editDistance(before, after) {
+  const a = JSON.stringify(before ?? {}), b = JSON.stringify(after ?? {});
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(next[j - 1] + 1, row[j] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length];
+}
+function evaluationMetrics(rows) {
+  const perRun = rows.filter((r) => r.validation).map((r) => ({ jobId: r.id, cycleId: r.plan_id, validationPassed: r.validation.valid === true, repairsUsed: r.validation.repairs?.length ?? 0, fallback: r.validation.fallback === true, escalated: r.status === "needs_human" || r.validation.escalated === true, mode: r.mode ?? "not recorded", decision: r.decision ?? null, approveAsIs: r.decision === "approved" ? r.artifact_version === 1 : null, mentorEditDistance: r.decision === "approved" ? editDistance(r.first_packet, r.approved_packet) : null, timeToDecisionSeconds: r.decided_at && r.first_created ? Math.max(0, (new Date(r.decided_at).getTime() - new Date(r.first_created).getTime()) / 1e3) : null }));
+  const cycles = [...new Set(perRun.map((r) => r.cycleId))].map((cycleId) => {
+    const r = perRun.filter((r2) => r2.cycleId === cycleId), decided = r.filter((x) => x.decision), approved = r.filter((x) => x.decision === "approved");
+    return { cycleId, evaluatedRuns: r.length, validationPassRate: r.filter((x) => x.validationPassed).length / r.length, repairsUsed: r.reduce((n, x) => n + x.repairsUsed, 0), fallbackRate: r.filter((x) => x.fallback).length / r.length, escalationRate: r.filter((x) => x.escalated).length / r.length, modelRuns: r.filter((x) => x.mode === "model").length, ruleRuns: r.filter((x) => x.mode === "deterministic").length, decidedRuns: decided.length, approveAsIsRate: approved.length ? approved.filter((x) => x.approveAsIs).length / approved.length : null, averageMentorEditDistance: approved.length ? approved.reduce((n, x) => n + x.mentorEditDistance, 0) / approved.length : null, averageDecisionSeconds: decided.length ? decided.reduce((n, x) => n + (x.timeToDecisionSeconds ?? 0), 0) / decided.length : null };
+  });
+  return { perRun, cycles };
+}
+
 // services/core-api/lib/chapter11/dashboard.ts
 function compositeRiskView(students, jobs) {
   const visible = new Map(students.map((student) => [student.id, student]));
@@ -29896,7 +29916,10 @@ async function overview(actor) {
       WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2)
       AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=j.generation_id AND m.student_id=j.student_id AND m.faculty_person_id=$3))
       GROUP BY p.id ORDER BY p.created_at`, [generation, department, mentor]);
-    return { trends: trends.rows, riskView: compositeRiskView(students.rows, jobs.rows), students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
+    const metricFacts = await client.query(`SELECT j.id,j.plan_id,d.decision,d.decided_at,approved.recommendation AS approved_packet,approved.artifact_version,first.recommendation AS first_packet,first.created_at AS first_created FROM ch11_jobs j LEFT JOIN faculty_decisions d ON d.support_case_id=j.support_case_id LEFT JOIN agent_artifacts approved ON approved.id=d.agent_artifact_id LEFT JOIN LATERAL (SELECT a.recommendation,a.created_at FROM agent_artifacts a JOIN agent_runs r ON r.id=a.agent_run_id WHERE r.support_case_id=j.support_case_id ORDER BY a.created_at,a.artifact_version LIMIT 1) first ON true WHERE j.generation_id=$1 AND j.id=ANY($2::uuid[])`, [generation, jobs.rows.map((row) => row.id)]);
+    const facts = new Map(metricFacts.rows.map((row) => [row.id, row]));
+    const metrics = evaluationMetrics(jobs.rows.map((row) => ({ ...row, ...facts.get(row.id) })));
+    return { metrics, trends: trends.rows, riskView: compositeRiskView(students.rows, jobs.rows), students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
   });
 }
 async function exportPlan(actor, id) {
@@ -30006,7 +30029,38 @@ async function reviewQueue(actor) {
       WHERE j.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2))) AND c.status='awaiting_faculty'
       AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`, [generation, actor.personId, actor.role, actor.departmentId]);
     const log = await client.query(`SELECT e.id,e.aggregate_id AS plan_id,e.event_type,e.payload,e.occurred_at,actor.display_name AS actor_name,p.student_id,student.display_name AS student_name FROM domain_events e JOIN support_plans p ON p.id=e.aggregate_id AND p.generation_id=e.generation_id JOIN student_profiles sp ON sp.id=p.student_id JOIN people student ON student.id=sp.person_id JOIN people actor ON actor.id=e.actor_person_id WHERE e.generation_id=$1 AND e.aggregate_type='support_plan' AND e.aggregate_id=ANY($2::uuid[]) ORDER BY e.occurred_at DESC`, [generation, plans.rows.map((row) => row.id)]);
-    return { plans: plans.rows, drafts: drafts.rows, interventionLog: log.rows };
+    const versions = await client.query(`SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`, [generation, plans.rows.map((row) => row.id)]);
+    return { versions: versions.rows, plans: plans.rows, drafts: drafts.rows, interventionLog: log.rows };
+  });
+}
+async function restoreVersion(actor, planId, commandId, raw) {
+  requireRole(actor, "faculty");
+  assertCommandId(commandId);
+  external_exports.string().uuid().parse(planId);
+  const input2 = external_exports.object({ version: external_exports.number().int().positive(), expectedVersion: external_exports.number().int().positive() }).strict().parse(raw);
+  return withCoreTransaction(async (client) => {
+    const generation = await getCurrentGeneration(client);
+    const duplicate = await findDuplicateCommand(client, generation, commandId, actor.personId);
+    if (duplicate) {
+      if (duplicate.payload.requestHash !== hashJson({ planId, input: input2 })) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "Command already used");
+      return duplicate.payload;
+    }
+    const plan = (await client.query(`SELECT p.*,s.department_id FROM support_plans p JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$2 AND m.student_id=p.student_id AND m.faculty_person_id=$3) FOR UPDATE OF p`, [planId, generation, actor.personId])).rows[0];
+    if (!plan) throw new NotFoundError("Assigned approved plan not found");
+    await client.query(`INSERT INTO ch11_publications(id,generation_id,support_plan_id,artifact_id,original_decision_id,version,actor_person_id) SELECT p.id,p.generation_id,p.id,d.agent_artifact_id,d.id,1,d.faculty_person_id FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id WHERE p.id=$1 AND d.decision='approved' ON CONFLICT DO NOTHING`, [planId]);
+    const latest = (await client.query("SELECT max(version)::int AS version FROM ch11_publications WHERE support_plan_id=$1 AND generation_id=$2", [planId, generation])).rows[0].version;
+    if (latest !== input2.expectedVersion) throw new ConflictError("STALE_VERSION", "Reload version history before restoring");
+    const original = (await client.query(`SELECT v.*,a.agent_run_id,a.recommendation,a.validation,a.content_hash FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id JOIN faculty_decisions d ON d.id=v.original_decision_id WHERE v.support_plan_id=$1 AND v.generation_id=$2 AND v.version=$3 AND d.decision='approved'`, [planId, generation, input2.version])).rows[0];
+    if (!original) throw new NotFoundError("Approved publication version not found");
+    const artifactId = randomUUID7(), version2 = latest + 1;
+    const artifactVersion = (await client.query("SELECT max(artifact_version)::int+1 AS version FROM agent_artifacts WHERE agent_run_id=$1", [original.agent_run_id])).rows[0].version;
+    await client.query("INSERT INTO agent_artifacts(id,generation_id,agent_run_id,artifact_version,content_hash,recommendation,validation) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)", [artifactId, generation, original.agent_run_id, artifactVersion, original.content_hash, JSON.stringify(original.recommendation), JSON.stringify({ ...original.validation, restoredFrom: original.artifact_id, originalDecisionId: original.original_decision_id, restorationAuthorizedBy: actor.personId })]);
+    await client.query("INSERT INTO ch11_publications(id,generation_id,support_plan_id,artifact_id,original_decision_id,version,actor_person_id,restored_from) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", [randomUUID7(), generation, planId, artifactId, original.original_decision_id, version2, actor.personId, original.id]);
+    await client.query("UPDATE support_plans SET plan=$2::jsonb,visible_to_student=true WHERE id=$1", [planId, JSON.stringify(original.recommendation)]);
+    await client.query(`INSERT INTO ch11_interventions(id,generation_id,support_plan_id,faculty_person_id,status,outcome,revision) VALUES($1,$2,$3,$4,'planned','Earlier approved publication restored',1) ON CONFLICT(generation_id,support_plan_id) DO UPDATE SET status='planned',outcome='Earlier approved publication restored',revision=ch11_interventions.revision+1,updated_at=now()`, [randomUUID7(), generation, planId, actor.personId]);
+    const payload = { requestHash: hashJson({ planId, input: input2 }), planId, version: version2, restoredVersion: input2.version, artifactId, studentId: plan.student_id, departmentId: plan.department_id, facultyPersonId: actor.personId };
+    await writeCommandLedger(client, { generationId: generation, commandId, actorPersonId: actor.personId, aggregateType: "support_plan", aggregateId: planId, eventType: "support.version_restored", action: "restore_approved_version", topic: "support.plan.updated", payload, metadata: { originalDecisionId: original.original_decision_id, immutableCopy: true } });
+    return payload;
   });
 }
 
@@ -30370,6 +30424,10 @@ async function dispatch(action, p, token) {
       cmd,
       supportDecisionInput.parse(body)
     );
+  }
+  if (action === "version_restore") {
+    delete body.planId;
+    return restoreVersion(a, uuid5(p.planId), cmd, body);
   }
   if (action === "outcome") {
     delete body.planId;

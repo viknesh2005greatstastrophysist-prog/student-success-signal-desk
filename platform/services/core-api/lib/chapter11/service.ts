@@ -14,6 +14,7 @@ import { configuredComposer } from "./provider";
 import { readApprovedCollegeSource } from "../college-normalized";
 import { loadAuthenticatedCollegeSources } from "../college-vault";
 
+import { evaluationMetrics } from "./metrics";
 import { compositeRiskView } from "./dashboard";
 
 type PlanBody = ReturnType<typeof planSkill>;
@@ -351,7 +352,10 @@ export async function overview(actor: ActorContext) {
       WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2)
       AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=j.generation_id AND m.student_id=j.student_id AND m.faculty_person_id=$3))
       GROUP BY p.id ORDER BY p.created_at`,[generation,department,mentor]);
-    return { trends:trends.rows, riskView:compositeRiskView(students.rows,jobs.rows), students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
+    const metricFacts=await client.query(`SELECT j.id,j.plan_id,d.decision,d.decided_at,approved.recommendation AS approved_packet,approved.artifact_version,first.recommendation AS first_packet,first.created_at AS first_created FROM ch11_jobs j LEFT JOIN faculty_decisions d ON d.support_case_id=j.support_case_id LEFT JOIN agent_artifacts approved ON approved.id=d.agent_artifact_id LEFT JOIN LATERAL (SELECT a.recommendation,a.created_at FROM agent_artifacts a JOIN agent_runs r ON r.id=a.agent_run_id WHERE r.support_case_id=j.support_case_id ORDER BY a.created_at,a.artifact_version LIMIT 1) first ON true WHERE j.generation_id=$1 AND j.id=ANY($2::uuid[])`,[generation,jobs.rows.map(row=>row.id)]);
+    const facts=new Map(metricFacts.rows.map(row=>[row.id,row]));
+    const metrics=evaluationMetrics(jobs.rows.map(row=>({...row,...facts.get(row.id)})));
+    return { metrics, trends:trends.rows, riskView:compositeRiskView(students.rows,jobs.rows), students: students.rows, policies: policies.rows, plans: plans.rows, jobs: jobs.rows, demoPolicy, modelConfigured: !!configuredComposer(), synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
   });
 }
 

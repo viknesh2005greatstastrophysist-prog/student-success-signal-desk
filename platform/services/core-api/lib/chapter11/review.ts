@@ -81,6 +81,36 @@ export async function reviewQueue(actor: ActorContext) {
       WHERE j.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2))) AND c.status='awaiting_faculty'
       AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`, [generation, actor.personId,actor.role,actor.departmentId]);
     const log = await client.query(`SELECT e.id,e.aggregate_id AS plan_id,e.event_type,e.payload,e.occurred_at,actor.display_name AS actor_name,p.student_id,student.display_name AS student_name FROM domain_events e JOIN support_plans p ON p.id=e.aggregate_id AND p.generation_id=e.generation_id JOIN student_profiles sp ON sp.id=p.student_id JOIN people student ON student.id=sp.person_id JOIN people actor ON actor.id=e.actor_person_id WHERE e.generation_id=$1 AND e.aggregate_type='support_plan' AND e.aggregate_id=ANY($2::uuid[]) ORDER BY e.occurred_at DESC`,[generation,plans.rows.map(row=>row.id)]);
-    return { plans: plans.rows, drafts: drafts.rows, interventionLog:log.rows };
+    const versions=await client.query(`SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`,[generation,plans.rows.map(row=>row.id)]);
+    return { versions:versions.rows, plans: plans.rows, drafts: drafts.rows, interventionLog:log.rows };
   });
+}
+
+/** Restore is an assigned mentor's explicit publication action. It copies only
+ * an earlier approved publication, never promotes an unapproved draft. */
+export async function restoreVersion(actor:ActorContext,planId:string,commandId:string,raw:unknown){
+ requireRole(actor,'faculty');assertCommandId(commandId);z.string().uuid().parse(planId);
+ const input=z.object({version:z.number().int().positive(),expectedVersion:z.number().int().positive()}).strict().parse(raw);
+ return withCoreTransaction(async client=>{
+  const generation=await getCurrentGeneration(client);
+  const duplicate=await findDuplicateCommand(client,generation,commandId,actor.personId);
+  if(duplicate){if(duplicate.payload.requestHash!==hashJson({planId,input}))throw new ConflictError('IDEMPOTENCY_KEY_MISMATCH','Command already used');return duplicate.payload;}
+  const plan=(await client.query(`SELECT p.*,s.department_id FROM support_plans p JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$2 AND m.student_id=p.student_id AND m.faculty_person_id=$3) FOR UPDATE OF p`,[planId,generation,actor.personId])).rows[0];
+  if(!plan)throw new NotFoundError('Assigned approved plan not found');
+  // New approvals are included lazily, without modifying the original decision.
+  await client.query(`INSERT INTO ch11_publications(id,generation_id,support_plan_id,artifact_id,original_decision_id,version,actor_person_id) SELECT p.id,p.generation_id,p.id,d.agent_artifact_id,d.id,1,d.faculty_person_id FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id WHERE p.id=$1 AND d.decision='approved' ON CONFLICT DO NOTHING`,[planId]);
+  const latest=(await client.query('SELECT max(version)::int AS version FROM ch11_publications WHERE support_plan_id=$1 AND generation_id=$2',[planId,generation])).rows[0].version;
+  if(latest!==input.expectedVersion)throw new ConflictError('STALE_VERSION','Reload version history before restoring');
+  const original=(await client.query(`SELECT v.*,a.agent_run_id,a.recommendation,a.validation,a.content_hash FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id JOIN faculty_decisions d ON d.id=v.original_decision_id WHERE v.support_plan_id=$1 AND v.generation_id=$2 AND v.version=$3 AND d.decision='approved'`,[planId,generation,input.version])).rows[0];
+  if(!original)throw new NotFoundError('Approved publication version not found');
+  const artifactId=randomUUID(),version=latest+1;
+  const artifactVersion=(await client.query('SELECT max(artifact_version)::int+1 AS version FROM agent_artifacts WHERE agent_run_id=$1',[original.agent_run_id])).rows[0].version;
+  await client.query('INSERT INTO agent_artifacts(id,generation_id,agent_run_id,artifact_version,content_hash,recommendation,validation) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)',[artifactId,generation,original.agent_run_id,artifactVersion,original.content_hash,JSON.stringify(original.recommendation),JSON.stringify({...original.validation,restoredFrom:original.artifact_id,originalDecisionId:original.original_decision_id,restorationAuthorizedBy:actor.personId})]);
+  await client.query('INSERT INTO ch11_publications(id,generation_id,support_plan_id,artifact_id,original_decision_id,version,actor_person_id,restored_from) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[randomUUID(),generation,planId,artifactId,original.original_decision_id,version,actor.personId,original.id]);
+  await client.query('UPDATE support_plans SET plan=$2::jsonb,visible_to_student=true WHERE id=$1',[planId,JSON.stringify(original.recommendation)]);
+  await client.query(`INSERT INTO ch11_interventions(id,generation_id,support_plan_id,faculty_person_id,status,outcome,revision) VALUES($1,$2,$3,$4,'planned','Earlier approved publication restored',1) ON CONFLICT(generation_id,support_plan_id) DO UPDATE SET status='planned',outcome='Earlier approved publication restored',revision=ch11_interventions.revision+1,updated_at=now()`,[randomUUID(),generation,planId,actor.personId]);
+  const payload={requestHash:hashJson({planId,input}),planId,version,restoredVersion:input.version,artifactId,studentId:plan.student_id,departmentId:plan.department_id,facultyPersonId:actor.personId};
+  await writeCommandLedger(client,{generationId:generation,commandId,actorPersonId:actor.personId,aggregateType:'support_plan',aggregateId:planId,eventType:'support.version_restored',action:'restore_approved_version',topic:'support.plan.updated',payload,metadata:{originalDecisionId:original.original_decision_id,immutableCopy:true}});
+  return payload;
+ });
 }

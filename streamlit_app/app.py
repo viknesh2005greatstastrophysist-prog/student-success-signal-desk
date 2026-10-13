@@ -1381,6 +1381,35 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         ),
         key="intervention_plan",
     )
+    versions = [
+        v for v in queue.get("versions", []) if v["support_plan_id"] == selected["id"]
+    ]
+    if versions:
+        st.markdown("#### Approved publication history")
+        dataframe(
+            [
+                {
+                    "Version": v["version"],
+                    "Published": short_time(v["created_at"]),
+                    "Content hash": v["content_hash"][:12],
+                }
+                for v in versions
+            ]
+        )
+        for version in versions:
+            if st.button(
+                f"Restore version {version['version']}",
+                key=f"restore_{selected['id']}_{version['version']}",
+            ):
+                save_action(
+                    "version_restore",
+                    {
+                        "planId": selected["id"],
+                        "version": version["version"],
+                        "expectedVersion": max(v["version"] for v in versions),
+                    },
+                    "Earlier approved version restored as a new publication.",
+                )
     current = selected.get("status", "planned")
     statuses = ["planned", "in_progress", "completed", "withdrawn"]
     with st.form("record_outcome"):
@@ -2059,6 +2088,19 @@ def render_lms(actor: dict[str, Any]) -> None:
                 st.error("The selected file could not be prepared for download.")
 
 
+def render_evaluation_metrics(review: dict[str, Any]) -> None:
+    st.subheader("Evaluation by review cycle")
+    metrics = review.get("metrics") or {}
+    cycles = metrics.get("cycles") or []
+    st.caption(
+        "Calculated from recorded checkpoints, immutable artifacts and decisions. Pending cases are excluded from decision metrics; blank values mean no decision yet."
+    )
+    dataframe([{**row, "cycleId": str(row["cycleId"])[:8]} for row in cycles])
+    if metrics.get("perRun"):
+        with st.expander("Per-run metrics"):
+            dataframe(metrics["perRun"])
+
+
 def render_review_trends(review: dict[str, Any]) -> None:
     st.subheader("Support trends by review cycle")
     st.caption(
@@ -2110,7 +2152,9 @@ def render_review_trends(review: dict[str, Any]) -> None:
 
 def render_department_home(overview: dict[str, Any]) -> None:
     st.title("Department overview")
-    render_review_trends(load("review_overview"))
+    review = load("review_overview")
+    render_review_trends(review)
+    render_evaluation_metrics(review)
     counts = overview.get("counts") or {}
     cols = st.columns(4)
     cols[0].metric(
@@ -2157,6 +2201,7 @@ def render_governance(actor: dict[str, Any]) -> None:
         "Check saved plan activity, replay completed runs and export review evidence."
     )
     render_plan_workbench(review, actor)
+    render_evaluation_metrics(review)
     jobs = review.get("jobs") or []
     dataframe(
         [
