@@ -2033,8 +2033,58 @@ def render_lms(actor: dict[str, Any]) -> None:
                 st.error("The selected file could not be prepared for download.")
 
 
+def render_review_trends(review: dict[str, Any]) -> None:
+    st.subheader("Support trends by review cycle")
+    st.caption(
+        "Each cycle is a saved plan. Reviewed means risk evaluated; approvals and outcomes are recorded decisions. Counts may overlap. This panel contains aggregates only."
+    )
+    rows = review.get("trends") or []
+    if not rows:
+        st.info("No evaluated review cycles yet.")
+        return
+    counts = pd.DataFrame(
+        [
+            {
+                "Cycle": r["day"],
+                **{
+                    k.replace("_", " ").title(): r.get(k, 0)
+                    for k in (
+                        "reviewed",
+                        "flagged",
+                        "blocked",
+                        "awaiting_approval",
+                        "approved",
+                        "completed",
+                        "withdrawn",
+                    )
+                },
+            }
+            for r in rows
+        ]
+    ).set_index("Cycle")
+    st.bar_chart(counts, stack=False)
+    averages = pd.DataFrame(
+        [
+            {
+                "Cycle": r["day"],
+                **{
+                    band.title(): r.get("average_" + band)
+                    for band in ("low", "medium", "high")
+                },
+            }
+            for r in rows
+        ]
+    ).set_index("Cycle")
+    st.line_chart(averages)
+    st.caption(
+        "Average composite risk by band. Gaps mean no evaluated cases in that band."
+    )
+    st.dataframe(counts, width="stretch")
+
+
 def render_department_home(overview: dict[str, Any]) -> None:
     st.title("Department overview")
+    render_review_trends(load("review_overview"))
     counts = overview.get("counts") or {}
     cols = st.columns(4)
     cols[0].metric(

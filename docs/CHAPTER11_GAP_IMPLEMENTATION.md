@@ -8,3 +8,4 @@ Execution order: 1–9, one commit each; local verification precedes the final S
 | 1 | Done: scoped composite risk, draft validation, immutable intervention history and CSV | Core tests 62 passed/6 database tests skipped; Core typecheck passed; actual Mentor 2 read-only RPC and AppTest filter/CSV passed | Awaiting final redeployment |
 
 The remaining briefs are in progress. Automated fixtures, existing project account decisions and model suggestions are not real mentor sign-off.
+| 2 | Done: per-plan evaluated/flagged/blocked/awaiting/approved/completed/withdrawn counts and average risk by band; two HoD aggregate charts; old portal contract corrected | Core and portal-kit typechecks passed; actual HoD read-only counts/averages independently checked against scoped jobs; AppTest rendered both charts | Awaiting final redeployment |
