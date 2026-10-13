@@ -1006,6 +1006,35 @@ def render_policy_form() -> None:
             value=None,
             step=1,
         )
+        scoring = {}
+        st.markdown("#### Signal weights and count thresholds")
+        scoring["attendanceWeight"] = st.number_input(
+            "attendanceWeight", min_value=0, max_value=100, value=20, step=1
+        )
+        scoring["markWeight"] = st.number_input(
+            "markWeight", min_value=0, max_value=100, value=20, step=1
+        )
+        scoring["inactivityWeight"] = st.number_input(
+            "inactivityWeight", min_value=0, max_value=100, value=20, step=1
+        )
+        scoring["overdueWeight"] = st.number_input(
+            "overdueWeight", min_value=0, max_value=100, value=10, step=1
+        )
+        scoring["internshipWeight"] = st.number_input(
+            "internshipWeight", min_value=0, max_value=100, value=15, step=1
+        )
+        scoring["placementWeight"] = st.number_input(
+            "placementWeight", min_value=0, max_value=100, value=15, step=1
+        )
+        scoring["overdueMinimum"] = st.number_input(
+            "overdueMinimum", min_value=1, max_value=100, value=1, step=1
+        )
+        scoring["internshipMinimum"] = st.number_input(
+            "internshipMinimum", min_value=1, max_value=100, value=1, step=1
+        )
+        scoring["placementMinimum"] = st.number_input(
+            "placementMinimum", min_value=1, max_value=100, value=1, step=1
+        )
         rationale = st.text_area("Reason for approving this policy", max_chars=600)
         submitted = st.form_submit_button("Approve policy", type="primary")
     if submitted:
@@ -1029,6 +1058,7 @@ def render_policy_form() -> None:
                 "mediumScore": float(medium),
                 "highScore": float(high),
                 "freshnessDays": int(freshness),
+                **scoring,
             }
             save_action(
                 "policy_approve",
@@ -1052,6 +1082,20 @@ def policy_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "Medium review score": policy.get("mediumScore"),
                 "High review score": policy.get("highScore"),
                 "Evidence freshness (days)": policy.get("freshnessDays"),
+                "Weights and count thresholds": "; ".join(
+                    f"{key}: {policy.get(key, 'Not recorded')}"
+                    for key in [
+                        "attendanceWeight",
+                        "markWeight",
+                        "inactivityWeight",
+                        "overdueWeight",
+                        "internshipWeight",
+                        "placementWeight",
+                        "overdueMinimum",
+                        "internshipMinimum",
+                        "placementMinimum",
+                    ]
+                ),
                 "owner": value(row, "faculty_person_id", "facultyPersonId"),
             }
         )

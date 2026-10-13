@@ -30,6 +30,7 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     });
     await assert.rejects(() => overview(student), /not permitted/);
     await assert.rejects(() => approvePolicy(governance, { policy: demoPolicy, rationale: "Cannot self approve" }), /not permitted/);
+    await assert.rejects(()=>approvePolicy(hod,{policy:demoPolicy,facultyId:faculty.personId,rationale:'An HoD cannot approve mentor thresholds'}),/not permitted/);
     const policy = await approvePolicy(faculty, { policy: demoPolicy, rationale: "Approve these synthetic demonstration thresholds for my assigned review" });
     const vague = await savePlan(faculty, { request: "Review students" });
     assert.ok(vague.body.questions.length >= 2);
@@ -66,6 +67,7 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
       const currentRevision=(await client.query("SELECT revision::text FROM institution_revisions WHERE singleton=true")).rows[0]!.revision;
       assert.equal(snapshot.revision,capturedRevision);assert.notEqual(snapshot.revision,currentRevision);
     });
+    assert.equal(exported.jobs[0]!.checkpoint.composed.validation.checks.thresholds_faculty_set,true);
     assert.ok(exported.events.some(e => e.event_type === "checkpoint.risk"));
     assert.ok(exported.events.some(e => e.event_type === "mentor.interrupt"));
     const duplicate = await executePlan(faculty, locked.id);
@@ -109,10 +111,10 @@ test("Chapter 11 durable integration: policy, sources, locked plan, recovery, ap
     assert.equal(versions[0].content_hash,versions[1].content_hash);
     await withCoreTransaction(async c=>{await assert.rejects(()=>c.query("UPDATE agent_artifacts SET recommendation='{}'::jsonb WHERE id=$1",[edited.artifactId]),/append-only/i);});
     const studentSnapshot=await loadPortalSnapshot(student);
-    assert.deepEqual((studentSnapshot.supportPlans as Array<{plan:unknown}>)[0]!.plan,editedPacket);
+    assert.deepEqual(((studentSnapshot as unknown as Record<string,unknown>).supportPlans as Array<{plan:unknown}>)[0]!.plan,editedPacket);
     const parentActor=await withCoreTransaction(async c=>{const row=(await c.query("SELECT p.id,p.email,p.display_name FROM parent_links l JOIN people p ON p.id=l.parent_person_id WHERE l.student_id=$1 AND l.active",[student.studentId])).rows[0];return {personId:row.id,email:row.email,subject:row.email,displayName:row.display_name,role:'parent' as const,clientId:portalOidcClients.parent};});
     const parentSnapshot=await loadPortalSnapshot(parentActor);
-    assert.deepEqual((parentSnapshot.childSupportPlans as Array<{plan:unknown}>)[0]!.plan,editedPacket);
+    assert.deepEqual(((parentSnapshot as unknown as Record<string,unknown>).childSupportPlans as Array<{plan:unknown}>)[0]!.plan,editedPacket);
     const metrics=(await overview(governance)).metrics;
     assert.equal(metrics.cycles[0]!.decidedRuns,1);assert.equal(metrics.perRun[0]!.approveAsIs,false);assert.ok(metrics.perRun[0]!.mentorEditDistance!>0);
 

@@ -6,7 +6,7 @@ import { getCurrentGeneration, writeCommandLedger, findDuplicateCommand, assertC
 import { ConflictError, NotFoundError } from "../http";
 import { requireRole } from "../security";
 import { hashJson } from "../support-commands";
-import { packetSchema, validatePacket, type Evidence, type Risk, type domainNames } from "./engine";
+import { packetSchema, acceptanceChecks, type Evidence, type Risk, type PolicyGuard, type domainNames } from "./engine";
 
 const editSchema = z.object({ expectedRevision: z.number().int().nonnegative(), artifactId: z.string().uuid(), packet: packetSchema, rationale: z.string().trim().min(12).max(600) }).strict();
 export async function editDraft(actor: ActorContext, caseId: string, commandId: string, raw: unknown) {
@@ -19,7 +19,7 @@ export async function editDraft(actor: ActorContext, caseId: string, commandId: 
       if (duplicate.payload.requestHash !== hashJson({ caseId, input })) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "Command already used for another edit");
       return duplicate.payload;
     }
-    const result = await client.query<{ revision: number; status: string; evidence: Evidence & { risk: Risk }; domain: typeof domainNames[number]; run_id: string; artifact_id: string; artifact_version: number; student_id: string; department_id: string }>(
+    const result = await client.query<{ revision: number; status: string; evidence: Evidence & { risk: Risk; policyGuard?:PolicyGuard }; domain: typeof domainNames[number]; run_id: string; artifact_id: string; artifact_version: number; student_id: string; department_id: string }>(
       `SELECT c.revision,c.status,e.evidence,p.body->>'domain' AS domain,r.id AS run_id,a.id AS artifact_id,a.artifact_version,c.student_id,p.department_id
        FROM support_cases c JOIN evidence_snapshots e ON e.support_case_id=c.id JOIN agent_runs r ON r.evidence_snapshot_id=e.id
        JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN ch11_jobs j ON j.support_case_id=c.id JOIN ch11_plans p ON p.id=j.plan_id
@@ -27,7 +27,7 @@ export async function editDraft(actor: ActorContext, caseId: string, commandId: 
     if (!result.rowCount) throw new NotFoundError("Assigned Chapter 11 draft not found");
     const current = result.rows[0]!;
     if (current.status !== "awaiting_faculty" || current.revision !== input.expectedRevision || current.artifact_id !== input.artifactId) throw new ConflictError("STALE_ARTIFACT", "Reload the current draft before editing");
-    const validation = validatePacket(input.packet, current.evidence, current.evidence.risk, current.domain);
+    const validation = acceptanceChecks(input.packet, current.evidence, current.evidence.risk, current.domain,current.evidence.policyGuard);
     if (!validation.valid) throw new ConflictError("EDIT_VALIDATION_FAILED", validation.failures.map(f => `${f.field}: ${f.code}`).join("; "));
     const id = randomUUID(), contentHash = hashJson(input.packet);
     await client.query("INSERT INTO agent_artifacts(id,generation_id,agent_run_id,artifact_version,content_hash,recommendation,validation) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)", [id, generation, current.run_id, current.artifact_version + 1, contentHash, JSON.stringify(input.packet), JSON.stringify({ ...validation, valid: true, chapter11: true, mentorEdited: true, rationale: input.rationale })]);

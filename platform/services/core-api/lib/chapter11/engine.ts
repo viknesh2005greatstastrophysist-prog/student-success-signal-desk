@@ -10,9 +10,19 @@ export const policySchema = z.object({
   inactivityMaximum: z.number().int().min(1).max(90),
   mediumScore: z.number().min(1).max(99), highScore: z.number().min(2).max(100),
   freshnessDays: z.number().int().min(1).max(365),
+  attendanceWeight: z.number().int().min(0).max(100).default(20),
+  markWeight: z.number().int().min(0).max(100).default(20),
+  inactivityWeight: z.number().int().min(0).max(100).default(20),
+  overdueWeight: z.number().int().min(0).max(100).default(10),
+  internshipWeight: z.number().int().min(0).max(100).default(15),
+  placementWeight: z.number().int().min(0).max(100).default(15),
+  overdueMinimum: z.number().int().min(1).max(100).default(1),
+  internshipMinimum: z.number().int().min(1).max(100).default(1),
+  placementMinimum: z.number().int().min(1).max(100).default(1),
+
 }).strict().refine(p => p.highScore > p.mediumScore, "High threshold must exceed medium threshold");
 export type Policy = z.infer<typeof policySchema>;
-export const demoPolicy: Policy = { version: "CH11-DEMO-1", attendanceMinimum: 75, markMinimum: 60, inactivityMaximum: 7, mediumScore: 20, highScore: 50, freshnessDays: 30 };
+export const demoPolicy: Policy = { version: "CH11-DEMO-1", attendanceMinimum: 75, markMinimum: 60, inactivityMaximum: 7, mediumScore: 20, highScore: 50, freshnessDays: 30, attendanceWeight: 20, markWeight: 20, inactivityWeight: 20, overdueWeight: 10, internshipWeight: 15, placementWeight: 15, overdueMinimum: 1, internshipMinimum: 1, placementMinimum: 1 };
 
 export const planInputSchema = z.object({
   request: z.string().trim().min(3).max(2000),
@@ -77,12 +87,12 @@ export function riskAnalysis(evidence: Evidence, policy: Policy): Risk {
     const value = evidence[source].values[key] as number;
     if (below ? value < threshold : value >= threshold) signals.push({ code, source, path: `evidence.${source}.values.${key}`, value, threshold, points, explanation: `${key} is ${value}; policy threshold is ${below ? "below" : "at least"} ${threshold}.` });
   };
-  check("academic", "attendancePct", policy.attendanceMinimum, true, 20, "ATTENDANCE_LOW");
-  check("academic", "markPct", policy.markMinimum, true, 20, "MARK_LOW");
-  check("lms", "inactivityDays", policy.inactivityMaximum, false, 20, "LMS_INACTIVE");
-  check("lms", "overdueAssignments", 1, false, 10, "ASSIGNMENT_OVERDUE");
-  check("internship", "missedMilestones", 1, false, 15, "INTERNSHIP_MILESTONE");
-  check("placement", "missedActivities", 1, false, 15, "PLACEMENT_ACTIVITY");
+  check("academic", "attendancePct", policy.attendanceMinimum, true, policy.attendanceWeight, "ATTENDANCE_LOW");
+  check("academic", "markPct", policy.markMinimum, true, policy.markWeight, "MARK_LOW");
+  check("lms", "inactivityDays", policy.inactivityMaximum, false, policy.inactivityWeight, "LMS_INACTIVE");
+  check("lms", "overdueAssignments", policy.overdueMinimum, false, policy.overdueWeight, "ASSIGNMENT_OVERDUE");
+  check("internship", "missedMilestones", policy.internshipMinimum, false, policy.internshipWeight, "INTERNSHIP_MILESTONE");
+  check("placement", "missedActivities", policy.placementMinimum, false, policy.placementWeight, "PLACEMENT_ACTIVITY");
   const score = Math.min(100, signals.reduce((sum, s) => sum + s.points, 0));
   return { score, band: score >= policy.highScore ? "high" : score >= policy.mediumScore ? "medium" : "low", flagged: score >= policy.mediumScore, signals, policyVersion: policy.version, reviewRequired: true };
 }

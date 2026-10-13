@@ -112,3 +112,9 @@ test("remote composition excludes identities, raw evidence and private reference
   const invalid=structuredClone(anonymous.baseline);invalid.citations[0]!.statement="Invented private claim";
   assert.equal(validatePacket(restoreEvidenceCitations(invalid,context),evidence,risk,"academic").valid,false);
 });
+
+test('Faculty policy controls every weight and career/overdue cutoff',()=>{
+ const e=fixture(),original=riskAnalysis(e,demoPolicy);
+ const changed=riskAnalysis(e,{...demoPolicy,attendanceWeight:1,markWeight:2,inactivityWeight:3,overdueWeight:4,internshipWeight:5,placementWeight:6,overdueMinimum:3,internshipMinimum:2,placementMinimum:2});
+ assert.equal(changed.score,6);assert.equal(changed.signals.length,3);assert.equal(original.score,100);
+});

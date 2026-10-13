@@ -9,7 +9,7 @@ import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
 import { ConflictError, NotFoundError } from "../http";
 import { AuthorizationError, requireRole, requireDemoInstitution } from "../security";
 import { hashJson } from "../support-commands";
-import { compose, DataBlocked, demoPolicy, digest, formatSkill, parallelMap, planInputSchema, planSkill, policySchema, referenceLibrary, retrieve, riskAnalysis, sourceNames, sourceSchema, validateEvidence, type Evidence, type Policy, type Risk, type Source, type SourceName, type Composer, type Reference } from "./engine";
+import { compose, DataBlocked, demoPolicy, digest, formatSkill, parallelMap, planInputSchema, planSkill, policySchema, referenceLibrary, retrieve, riskAnalysis, sourceNames, sourceSchema, validateEvidence, type Evidence, type Policy, type Risk, type Source, type SourceName, type Composer, type Reference, type PolicyGuard } from "./engine";
 import { configuredComposer } from "./provider";
 import { readApprovedCollegeSource } from "../college-normalized";
 import { loadAuthenticatedCollegeSources } from "../college-vault";
@@ -20,7 +20,7 @@ import { compositeRiskView } from "./dashboard";
 type PlanBody = ReturnType<typeof planSkill>;
 type PlanRow = { id: string; generation_id: string; created_by: string; department_id: string; revision: number; status: string; paused: boolean; body: PlanBody; plan_hash: string };
 type Job = { id: string; generation_id: string; plan_id: string; student_id: string; faculty_person_id: string; status: string; stage: string; checkpoint: Checkpoint; lease_token: string; support_case_id: string | null; attempts:number };
-type Checkpoint = { evidence?: Evidence; evidenceRevision?: string; capturedAt?: string; sourceTimings?: Record<string,number>; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy };
+type Checkpoint = { evidence?: Evidence; evidenceRevision?: string; capturedAt?: string; sourceTimings?: Record<string,number>; risk?: Risk; retrieval?: ReturnType<typeof retrieve>; composed?: Awaited<ReturnType<typeof compose>>; policy?: Policy; policyGuard?: PolicyGuard };
 
 async function audit(client: PoolClient, generation: string, actor: ActorContext, subject: string, event: string, input: unknown, output: unknown) {
   await client.query("INSERT INTO ch11_events(id,generation_id,subject_id,actor_person_id,event_type,input_hash,output_hash,detail) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)", [randomUUID(), generation, subject, actor.personId, event, digest(input), digest(output), JSON.stringify({ input, output })]);
@@ -52,7 +52,7 @@ async function getPlan(client: PoolClient, actor: ActorContext, id: string, lock
 
 export const approvePolicySchema = z.object({ policy: policySchema, facultyId: z.string().uuid().optional(), rationale: z.string().trim().min(12).max(600) }).strict();
 export async function approvePolicy(actor: ActorContext, raw: unknown, commandId: string = randomUUID()) {
-  requireRole(actor, "faculty", "hod");
+  requireRole(actor, "faculty");
   z.string().uuid().parse(commandId);
   const input = approvePolicySchema.parse(raw);
   const owner=input.facultyId??actor.personId;
@@ -68,7 +68,8 @@ export async function approvePolicy(actor: ActorContext, raw: unknown, commandId
       if (prior.rows[0]!.faculty_person_id !== owner || digest({ policy: prior.rows[0]!.policy, rationale: prior.rows[0]!.rationale }) !== digest({policy:input.policy,rationale:input.rationale})) throw new ConflictError("IDEMPOTENCY_KEY_MISMATCH", "This command already approved a different policy");
       return { id, ...input, synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
     }
-    await client.query("INSERT INTO ch11_policies(id,generation_id,department_id,faculty_person_id,policy,rationale) VALUES($1,$2,$3,$4,$5::jsonb,$6)", [id, generation, actor.departmentId, owner, JSON.stringify(input.policy), input.rationale]);
+    await client.query("INSERT INTO ch11_policies(id,generation_id,department_id,faculty_person_id,policy,rationale,scoring) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb)", [id, generation, actor.departmentId, owner, JSON.stringify(input.policy), input.rationale,JSON.stringify(Object.fromEntries(["attendanceWeight", "markWeight", "inactivityWeight", "overdueWeight", "internshipWeight", "placementWeight", "overdueMinimum", "internshipMinimum", "placementMinimum"].map(key=>[key,input.policy[key as keyof Policy]])))]);
+    await client.query("INSERT INTO ch11_policy_attestations(policy_id,generation_id,approved_by,approved_role,policy_version) VALUES($1,$2,$3,'faculty',$4)",[id,generation,actor.personId,input.policy.version]);
     await audit(client, generation, actor, id, "policy.approved", input, { id, synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" });
     return { id, ...input, synthetic: process.env.CORE_IDENTITY_REALM !== "institutional" };
   });
@@ -231,7 +232,7 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
     if (!cp.composed?.validation.valid) throw new ConflictError("VALIDATION_REQUIRED", "A passing acceptance report is required before mentor review");
     const caseId = randomUUID(), snapshotId = randomUUID(), runId = randomUUID(), artifactId = randomUUID();
     const reason = cp.risk.signals.map(s => s.explanation).join(" ");
-    const evidence = { ...cp.evidence, assignedFacultyPersonId: job.faculty_person_id, planId: plan.id, planHash: plan.plan_hash, domain: plan.body.domain, policy: cp.policy, risk: cp.risk, retrieval: cp.retrieval, chapterJobId: job.id };
+    const evidence = { ...cp.evidence, assignedFacultyPersonId: job.faculty_person_id, planId: plan.id, planHash: plan.plan_hash, domain: plan.body.domain, policy: cp.policy, risk: cp.risk, policyGuard:cp.policyGuard, retrieval: cp.retrieval, chapterJobId: job.id };
     const inputHash = hashJson(evidence), contentHash = hashJson(cp.composed.packet);
     await client.query("INSERT INTO support_cases(id,generation_id,student_id,source,status,risk_band,reason) VALUES($1,$2,$3,$4,'awaiting_faculty',$5,$6)", [caseId, job.generation_id, job.student_id, `chapter11:${plan.id}`, cp.risk.band, reason]);
     if(!cp.evidenceRevision)throw new ConflictError("EVIDENCE_REVISION_REQUIRED","Recollect evidence before publishing this resumed job");
@@ -251,11 +252,14 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
     const plan = await getPlan(client, actor, planId);
     if(plan.paused)throw new ConflictError("PLAN_PAUSED","This review is paused. Resume it before continuing.");
     if (plan.status !== "locked" || digest(plan.body) !== plan.plan_hash) throw new ConflictError("PLAN_NOT_LOCKED", "Lock a valid plan before execution");
-    const policy = await client.query<{ policy: Policy; faculty_person_id: string }>("SELECT policy,faculty_person_id FROM ch11_policies WHERE id=$1 AND generation_id=$2", [plan.body.policyId, plan.generation_id]);
+    const policy = await client.query<{ policy: Policy; faculty_person_id: string }>("SELECT policy || scoring AS policy,faculty_person_id FROM ch11_policies WHERE id=$1 AND generation_id=$2", [plan.body.policyId, plan.generation_id]);
     if (!policy.rowCount) throw new ConflictError("POLICY_REQUIRED", "Approved policy missing");
     await requireAssignedStudents(client, plan.generation_id, policy.rows[0]!.faculty_person_id, plan.body.studentIds!);
     const jobs = await client.query<{ id: string }>("SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4", [plan.id, plan.generation_id]);
-    return { plan, policy: policySchema.parse(policy.rows[0]!.policy), jobs: jobs.rows };
+    const attestation=await client.query("SELECT approved_role,policy_version FROM ch11_policy_attestations WHERE policy_id=$1 AND generation_id=$2",[plan.body.policyId,plan.generation_id]);
+    const approved=attestation.rows[0];
+    const parsed=policySchema.parse(policy.rows[0]!.policy);
+    return { plan, policy:parsed, policyGuard:{version:approved?.policy_version??'',facultyApproved:approved?.approved_role==='faculty'}, jobs: jobs.rows };
   });
   const results = await parallelMap(initial.jobs, options.concurrency ?? initial.plan.body.budget.concurrency, async ({ id }) => {
     const job = await withCoreTransaction(async client => {
@@ -274,8 +278,9 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
         const {evidence,capturedAt}=capture;
         validateEvidence(evidence, job.student_id, initial.policy, capturedAt, evidence.academic.semester);
         job.checkpoint={};
-        await saveCheckpoint(actor, job, "risk", { ...capture, policy: initial.policy });
+        await saveCheckpoint(actor, job, "risk", { ...capture, policy: initial.policy,policyGuard:initial.policyGuard });
       }
+      job.checkpoint.policyGuard=initial.policyGuard;
       await ensureReviewRunning(actor,planId);
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
       if (!job.checkpoint.risk) {
@@ -290,7 +295,7 @@ export async function executePlan(actor: ActorContext, planId: string, options: 
       if (options.stopAfterStage === job.stage) throw new Error("INJECTED_STOP");
       if (job.checkpoint.risk!.flagged && !job.checkpoint.composed) {
         const provider = initial.plan.body.mode === "model" ? options.composer ?? configuredComposer() : undefined;
-        const composed = await compose({ evidence: job.checkpoint.evidence!, risk: job.checkpoint.risk!, domain: initial.plan.body.domain!, references: job.checkpoint.retrieval!, baseline: formatSkill(job.checkpoint.risk!, initial.plan.body.domain!) }, provider);
+        const composed = await compose({ evidence: job.checkpoint.evidence!, risk: job.checkpoint.risk!, domain: initial.plan.body.domain!, references: job.checkpoint.retrieval!, policyGuard:initial.policyGuard, baseline: formatSkill(job.checkpoint.risk!, initial.plan.body.domain!) }, provider);
         if (initial.plan.body.mode === "model" && !provider) { composed.validation.providerError = "MODEL_NOT_CONFIGURED"; composed.validation.fallback = true; composed.validation.escalated=true; composed.validation.valid=false; }
         await saveCheckpoint(actor, job, "publish", { ...job.checkpoint, composed });
       }
@@ -329,7 +334,7 @@ export async function overview(actor: ActorContext) {
     const students = await client.query(`SELECT s.id,s.department_id,s.register_number,p.display_name,m.faculty_person_id AS mentor_id,mp.display_name AS mentor_name FROM student_profiles s JOIN people p ON p.id=s.person_id LEFT JOIN mentor_assignments m ON m.student_id=s.id LEFT JOIN people mp ON mp.id=m.faculty_person_id
       WHERE s.generation_id=$1 AND ($2::uuid IS NULL OR s.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(
       SELECT 1 FROM mentor_assignments m WHERE m.generation_id=s.generation_id AND m.student_id=s.id AND m.faculty_person_id=$3)) ORDER BY s.register_number`, [generation, department, mentor]);
-    const policies = await client.query("SELECT * FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
+    const policies = await client.query("SELECT ch11_policies.*, policy || scoring AS policy FROM ch11_policies WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR faculty_person_id=$3) ORDER BY created_at DESC", [generation, department, mentor]);
     const plans = await client.query("SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC", [generation, department, mentor]);
     const jobs = await client.query("SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.checkpoint->'composed'->'packet' AS offered_template,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC", [generation, department, mentor]);
     const trends=await client.query(`SELECT p.id AS cycle_id,
