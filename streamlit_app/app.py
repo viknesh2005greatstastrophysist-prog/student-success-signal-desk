@@ -4,15 +4,19 @@ import base64
 import json
 import subprocess
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
+import altair as alt
+import labels
 import pandas as pd
 import streamlit as st
+import ui
 from bridge import BridgeError, get_client
 
 st.set_page_config(
     page_title="AURA | Student Success",
-    page_icon="A",
+    page_icon=str(Path(__file__).resolve().parent / "assets" / "aura-mark.svg"),
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -20,10 +24,37 @@ st.set_page_config(
 PORTALS = {
     "student": "Student",
     "parent": "Parent",
-    "faculty": "Faculty",
+    "faculty": "Mentor",
     "hod": "Department head",
-    "governance": "Governance",
-    "lms": "Learning workspace",
+    "governance": "AI activity",
+    "lms": "Learning (LMS)",
+}
+PORTAL_ICONS = {
+    "student": ":material/school:",
+    "parent": ":material/family_restroom:",
+    "faculty": ":material/supervisor_account:",
+    "hod": ":material/account_balance:",
+    "governance": ":material/hub:",
+    "lms": ":material/auto_stories:",
+}
+PAGE_ICONS = {
+    "Overview": ":material/space_dashboard:",
+    "Learning": ":material/auto_stories:",
+    "Academic records": ":material/menu_book:",
+    "Fees and receipts": ":material/receipt_long:",
+    "Source records": ":material/dataset:",
+    "Child records": ":material/menu_book:",
+    "Classroom": ":material/co_present:",
+    "Mentor follow-ups": ":material/event_note:",
+    "Support reviews": ":material/fact_check:",
+    "Department overview": ":material/monitoring:",
+    "AI activity": ":material/hub:",
+}
+CHECK_LABELS = {
+    "alerts_cite_triggers": "Each alert cites its triggering signals",
+    "thresholds_faculty_set": "Thresholds are faculty-set",
+    "advisor_review_required": "No student labelled without mentor review",
+    "privacy_scope_enforced": "Privacy scope enforced",
 }
 PORTAL_ROLES = {
     "student": {"student"},
@@ -156,49 +187,76 @@ def attachment_payload(uploaded: Any) -> tuple[dict[str, str] | None, str | None
 
 
 def login_view() -> None:
-    st.title("AURA")
-    st.subheader("Sign in to your workspace")
-    st.write(
-        "Use your college account to open the records and tools available to your role."
+    ui.hide_sidebar()
+    brand_col, form_col = st.columns(
+        [1.15, 1], gap="large", vertical_alignment="center"
     )
-    with st.form("sign_in", clear_on_submit=True):
-        portal = st.selectbox(
-            "Workspace", list(PORTALS), format_func=lambda key: PORTALS[key]
-        )
-        email = st.text_input("Email", autocomplete="email")
-        password = st.text_input(
-            "Password", type="password", autocomplete="current-password"
-        )
-        submitted = st.form_submit_button("Sign in", type="primary")
-    if submitted:
-        if not email.strip() or not password:
-            st.error("Enter your email and password.")
-            return
-        try:
-            with st.spinner("Signing in…"):
-                result = get_client().login(email.strip(), password, portal)
-        except BridgeError as error:
-            st.error(str(error))
-            return
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-            st.error(
-                "The workspace could not start. Check its private runtime configuration and try again."
+    with brand_col:
+        ui.brand_panel()
+    with form_col:
+        with ui.card("login"):
+            st.html('<p class="aura-eyebrow">Welcome back</p>')
+            st.header("Sign in to your workspace", anchor=False)
+            st.caption(
+                "Use your college account. You'll only see the records and tools your role allows."
             )
-            return
-        actor = result.get("actor") or {}
-        role = value(actor, "role")
-        if role not in PORTAL_ROLES[portal]:
-            try:
-                get_client().logout(result["token"])
-            except BridgeError:
-                st.caption("The temporary session could not be closed automatically.")
-            st.error("This account cannot enter the selected workspace.")
-            return
-        # Keep only the opaque session token and the authenticated actor in session state.
-        st.session_state.pop("success_notice", None)
-        st.session_state["token"] = result["token"]
-        st.session_state["actor"] = {**actor, "portal": portal}
-        st.rerun()
+            portal = st.segmented_control(
+                "Workspace",
+                list(PORTALS),
+                default="student",
+                required=True,
+                format_func=lambda key: f"{PORTAL_ICONS[key]} {PORTALS[key]}",
+                key="login_workspace",
+            )
+            with st.form("sign_in", clear_on_submit=True, border=False):
+                email = st.text_input(
+                    "Email", autocomplete="email", placeholder="name@college.edu"
+                )
+                password = st.text_input(
+                    "Password", type="password", autocomplete="current-password"
+                )
+                submitted = st.form_submit_button(
+                    "Sign in", type="primary", width="stretch"
+                )
+            st.caption(
+                ":material/lock: Sessions are private to your account and end when you sign out."
+            )
+        if submitted:
+            complete_sign_in(portal, email, password)
+
+
+def complete_sign_in(portal: str | None, email: str, password: str) -> None:
+    if not portal:
+        st.error("Choose the workspace you want to open.")
+        return
+    if not email.strip() or not password:
+        st.error("Enter your email and password.")
+        return
+    try:
+        with st.spinner("Signing in…"):
+            result = get_client().login(email.strip(), password, portal)
+    except BridgeError as error:
+        st.error(str(error))
+        return
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        st.error(
+            "The workspace could not start. Check its private runtime configuration and try again."
+        )
+        return
+    actor = result.get("actor") or {}
+    role = value(actor, "role")
+    if role not in PORTAL_ROLES[portal]:
+        try:
+            get_client().logout(result["token"])
+        except BridgeError:
+            st.caption("The temporary session could not be closed automatically.")
+        st.error("This account cannot enter the selected workspace.")
+        return
+    # Keep only the opaque session token and the authenticated actor in session state.
+    st.session_state.pop("success_notice", None)
+    st.session_state["token"] = result["token"]
+    st.session_state["actor"] = {**actor, "portal": portal}
+    st.rerun()
 
 
 def sign_out() -> None:
@@ -230,29 +288,73 @@ def dataframe(
     *,
     empty: str = "No records to show.",
     key: str | None = None,
+    column_config: dict[str, Any] | None = None,
 ) -> None:
     if not rows:
-        st.caption(empty)
+        st.caption(f":material/inbox: {empty}")
         return
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", key=key)
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        width="stretch",
+        key=key,
+        column_config=column_config,
+    )
+
+
+def percent(raw: Any) -> float | None:
+    try:
+        return None if raw is None else float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def average(values: list[float | None]) -> float | None:
+    known = [v for v in values if v is not None]
+    return round(sum(known) / len(known), 1) if known else None
+
+
+def percent_text(raw: Any) -> str:
+    number = percent(raw)
+    return "—" if number is None else f"{number:g}%"
+
+
+PERCENT_COLUMN = {
+    "format": "%.0f%%",
+    "min_value": 0,
+    "max_value": 100,
+}
 
 
 def sign_in_sidebar(actor: dict[str, Any]) -> None:
-    st.sidebar.title("AURA")
-    st.sidebar.caption(PORTALS.get(actor.get("portal"), "Workspace"))
-    st.sidebar.write(display_name(actor))
-    st.sidebar.caption(str(actor.get("email", "")))
-    if st.sidebar.button("Sign out", use_container_width=True):
+    ui.brand()
+    portal = actor.get("portal")
+    ui.identity_card(
+        labels.pretty_name(display_name(actor)),
+        PORTALS.get(portal, "Workspace"),
+        actor.get("email", ""),
+    )
+
+
+def sidebar_footer() -> None:
+    st.sidebar.divider()
+    if st.sidebar.button("Sign out", width="stretch", icon=":material/logout:"):
         sign_out()
+    st.sidebar.caption(
+        "AURA · Student Success & Early Warning. Agents draft and flag; mentors decide."
+    )
 
 
 def render_student_home(detail: dict[str, Any], actor: dict[str, Any]) -> None:
     student = detail.get("student") or {}
-    st.title(f"Welcome, {display_name(student) if student else display_name(actor)}")
-    st.write("Your courses, progress and support records are available here.")
+    name = display_name(student) if student else display_name(actor)
+    ui.page_header(
+        f"Welcome, {name.split()[0].title() if name else 'there'}",
+        "Your courses, progress and the support your mentor has confirmed for you.",
+        eyebrow="Student workspace",
+    )
     courses = detail.get("courses") or []
     marks = detail.get("marks") or []
-    attendance = detail.get("attendance") or []
     invoices = detail.get("invoices") or []
     outstanding_paise = sum(
         max(
@@ -261,173 +363,300 @@ def render_student_home(detail: dict[str, Any], actor: dict[str, Any]) -> None:
         )
         for invoice in invoices
     )
-    cols = st.columns(4)
-    cols[0].metric("Courses", len(courses))
-    cols[1].metric("Attendance records", len(attendance))
-    cols[2].metric("Marks recorded", len(marks))
-    cols[3].metric("Outstanding fees", money(outstanding_paise))
+    attendance_avg = average([percent(row.get("percentage")) for row in courses])
+    published = [row for row in courses if row.get("result_published")]
+    ui.kpi_row(
+        [
+            {
+                "label": "Courses this term",
+                "value": len(courses),
+                "icon": ":material/menu_book:",
+            },
+            {
+                "label": "Average attendance",
+                "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
+                "icon": ":material/event_available:",
+            },
+            {
+                "label": "Results published",
+                "value": f"{len(published)} of {len(courses)}" if courses else "0",
+                "icon": ":material/grading:",
+            },
+            {
+                "label": "Fees outstanding",
+                "value": money(outstanding_paise),
+                "icon": ":material/account_balance_wallet:",
+            },
+        ]
+    )
+    render_support_cards(detail.get("support") or [], audience="student")
     if courses:
-        st.subheader("Current courses")
-        dataframe(
-            [
-                {
-                    "Course": f"{row.get('code', '')} · {row.get('title', '')}",
-                    "Attendance": f"{row['percentage']}%"
-                    if row.get("percentage") is not None
-                    else "Not recorded",
-                    "Result": f"{row['result_percentage']}%"
-                    if row.get("result_published")
+        ui.section("Your courses", "Attendance and results recorded so far this term.")
+        render_course_cards(courses)
+    elif not marks:
+        ui.empty_state(
+            "No courses yet",
+            "Your registered courses will appear here once the term begins.",
+            "📚",
+        )
+    render_mentor_updates(detail.get("followups") or [])
+
+
+def render_course_cards(courses: list[dict[str, Any]]) -> None:
+    per_row = 3
+    for start in range(0, len(courses), per_row):
+        cols = st.columns(per_row)
+        for col, row in zip(cols, courses[start : start + per_row]):
+            with col, ui.card(f"course_{row.get('id', start)}_{row.get('code', '')}"):
+                st.markdown(f"**{ui._md_safe(row.get('code', ''))}**")
+                st.caption(str(row.get("title", "")))
+                attendance = percent(row.get("percentage"))
+                if attendance is None:
+                    st.caption(":material/event_busy: Attendance not recorded yet")
+                else:
+                    st.progress(
+                        min(max(attendance / 100, 0.0), 1.0),
+                        text=f"Attendance · {attendance:g}%",
+                    )
+                if (
+                    row.get("result_published")
                     and row.get("result_percentage") is not None
-                    else "Not published",
-                }
-                for row in courses
-            ]
-        )
-    followups = detail.get("followups") or []
-    if followups:
-        st.subheader("Mentor updates")
-        dataframe(
-            [
-                {
-                    "Due": row.get("due_on"),
-                    "Mentor": row.get("mentor_name"),
-                    "Update": row.get("note"),
-                    "Status": row.get("status"),
-                }
-                for row in followups
-            ]
-        )
+                ):
+                    st.markdown(
+                        ui.badge_md(
+                            f"Result {percent_text(row['result_percentage'])}",
+                            "green",
+                            ":material/grading:",
+                        )
+                    )
+                else:
+                    st.markdown(
+                        ui.badge_md(
+                            "Result not published", "gray", ":material/hourglass_empty:"
+                        )
+                    )
 
 
-def render_academic_records(detail: dict[str, Any]) -> None:
-    st.title("Academic records")
-    st.caption("Records and results currently available to your account.")
+def render_mentor_updates(followups: list[dict[str, Any]]) -> None:
+    shared = [row for row in followups if row]
+    if not shared:
+        return
+    ui.section("Updates from your mentor", "Check-ins your mentor has shared with you.")
+    for index, row in enumerate(shared):
+        with ui.card(f"update_{row.get('id', index)}"):
+            top, badge = st.columns([4, 1.4], vertical_alignment="center")
+            with top:
+                st.markdown(
+                    f"**{ui._md_safe(row.get('mentor_name') or 'Your mentor')}**"
+                )
+                st.caption(
+                    f"{labels.nice_date(row.get('due_on'))} · {labels.due_phrase(row.get('due_on'))}"
+                )
+            with badge:
+                st.markdown(ui.status_md(row.get("status")))
+            st.write(row.get("note") or "")
+
+
+def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> None:
+    if not support:
+        return
+    heading = "Your support plan" if audience == "student" else "Approved support plan"
+    ui.section(
+        heading,
+        "Agreed by the assigned mentor. These are the next steps, not a judgement.",
+    )
+    for index, item in enumerate(support):
+        plan = item.get("plan") or {}
+        with ui.card(f"support_{index}"):
+            st.caption(
+                f":material/description: {ui._md_safe(plan.get('summary', 'Support plan'))}"
+            )
+            for action in plan.get("actions", []):
+                due = action.get("dueInDays")
+                st.markdown(
+                    f":material/check_circle: **{ui._md_safe(action.get('label', 'Next step'))}**"
+                    + (f" · within {due} days" if due is not None else "")
+                )
+            if plan.get("citations"):
+                with st.expander("Why this plan was suggested", icon=":material/info:"):
+                    ui.citation_chips(plan.get("citations", []))
+
+
+def render_academic_records(detail: dict[str, Any], *, heading: bool = True) -> None:
+    if heading:
+        ui.page_header(
+            "Academic records",
+            "Attendance, marks and results currently available to your account.",
+            eyebrow="Records",
+        )
     courses = detail.get("courses") or []
-    if courses:
-        st.subheader("Course progress")
+    tab_courses, tab_attendance, tab_marks, tab_support = st.tabs(
+        [
+            ":material/menu_book: Courses",
+            ":material/event_available: Attendance",
+            ":material/grading: Marks",
+            ":material/handshake: Support",
+        ]
+    )
+    with tab_courses:
         dataframe(
             [
                 {
                     "Course": f"{r.get('code', '')} · {r.get('title', '')}",
                     "Term": r.get("term_name"),
-                    "Registered": r.get("registration_status"),
+                    "Registration": labels.status_label(r.get("registration_status")),
                     "Present": r.get("present"),
                     "Absent": r.get("absent"),
-                    "Attendance": f"{r['percentage']}%"
-                    if r.get("percentage") is not None
-                    else "Not recorded",
-                    "Result": f"{r['result_percentage']}%"
+                    "Attendance": percent(r.get("percentage")),
+                    "Result": percent_text(r.get("result_percentage"))
                     if r.get("result_published")
                     and r.get("result_percentage") is not None
                     else "Not published",
                 }
                 for r in courses
-            ]
+            ],
+            empty="No courses are registered yet.",
+            column_config={
+                "Attendance": st.column_config.ProgressColumn(
+                    "Attendance", **PERCENT_COLUMN
+                )
+            },
         )
-    st.subheader("Attendance")
-    dataframe(
-        [
-            {
-                "Date": r.get("session_date"),
-                "Course": r.get("code"),
-                "Topic": r.get("topic"),
-                "Status": r.get("status"),
-            }
-            for r in detail.get("attendance", [])
-        ]
-    )
-    st.subheader("Marks")
-    dataframe(
-        [
-            {
-                "Course": r.get("code"),
-                "Assessment": r.get("assessment"),
-                "Score": f"{r.get('score')} / {r.get('maximum_score')}",
-                "Feedback": r.get("feedback") or "No feedback recorded",
-            }
-            for r in detail.get("marks", [])
-        ]
-    )
-    support = detail.get("support") or []
-    if support:
-        st.subheader("Support plans")
-        for item in support:
-            plan = item.get("plan") or {}
-            with st.expander(str(plan.get("summary", "Support plan"))):
-                for action in plan.get("actions", []):
-                    st.write(
-                        f"{action.get('label', 'Next step')} · due in {action.get('dueInDays', 'not recorded')} days"
-                    )
-                for citation in plan.get("citations", []):
-                    st.caption(
-                        f"{citation.get('statement', '')} · {citation.get('evidencePath', '')}"
-                    )
-    followups = detail.get("followups") or []
-    if followups:
-        st.subheader("Mentor follow-ups")
+    with tab_attendance:
         dataframe(
             [
                 {
-                    "Due": r.get("due_on"),
-                    "Mentor": r.get("mentor_name"),
-                    "Note": r.get("note"),
-                    "Status": r.get("status"),
-                    "Outcome": r.get("outcome") or "Not recorded",
+                    "Date": labels.nice_date(r.get("session_date")),
+                    "Course": r.get("code"),
+                    "Topic": r.get("topic"),
+                    "Status": labels.status_label(r.get("status")),
                 }
-                for r in followups
-            ]
+                for r in detail.get("attendance", [])
+            ],
+            empty="No attendance has been recorded yet.",
         )
+    with tab_marks:
+        dataframe(
+            [
+                {
+                    "Course": r.get("code"),
+                    "Assessment": r.get("assessment"),
+                    "Score": f"{r.get('score')} / {r.get('maximum_score')}",
+                    "Feedback": r.get("feedback") or "No feedback recorded",
+                }
+                for r in detail.get("marks", [])
+            ],
+            empty="No marks have been recorded yet.",
+        )
+    with tab_support:
+        support = detail.get("support") or []
+        if support:
+            render_support_cards(support, audience="family")
+        followups = detail.get("followups") or []
+        if followups:
+            ui.section("Mentor follow-ups")
+            dataframe(
+                [
+                    {
+                        "Due": labels.nice_date(r.get("due_on")),
+                        "Mentor": r.get("mentor_name"),
+                        "Note": r.get("note"),
+                        "Status": labels.status_label(r.get("status")),
+                        "Outcome": r.get("outcome") or "Not recorded",
+                    }
+                    for r in followups
+                ]
+            )
+        if not support and not followups:
+            ui.empty_state(
+                "Nothing here yet",
+                "Approved support and mentor follow-ups will appear here.",
+                "🤝",
+            )
 
 
 def render_source_records(actor: dict[str, Any]) -> None:
-    st.title("Supplied source records")
-    st.write(
-        "Original field names and values are preserved. The source definitions and reporting periods are unknown."
+    ui.page_header(
+        "Source records",
+        "The college's original records, exactly as supplied. Nothing here has been reinterpreted.",
+        eyebrow="Evidence",
     )
     sources = load("sources")
     if not isinstance(sources, dict):
-        st.info("No source records are available to this account.")
+        ui.empty_state("No source records", "None are available to this account.", "🗂️")
         return
     counts = sources.get("counts") or {}
     if counts:
-        cols = st.columns(2)
-        cols[0].metric("Students in scope", value(counts, "students", default=0))
-        cols[1].metric("Source files in scope", value(counts, "sources", default=0))
-    for note in sources.get("unknowns", []):
-        st.info(f"Not defined in the supplied records: {note}.")
+        ui.kpi_row(
+            [
+                {
+                    "label": "Students in scope",
+                    "value": value(counts, "students", default=0),
+                    "icon": ":material/groups:",
+                },
+                {
+                    "label": "Source files in scope",
+                    "value": value(counts, "sources", default=0),
+                    "icon": ":material/description:",
+                },
+            ]
+        )
+    unknowns = [str(note) for note in sources.get("unknowns", []) if note]
+    if unknowns:
+        with st.expander("About these records", icon=":material/info:"):
+            st.write(
+                "Original field names and values are preserved byte for byte. "
+                "The college has not yet defined the following, so AURA does not interpret them:"
+            )
+            for note in unknowns:
+                st.markdown(f"- {ui._md_safe(note).capitalize()}")
+            st.caption(
+                "Values such as NA, TNS, 0 and blank are shown exactly as recorded. "
+                "Support risk uses separate operational records."
+            )
     source_by_id = {str(item.get("id")): item for item in sources.get("sources", [])}
     students = sources.get("students") or []
     if actor.get("role") == "governance":
-        st.caption("This workspace returns aggregate source counts only.")
+        st.caption(
+            ":material/shield: AI activity receives aggregate counts only, never individual source rows."
+        )
         return
     if not students:
-        st.info("No source rows are available within your current access.")
+        ui.empty_state(
+            "No source rows in your scope",
+            "Rows appear here for the students you are permitted to see.",
+            "🔒",
+        )
         return
     for student in students:
         student_label = " · ".join(
             str(part) for part in [student.get("name"), student.get("srn")] if part
         )
         with st.expander(
-            student_label or "Student source records", expanded=len(students) == 1
+            student_label or "Student source records",
+            expanded=len(students) == 1,
+            icon=":material/person:",
         ):
             for report in student.get("reports", []):
                 source = source_by_id.get(str(report.get("sourceId")), {})
                 st.markdown(
-                    f"**{source.get('filename', 'Supplied source')}** · {source.get('sheet', 'Sheet not recorded')} · {report.get('semester', 'Reporting period unknown')} · {report.get('section', 'Section not recorded')}"
+                    f"**{ui._md_safe(labels.friendly_source_name(source.get('filename')))}** "
+                    f"· {ui._md_safe(source.get('sheet', 'Sheet not recorded'))} "
+                    f"· {ui._md_safe(report.get('semester', 'Reporting period unknown'))} "
+                    f"· {ui._md_safe(report.get('section', 'Section not recorded'))}"
                 )
+                st.caption(f"Original file: {source.get('filename', 'not recorded')}")
                 dataframe(
                     [
                         {
                             "Course": cell.get("course"),
                             "Recorded field": cell.get("field"),
                             "Recorded value": (
-                                ""
-                                if cell.get("rawValue") is None
+                                "(blank)"
+                                if cell.get("rawValue") in (None, "")
                                 else str(cell.get("rawValue"))
                             ),
                             "Source cell": cell.get("sourceCell"),
-                            "File": source.get("filename"),
-                            "Sheet": source.get("sheet"),
                         }
                         for cell in report.get("cells", [])
                     ]
@@ -435,11 +664,32 @@ def render_source_records(actor: dict[str, Any]) -> None:
 
 
 def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
-    st.title("Fees and receipts")
+    ui.page_header(
+        "Fees and receipts",
+        "Invoices, payments and receipts for this term.",
+        eyebrow="Fees",
+    )
     invoices = detail.get("invoices") or []
     if not invoices:
-        st.info("No fee records are available to this account.")
+        ui.empty_state("No fee records", "Invoices will appear here once issued.", "🧾")
         return
+    billed = sum(int(row.get("amount_paise") or 0) for row in invoices)
+    paid = sum(int(row.get("paid_paise") or 0) for row in invoices)
+    ui.kpi_row(
+        [
+            {
+                "label": "Billed",
+                "value": money(billed),
+                "icon": ":material/receipt_long:",
+            },
+            {"label": "Paid", "value": money(paid), "icon": ":material/paid:"},
+            {
+                "label": "Balance",
+                "value": money(max(0, billed - paid)),
+                "icon": ":material/account_balance_wallet:",
+            },
+        ]
+    )
     dataframe(
         [
             {
@@ -454,15 +704,17 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
                         - int(row.get("paid_paise") or 0),
                     )
                 ),
-                "Due": row.get("due_on"),
-                "Status": row.get("status"),
+                "Due": labels.nice_date(row.get("due_on")),
+                "Status": labels.status_label(row.get("status")),
             }
             for row in invoices
         ]
     )
     if actor.get("role") == "parent":
+        ui.section("Record a payment", icon=":material/credit_card:")
         st.info(
-            "No money is collected here. This records a payment attempt against the displayed balance."
+            "No money is collected here. This records a payment attempt against the displayed balance.",
+            icon=":material/info:",
         )
         payable = [
             row
@@ -520,7 +772,7 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
         tx for invoice in invoices for tx in invoice.get("transactions", [])
     ]
     if transactions:
-        st.subheader("Payment ledger")
+        ui.section("Payment ledger", icon=":material/history:")
         dataframe(
             [
                 {
@@ -532,9 +784,9 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
                         ),
                         "",
                     ),
-                    "Date": short_time(tx.get("created_at")),
+                    "Date": labels.nice_time(tx.get("created_at")),
                     "Amount": money(tx.get("amount_paise")),
-                    "Status": tx.get("status"),
+                    "Status": labels.status_label(tx.get("status")),
                 }
                 for tx in transactions
             ]
@@ -558,7 +810,6 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
 def render_receipt(receipt: dict[str, Any]) -> None:
     if not receipt:
         return
-    st.subheader("Receipt")
     fields = [
         ("Receipt", receipt.get("receiptId")),
         ("Student", receipt.get("studentName")),
@@ -571,19 +822,34 @@ def render_receipt(receipt: dict[str, Any]) -> None:
         ("Provider reference", receipt.get("providerReference")),
         ("Record type", receipt.get("mode")),
     ]
-    for label, content in fields:
-        if content is not None:
-            st.write(f"**{label}:** {content}")
     content = "AURA payment receipt\n" + "\n".join(
         f"{label}: {item}" for label, item in fields if item is not None
     )
-    st.download_button(
-        "Download receipt",
-        content,
-        file_name=f"receipt-{receipt.get('receiptId', 'record')}.txt",
-        mime="text/plain",
-        on_click="ignore",
-    )
+    with ui.card("receipt"):
+        head, amount = st.columns([3, 2], vertical_alignment="center")
+        with head:
+            st.html('<p class="aura-eyebrow">Payment receipt</p>')
+            st.subheader(str(receipt.get("receiptId") or "Receipt"), anchor=False)
+        with amount:
+            st.metric("Amount recorded", money(receipt.get("amountPaise")))
+        left, right = st.columns(2)
+        shown = [
+            (label, content_value)
+            for label, content_value in fields
+            if content_value is not None and label not in {"Receipt", "Amount recorded"}
+        ]
+        for index, (label, item) in enumerate(shown):
+            with left if index % 2 == 0 else right:
+                st.caption(label)
+                st.markdown(f"**{ui._md_safe(item)}**")
+        st.download_button(
+            "Download receipt",
+            content,
+            file_name=f"receipt-{receipt.get('receiptId', 'record')}.txt",
+            mime="text/plain",
+            on_click="ignore",
+            icon=":material/download:",
+        )
 
 
 def render_parent_records(
@@ -591,75 +857,121 @@ def render_parent_records(
 ) -> None:
     children = overview.get("children") or []
     if not children:
-        st.title("Family workspace")
-        st.info("No linked student records are available to this account.")
+        ui.page_header("Family workspace", eyebrow="Parent")
+        ui.empty_state(
+            "No linked student",
+            "A student record has not been linked to this account yet.",
+            "👪",
+        )
         return
-    child_id = select_id(
-        "Student", children, person_id, display_name, key="parent_child"
-    )
+    if len(children) > 1:
+        child_id = select_id(
+            "Student", children, person_id, display_name, key="parent_child"
+        )
+    else:
+        child_id = person_id(children[0])
     if not child_id:
         return
     detail = load("student", {"studentId": child_id})
     student = detail.get("student") or {}
+    child_name = display_name(student).title()
     if page == "Overview":
-        st.title(f"{display_name(student)}'s progress")
-        st.write(
-            "Attendance, results, support updates and fee records available to your account."
+        ui.page_header(
+            f"{child_name}'s progress",
+            "Attendance, results, mentor updates and fees shared with your family.",
+            eyebrow="Family workspace",
         )
-        cols = st.columns(3)
-        cols[0].metric("Courses", len(detail.get("courses") or []))
-        cols[1].metric("Attendance records", len(detail.get("attendance") or []))
-        cols[2].metric(
-            "Open fee balance",
-            money(
-                sum(
-                    max(
-                        0,
-                        int(i.get("amount_paise") or 0) - int(i.get("paid_paise") or 0),
-                    )
-                    for i in detail.get("invoices", [])
-                )
-            ),
+        courses = detail.get("courses") or []
+        attendance_avg = average([percent(row.get("percentage")) for row in courses])
+        ui.kpi_row(
+            [
+                {
+                    "label": "Courses this term",
+                    "value": len(courses),
+                    "icon": ":material/menu_book:",
+                },
+                {
+                    "label": "Average attendance",
+                    "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
+                    "icon": ":material/event_available:",
+                },
+                {
+                    "label": "Open fee balance",
+                    "value": money(
+                        sum(
+                            max(
+                                0,
+                                int(i.get("amount_paise") or 0)
+                                - int(i.get("paid_paise") or 0),
+                            )
+                            for i in detail.get("invoices", [])
+                        )
+                    ),
+                    "icon": ":material/account_balance_wallet:",
+                },
+            ]
         )
-        if detail.get("followups"):
-            st.subheader("Mentor updates")
-            dataframe(
-                [
-                    {
-                        "Due": r.get("due_on"),
-                        "Mentor": r.get("mentor_name"),
-                        "Update": r.get("note"),
-                        "Status": r.get("status"),
-                    }
-                    for r in detail["followups"]
-                ]
-            )
+        render_support_cards(detail.get("support") or [], audience="family")
+        if courses:
+            ui.section("Courses", "Attendance and results recorded so far this term.")
+            render_course_cards(courses)
+        render_mentor_updates(detail.get("followups") or [])
     elif page == "Child records":
-        render_academic_records(detail)
+        ui.page_header(
+            f"{child_name}'s records",
+            "Attendance, marks and results available to your family account.",
+            eyebrow="Family workspace",
+        )
+        render_academic_records(detail, heading=False)
     elif page == "Fees and receipts":
         render_fees(detail, actor)
 
 
 def render_followups(overview: dict[str, Any]) -> None:
-    st.title("Mentor follow-ups")
-    st.write(
-        "Schedule or update a check-in with a due date and a reason for the change."
+    ui.page_header(
+        "Mentor follow-ups",
+        "Schedule or update a check-in. Every change records a reason.",
+        eyebrow="Mentoring",
     )
     followups = overview.get("followups") or []
     students = overview.get("students") or []
+    ui.kpi_row(
+        [
+            {
+                "label": "Open check-ins",
+                "value": sum(1 for r in followups if r.get("status") != "completed"),
+                "icon": ":material/event_note:",
+            },
+            {
+                "label": "Overdue",
+                "value": sum(1 for r in followups if r.get("overdue")),
+                "icon": ":material/alarm:",
+            },
+            {
+                "label": "Completed",
+                "value": sum(1 for r in followups if r.get("status") == "completed"),
+                "icon": ":material/task_alt:",
+            },
+        ]
+    )
+    ui.section("All follow-ups", icon=":material/list_alt:")
     dataframe(
         [
             {
                 "Student": r.get("student_name"),
-                "Due": r.get("due_on"),
+                "Due": labels.nice_date(r.get("due_on")),
+                "When": "Overdue"
+                if r.get("overdue")
+                else labels.due_phrase(r.get("due_on")),
                 "Note": r.get("note"),
-                "Status": r.get("status"),
-                "Overdue": "Yes" if r.get("overdue") else "No",
+                "Status": labels.status_label(r.get("status")),
                 "Outcome": r.get("outcome") or "Not recorded",
             }
             for r in followups
-        ]
+        ],
+        empty="No follow-ups yet. Create the first one below.",
     )
+    ui.section("Create or update a check-in", icon=":material/edit_calendar:")
     student_by_id = {person_id(row): row for row in students}
     choices: list[dict[str, Any] | None] = [None, *followups]
     selected = st.selectbox(
@@ -668,7 +980,7 @@ def render_followups(overview: dict[str, Any]) -> None:
         format_func=lambda row: (
             "Create a follow-up"
             if row is None
-            else f"{row.get('student_name', 'Student')} · due {row.get('due_on', 'date not recorded')}"
+            else f"{row.get('student_name', 'Student')} · due {labels.nice_date(row.get('due_on'))}"
         ),
         key="followup_choice",
     )
@@ -704,7 +1016,7 @@ def render_followups(overview: dict[str, Any]) -> None:
             index=FOLLOWUP_STATES.index(selected.get("status"))
             if selected and selected.get("status") in FOLLOWUP_STATES
             else 0,
-            format_func=lambda item: item.replace("_", " ").title(),
+            format_func=labels.status_label,
         )
         outcome = st.text_area(
             "Outcome",
@@ -748,8 +1060,11 @@ def render_followups(overview: dict[str, Any]) -> None:
 
 
 def render_classroom(overview: dict[str, Any]) -> None:
-    st.title("Classroom")
-    st.write("Review the course roster, record attendance and save assessment marks.")
+    ui.page_header(
+        "Classroom",
+        "Take attendance, record assessment marks and check published results.",
+        eyebrow="Teaching",
+    )
     courses = overview.get("courses") or []
     offering_id = select_id(
         "Course",
@@ -761,18 +1076,69 @@ def render_classroom(overview: dict[str, Any]) -> None:
         key="classroom_course",
     )
     if not offering_id:
-        st.info("No courses are available in your current scope.")
+        ui.empty_state(
+            "No courses in your scope", "Assigned courses will appear here.", "🏫"
+        )
         return
     classroom = load("classroom", {"offeringId": offering_id})
     course = classroom.get("course") or {}
-    st.subheader(f"{course.get('code', '')} · {course.get('title', '')}")
     roster = classroom.get("roster") or []
-    if not roster:
-        st.info("The course roster is empty.")
-        return
-    st.caption(f"{len(roster)} students in this course")
-
     sessions = classroom.get("sessions") or []
+    assessments = classroom.get("assessments") or []
+    ui.kpi_row(
+        [
+            {"label": "Students", "value": len(roster), "icon": ":material/groups:"},
+            {
+                "label": "Sessions recorded",
+                "value": len(sessions),
+                "icon": ":material/event_available:",
+            },
+            {
+                "label": "Assessments",
+                "value": len(assessments),
+                "icon": ":material/grading:",
+            },
+        ]
+    )
+    st.subheader(f"{course.get('code', '')} · {course.get('title', '')}", anchor=False)
+    if not roster:
+        ui.empty_state(
+            "The roster is empty", "Registered students will appear here.", "👥"
+        )
+        return
+    tab_attendance, tab_marks, tab_results = st.tabs(
+        [
+            ":material/event_available: Attendance",
+            ":material/grading: Marks",
+            ":material/workspace_premium: Results",
+        ]
+    )
+    with tab_attendance:
+        render_attendance_editor(offering_id, roster, sessions)
+    with tab_marks:
+        render_marks_editor(offering_id, roster, assessments)
+    with tab_results:
+        results = classroom.get("results") or []
+        names = {person_id(student): display_name(student) for student in roster}
+        dataframe(
+            [
+                {
+                    "Student": names.get(row.get("student_id"), "Student"),
+                    "Result": percent(row.get("percentage")),
+                    "Published": "Yes" if row.get("published") else "No",
+                }
+                for row in results
+            ],
+            empty="No results have been calculated for this course yet.",
+            column_config={
+                "Result": st.column_config.ProgressColumn("Result", **PERCENT_COLUMN)
+            },
+        )
+
+
+def render_attendance_editor(
+    offering_id: str, roster: list[dict[str, Any]], sessions: list[dict[str, Any]]
+) -> None:
     session_options: list[dict[str, Any] | None] = [None, *sessions]
     selected_session = st.selectbox(
         "Attendance session",
@@ -780,7 +1146,7 @@ def render_classroom(overview: dict[str, Any]) -> None:
         format_func=lambda row: (
             "New session"
             if row is None
-            else f"{row.get('session_date')} · {row.get('topic')}"
+            else f"{labels.nice_date(row.get('session_date'))} · {row.get('topic')}"
         ),
         key=f"session_{offering_id}",
     )
@@ -852,7 +1218,10 @@ def render_classroom(overview: dict[str, Any]) -> None:
                 )
             save_action("experience_command", payload, "Attendance saved.")
 
-    assessments = classroom.get("assessments") or []
+
+def render_marks_editor(
+    offering_id: str, roster: list[dict[str, Any]], assessments: list[dict[str, Any]]
+) -> None:
     assessment_options: list[dict[str, Any] | None] = [None, *assessments]
     selected_assessment = st.selectbox(
         "Assessment",
@@ -956,26 +1325,25 @@ def render_classroom(overview: dict[str, Any]) -> None:
                 )
             save_action("experience_command", payload, "Marks saved.")
 
-    results = classroom.get("results") or []
-    if results:
-        st.subheader("Published results")
-        names = {person_id(student): display_name(student) for student in roster}
-        dataframe(
-            [
-                {
-                    "Student": names.get(row.get("student_id"), "Student"),
-                    "Result": f"{row.get('percentage')}%",
-                    "Published": "Yes" if row.get("published") else "No",
-                }
-                for row in results
-            ]
-        )
+
+SCORING_FIELDS = {
+    "attendanceWeight": ("Attendance weight (points)", 20, 0),
+    "markWeight": ("Marks weight (points)", 20, 0),
+    "inactivityWeight": ("LMS inactivity weight (points)", 20, 0),
+    "overdueWeight": ("Overdue assignments weight (points)", 10, 0),
+    "internshipWeight": ("Internship weight (points)", 15, 0),
+    "placementWeight": ("Placement weight (points)", 15, 0),
+    "overdueMinimum": ("Overdue assignments that trigger a signal", 1, 1),
+    "internshipMinimum": ("Missed internship milestones that trigger a signal", 1, 1),
+    "placementMinimum": ("Missed placement activities that trigger a signal", 1, 1),
+}
 
 
 def render_policy_form() -> None:
-    st.subheader("Approve a mentor policy")
-    st.caption(
-        "These thresholds are the criteria reviews will apply. Confirm each value before saving."
+    ui.section(
+        "Approve a mentor policy",
+        "These thresholds and weights are exactly what reviews will apply. Only faculty can approve them.",
+        icon=":material/rule:",
     )
     with st.form("approve_policy"):
         version = st.text_input(
@@ -1012,34 +1380,23 @@ def render_policy_form() -> None:
             step=1,
         )
         scoring = {}
-        st.markdown("#### Signal weights and count thresholds")
-        scoring["attendanceWeight"] = st.number_input(
-            "attendanceWeight", min_value=0, max_value=100, value=20, step=1
+        st.markdown("##### Signal weights and count thresholds")
+        st.caption(
+            "Weights are the points each signal adds to the composite risk score."
         )
-        scoring["markWeight"] = st.number_input(
-            "markWeight", min_value=0, max_value=100, value=20, step=1
-        )
-        scoring["inactivityWeight"] = st.number_input(
-            "inactivityWeight", min_value=0, max_value=100, value=20, step=1
-        )
-        scoring["overdueWeight"] = st.number_input(
-            "overdueWeight", min_value=0, max_value=100, value=10, step=1
-        )
-        scoring["internshipWeight"] = st.number_input(
-            "internshipWeight", min_value=0, max_value=100, value=15, step=1
-        )
-        scoring["placementWeight"] = st.number_input(
-            "placementWeight", min_value=0, max_value=100, value=15, step=1
-        )
-        scoring["overdueMinimum"] = st.number_input(
-            "overdueMinimum", min_value=1, max_value=100, value=1, step=1
-        )
-        scoring["internshipMinimum"] = st.number_input(
-            "internshipMinimum", min_value=1, max_value=100, value=1, step=1
-        )
-        scoring["placementMinimum"] = st.number_input(
-            "placementMinimum", min_value=1, max_value=100, value=1, step=1
-        )
+        weight_cols = st.columns(3)
+        for index, (field, (label, default, minimum)) in enumerate(
+            SCORING_FIELDS.items()
+        ):
+            with weight_cols[index % 3]:
+                scoring[field] = st.number_input(
+                    label,
+                    min_value=minimum,
+                    max_value=100,
+                    value=default,
+                    step=1,
+                    key=f"policy_{field}",
+                )
         rationale = st.text_area("Reason for approving this policy", max_chars=600)
         submitted = st.form_submit_button("Approve policy", type="primary")
     if submitted:
@@ -1088,18 +1445,8 @@ def policy_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "High review score": policy.get("highScore"),
                 "Evidence freshness (days)": policy.get("freshnessDays"),
                 "Weights and count thresholds": "; ".join(
-                    f"{key}: {policy.get(key, 'Not recorded')}"
-                    for key in [
-                        "attendanceWeight",
-                        "markWeight",
-                        "inactivityWeight",
-                        "overdueWeight",
-                        "internshipWeight",
-                        "placementWeight",
-                        "overdueMinimum",
-                        "internshipMinimum",
-                        "placementMinimum",
-                    ]
+                    f"{SCORING_FIELDS[key][0].replace(' (points)', '')}: {policy.get(key, 'Not recorded')}"
+                    for key in SCORING_FIELDS
                 ),
                 "owner": value(row, "faculty_person_id", "facultyPersonId"),
             }
@@ -1107,103 +1454,142 @@ def policy_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
-def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None:
-    st.subheader("Review plans")
-    st.metric(
-        "Configured model",
-        "Available" if review.get("modelConfigured") else "Not configured",
+def student_name_map(review: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(value(row, "id", "student_id", default="")): str(
+            value(row, "display_name", "name", default="Student")
+        )
+        for row in review.get("students") or []
+        if value(row, "id", "student_id")
+    }
+
+
+def render_policies(review: dict[str, Any], actor: dict[str, Any]) -> None:
+    policies = policy_rows(review.get("policies") or [])
+    ui.section(
+        "Approved mentor policies",
+        "Every review applies one of these faculty-approved policies. Reviews cannot run without one.",
+        icon=":material/policy:",
     )
+    dataframe(
+        [
+            {k: v for k, v in row.items() if k not in {"id", "owner"}}
+            for row in policies
+        ],
+        empty="No policy has been approved yet.",
+    )
+    if actor.get("role") == "faculty":
+        with ui.card("policy_form"):
+            render_policy_form()
+    else:
+        st.caption(
+            ":material/lock: Only the assigned faculty mentor can approve a scoring policy."
+        )
+
+
+def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None:
     raw_policies = review.get("policies") or []
     policies = policy_rows(raw_policies)
-    if policies:
-        st.caption("Approved mentor policies")
-        dataframe(
-            [
-                {k: v for k, v in row.items() if k not in {"id", "owner"}}
-                for row in policies
-            ]
-        )
     role = actor.get("role")
-    if role == "faculty":
-        render_policy_form()
     students = review.get("students") or []
-    if role in {"faculty", "hod", "governance"}:
-        st.markdown("#### Create a review plan")
-        policy_by_id = {row["id"]: row for row in policies if row["id"]}
-        student_options = [
-            str(value(row, "id", "student_id", default=""))
-            for row in students
-            if value(row, "id", "student_id")
-        ]
-        student_labels = {
-            str(
-                value(row, "id", "student_id")
-            ): f"{value(row, 'register_number', 'srn', default='Student')} · {value(row, 'display_name', 'name', default='')}"
-            for row in students
-            if value(row, "id", "student_id")
-        }
-        with st.form("create_plan"):
-            request_text = st.text_area(
-                "Review request",
-                max_chars=2000,
-                placeholder="Describe the review you need.",
-            )
-            chosen_students = st.multiselect(
-                "Students in scope",
-                student_options,
-                format_func=lambda item: student_labels.get(item, item),
-                max_selections=50,
-            )
-            domain = st.selectbox(
-                "Review focus",
-                [None, *PLAN_DOMAINS],
-                format_func=lambda item: (
-                    "Choose a focus" if item is None else item.replace("-", " ").title()
-                ),
-            )
-            policy_id = st.selectbox(
-                "Approved mentor policy",
-                [None, *policy_by_id.keys()],
-                format_func=lambda item: (
-                    "Choose an approved policy"
-                    if item is None
-                    else policy_by_id[item]["Policy version"]
-                ),
-            )
-            modes = ["deterministic"] + (
-                ["model"] if review.get("modelConfigured") else []
-            )
-            mode = st.selectbox(
-                "Execution mode",
-                modes,
-                format_func=lambda item: (
-                    "Deterministic review"
-                    if item == "deterministic"
-                    else "Configured model review"
-                ),
-            )
-            feedback = st.text_area("Planning notes", max_chars=1000)
-            submitted = st.form_submit_button("Save review plan", type="primary")
-        if submitted:
-            payload: dict[str, Any] = {
-                "request": request_text.strip(),
-                "mode": mode,
-                "feedback": feedback.strip(),
-            }
-            if chosen_students:
-                payload["studentIds"] = chosen_students
-            if domain:
-                payload["domain"] = domain
-            if policy_id:
-                payload["policyId"] = policy_id
-            if len(request_text.strip()) < 3:
-                st.error("Describe the review in at least three characters.")
-            else:
-                save_action("plan_save", payload, "Review plan saved.")
-
+    names = student_name_map(review)
+    student_options = [
+        str(value(row, "id", "student_id", default=""))
+        for row in students
+        if value(row, "id", "student_id")
+    ]
+    student_labels = {
+        str(
+            value(row, "id", "student_id")
+        ): f"{value(row, 'register_number', 'srn', default='Student')} · {value(row, 'display_name', 'name', default='')}"
+        for row in students
+        if value(row, "id", "student_id")
+    }
+    policy_by_id = {row["id"]: row for row in policies if row["id"]}
     plans = review.get("plans") or []
+    st.caption(
+        ":material/route: **How a review runs:** describe it → answer the coordinator's questions → "
+        "lock the plan → run the agents → decide each draft in the review queue."
+    )
+    if role in {"faculty", "hod", "governance"}:
+        with st.expander(
+            "Create a review plan",
+            expanded=not plans,
+            icon=":material/add_circle:",
+        ):
+            with st.form("create_plan", border=False):
+                request_text = st.text_area(
+                    "Review request",
+                    max_chars=2000,
+                    placeholder="For example: check my mentees whose attendance dropped this month.",
+                )
+                chosen_students = st.multiselect(
+                    "Students in scope",
+                    student_options,
+                    format_func=lambda item: student_labels.get(item, item),
+                    max_selections=50,
+                )
+                left, middle, right = st.columns(3)
+                with left:
+                    domain = st.selectbox(
+                        "Review focus",
+                        [None, *PLAN_DOMAINS],
+                        format_func=lambda item: (
+                            "Choose a focus"
+                            if item is None
+                            else labels.domain_label(item)
+                        ),
+                    )
+                with middle:
+                    policy_id = st.selectbox(
+                        "Approved mentor policy",
+                        [None, *policy_by_id.keys()],
+                        format_func=lambda item: (
+                            "Choose an approved policy"
+                            if item is None
+                            else policy_by_id[item]["Policy version"]
+                        ),
+                    )
+                with right:
+                    modes = ["deterministic"] + (
+                        ["model"] if review.get("modelConfigured") else []
+                    )
+                    mode = st.selectbox(
+                        "Execution mode",
+                        modes,
+                        format_func=lambda item: (
+                            "Rule-based review"
+                            if item == "deterministic"
+                            else "AI model review"
+                        ),
+                    )
+                feedback = st.text_area("Planning notes", max_chars=1000)
+                submitted = st.form_submit_button(
+                    "Save review plan", type="primary", icon=":material/save:"
+                )
+            if submitted:
+                payload: dict[str, Any] = {
+                    "request": request_text.strip(),
+                    "mode": mode,
+                    "feedback": feedback.strip(),
+                }
+                if chosen_students:
+                    payload["studentIds"] = chosen_students
+                if domain:
+                    payload["domain"] = domain
+                if policy_id:
+                    payload["policyId"] = policy_id
+                if len(request_text.strip()) < 3:
+                    st.error("Describe the review in at least three characters.")
+                else:
+                    save_action("plan_save", payload, "Review plan saved.")
+
     if not plans:
-        st.caption("No review plans are available in this workspace yet.")
+        ui.empty_state(
+            "No review plans yet",
+            "Create a plan above. The coordinator will ask for anything it needs before the plan can be locked.",
+            "🧭",
+        )
         return
     plan_options = [row for row in plans if row.get("id")]
     plan_by_id = {row["id"]: row for row in plan_options}
@@ -1219,141 +1605,229 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         ids,
         index=min(default_index, len(ids) - 1),
         format_func=lambda key: (
-            f"{key[:8]} · {plan_by_id[key]['status'].replace('_', ' ').title()} · {plan_by_id[key]['body']['request'][:70]}"
+            f"{plan_by_id[key]['body']['request'][:70]} · {labels.status_label(plan_by_id[key]['status'])} · {labels.short_ref(key)}"
         ),
         key=f"review_plan_{selector_revision}",
     )
     selected_plan = plan_by_id[selected_id]
     st.session_state["review_selected_id"] = selected_id
     body = selected_plan.get("body") or {}
-    st.write(
-        f"**Status:** {selected_plan.get('status', 'Not recorded')} · **Revision:** {selected_plan.get('revision', 'Not recorded')}"
-    )
-    st.write(body.get("request", "Review request not recorded"))
     questions = body.get("questions") or []
-    if questions:
-        st.warning(
-            "Complete these details before locking the plan: " + " ".join(questions)
+    review_jobs = [
+        row
+        for row in review.get("jobs", [])
+        if str(value(row, "plan_id", "planId", default=""))
+        == str(selected_plan.get("id"))
+    ]
+
+    with ui.card(f"plan_{selected_id}"):
+        title, status = st.columns([4, 1.5], vertical_alignment="center")
+        with title:
+            st.markdown(
+                f"#### {ui._md_safe(body.get('request', 'Review request not recorded'))}"
+            )
+        with status:
+            st.markdown(
+                ui.status_md(selected_plan.get("status"))
+                + (
+                    " " + ui.badge_md("Paused", "orange", ":material/pause:")
+                    if selected_plan.get("paused")
+                    else ""
+                )
+            )
+        facts = st.columns(4)
+        facts[0].caption("Focus")
+        facts[0].markdown(
+            f"**{labels.domain_label(body.get('domain')) if body.get('domain') else '—'}**"
         )
-    st.markdown("#### Planned steps")
-    for number, step in enumerate(body.get("steps", []), 1):
-        st.write(f"{number}. {step}")
+        facts[1].caption("Policy")
+        facts[1].markdown(
+            f"**{ui._md_safe(policy_by_id.get(body.get('policyId'), {}).get('Policy version', '—'))}**"
+        )
+        facts[2].caption("Students")
+        facts[2].markdown(f"**{len(body.get('studentIds') or [])}**")
+        facts[3].caption("Mode")
+        facts[3].markdown(f"**{labels.mode_label(body.get('mode'))}**")
+        if questions:
+            st.warning(
+                "Complete these details before locking the plan: "
+                + " ".join(questions),
+                icon=":material/help:",
+            )
+        steps = body.get("steps", [])
+        if steps:
+            with st.expander("Planned steps", icon=":material/format_list_numbered:"):
+                for number, step in enumerate(steps, 1):
+                    st.markdown(f"{number}. {ui._md_safe(step)}")
+        ui.tech_details(
+            [
+                ("Plan reference", selected_plan.get("id")),
+                ("Revision", selected_plan.get("revision")),
+            ]
+        )
+
     if selected_plan.get("status") != "locked":
-        with st.form(f"revise_plan_{selected_id}_{selected_plan['revision']}"):
-            revised_request = st.text_area(
-                "Revised review request", value=body.get("request", ""), max_chars=2000
-            )
-            revised_students = st.multiselect(
-                "Revised students in scope",
-                student_options,
-                default=[
-                    sid for sid in body.get("studentIds", []) if sid in student_options
-                ],
-                format_func=lambda sid: student_labels.get(sid, sid),
-                max_selections=50,
-            )
-            focuses = [None, *PLAN_DOMAINS]
-            revised_focus = st.selectbox(
-                "Revised focus",
-                focuses,
-                index=focuses.index(body.get("domain")),
-                format_func=lambda item: item or "Choose a focus",
-            )
-            policy_ids = [None, *policy_by_id]
-            revised_policy = st.selectbox(
-                "Revised policy",
-                policy_ids,
-                index=policy_ids.index(body.get("policyId"))
-                if body.get("policyId") in policy_ids
-                else 0,
-                format_func=lambda item: (
-                    policy_by_id[item]["Policy version"] if item else "Choose a policy"
-                ),
-            )
-            revised_mode = st.selectbox(
-                "Revised mode",
-                ["deterministic", "model"],
-                index=1 if body.get("mode") == "model" else 0,
-            )
-            revised_feedback = st.text_area(
-                "Revision feedback",
-                value=body.get("feedback", ""),
-                max_chars=1000,
-                help="Use the fields above to adjust the review. Notes help focus the planned steps and reference retrieval.",
-            )
-            revise = st.form_submit_button("Save revised plan", type="primary")
-        if revise:
-            revision_input = {
-                "request": revised_request,
-                "feedback": revised_feedback,
-                "mode": revised_mode,
-            }
-            if revised_students:
-                revision_input["studentIds"] = revised_students
-            if revised_focus:
-                revision_input["domain"] = revised_focus
-            if revised_policy:
-                revision_input["policyId"] = revised_policy
-            save_action(
-                "plan_revise",
-                {
-                    "planId": selected_id,
-                    "expectedRevision": selected_plan["revision"],
-                    "input": revision_input,
-                },
-                "Answers saved to the same plan as a new revision.",
-            )
-    if selected_plan.get("status") == "locked":
-        paused = bool(selected_plan.get("paused"))
-        with st.form(f"pause_form_{selected_id}_{selected_plan['revision']}"):
-            reason = st.text_input("Pause or resume reason")
-            change_pause = st.form_submit_button(
-                "Resume review" if paused else "Pause review"
-            )
-        if change_pause:
-            if len(reason.strip()) < 5:
-                st.error("Enter a reason of at least five characters.")
-            else:
+        with st.expander(
+            "Answer questions or revise this plan",
+            expanded=bool(questions),
+            icon=":material/edit:",
+        ):
+            with st.form(
+                f"revise_plan_{selected_id}_{selected_plan['revision']}", border=False
+            ):
+                revised_request = st.text_area(
+                    "Revised review request",
+                    value=body.get("request", ""),
+                    max_chars=2000,
+                )
+                revised_students = st.multiselect(
+                    "Revised students in scope",
+                    student_options,
+                    default=[
+                        sid
+                        for sid in body.get("studentIds", [])
+                        if sid in student_options
+                    ],
+                    format_func=lambda sid: student_labels.get(sid, sid),
+                    max_selections=50,
+                )
+                left, middle, right = st.columns(3)
+                focuses = [None, *PLAN_DOMAINS]
+                with left:
+                    revised_focus = st.selectbox(
+                        "Revised focus",
+                        focuses,
+                        index=focuses.index(body.get("domain")),
+                        format_func=lambda item: (
+                            labels.domain_label(item) if item else "Choose a focus"
+                        ),
+                    )
+                policy_ids = [None, *policy_by_id]
+                with middle:
+                    revised_policy = st.selectbox(
+                        "Revised policy",
+                        policy_ids,
+                        index=policy_ids.index(body.get("policyId"))
+                        if body.get("policyId") in policy_ids
+                        else 0,
+                        format_func=lambda item: (
+                            policy_by_id[item]["Policy version"]
+                            if item
+                            else "Choose a policy"
+                        ),
+                    )
+                with right:
+                    revised_mode = st.selectbox(
+                        "Revised mode",
+                        ["deterministic", "model"],
+                        index=1 if body.get("mode") == "model" else 0,
+                        format_func=lambda item: (
+                            "AI model review"
+                            if item == "model"
+                            else "Rule-based review"
+                        ),
+                    )
+                revised_feedback = st.text_area(
+                    "Revision feedback",
+                    value=body.get("feedback", ""),
+                    max_chars=1000,
+                    help="Use the fields above to adjust the review. Notes help focus the planned steps and reference retrieval.",
+                )
+                revise = st.form_submit_button("Save revised plan", type="primary")
+            if revise:
+                revision_input = {
+                    "request": revised_request,
+                    "feedback": revised_feedback,
+                    "mode": revised_mode,
+                }
+                if revised_students:
+                    revision_input["studentIds"] = revised_students
+                if revised_focus:
+                    revision_input["domain"] = revised_focus
+                if revised_policy:
+                    revision_input["policyId"] = revised_policy
                 save_action(
-                    "plan_pause",
+                    "plan_revise",
                     {
                         "planId": selected_id,
                         "expectedRevision": selected_plan["revision"],
-                        "paused": not paused,
-                        "reason": reason.strip(),
+                        "input": revision_input,
                     },
-                    "Review resumed." if paused else "Review paused.",
+                    "Answers saved to the same plan as a new revision.",
                 )
-        if paused:
-            st.warning("This review is paused. Resume before running.")
-    if selected_plan.get("status") == "locked":
-        st.caption("This plan is locked. Its saved scope and policy cannot be edited.")
-        if st.button(
-            "Run review",
-            type="primary",
-            key=f"run_{selected_plan['id']}",
-            disabled=bool(selected_plan.get("paused")),
-        ):
-            save_action(
-                "plan_execute",
-                {"planId": selected_plan["id"]},
-                "Review run recorded. Saved activity has been refreshed.",
+
+    action_col, export_col = st.columns([2, 1], vertical_alignment="bottom")
+    with action_col:
+        if selected_plan.get("status") == "locked":
+            paused = bool(selected_plan.get("paused"))
+            with st.form(
+                f"pause_form_{selected_id}_{selected_plan['revision']}", border=False
+            ):
+                reason_col, button_col = st.columns([3, 1], vertical_alignment="bottom")
+                with reason_col:
+                    reason = st.text_input("Pause or resume reason")
+                with button_col:
+                    change_pause = st.form_submit_button(
+                        "Resume review" if paused else "Pause review",
+                        icon=":material/play_arrow:" if paused else ":material/pause:",
+                        width="stretch",
+                    )
+            if change_pause:
+                if len(reason.strip()) < 5:
+                    st.error("Enter a reason of at least five characters.")
+                else:
+                    save_action(
+                        "plan_pause",
+                        {
+                            "planId": selected_id,
+                            "expectedRevision": selected_plan["revision"],
+                            "paused": not paused,
+                            "reason": reason.strip(),
+                        },
+                        "Review resumed." if paused else "Review paused.",
+                    )
+            if paused:
+                st.warning(
+                    "This review is paused. Resume before running.",
+                    icon=":material/pause_circle:",
+                )
+            st.caption(
+                ":material/lock: This plan is locked. Its saved scope and policy cannot be edited."
             )
-    elif selected_plan.get("status") != "locked" and not questions:
+            if st.button(
+                "Run review",
+                type="primary",
+                key=f"run_{selected_plan['id']}",
+                disabled=bool(selected_plan.get("paused")),
+                icon=":material/smart_toy:",
+            ):
+                save_action(
+                    "plan_execute",
+                    {"planId": selected_plan["id"]},
+                    "Review run recorded. Saved activity has been refreshed.",
+                )
+        elif selected_plan.get("status") != "locked" and not questions:
+            if st.button(
+                "Lock review plan",
+                type="primary",
+                key=f"lock_{selected_plan['id']}",
+                icon=":material/lock:",
+            ):
+                save_action(
+                    "plan_lock",
+                    {
+                        "planId": selected_plan["id"],
+                        "expectedRevision": int(selected_plan.get("revision", 0)),
+                    },
+                    "Review plan locked.",
+                )
+    with export_col:
         if st.button(
-            "Lock review plan", type="primary", key=f"lock_{selected_plan['id']}"
+            "Prepare evidence export",
+            key=f"export_{selected_plan['id']}",
+            icon=":material/inventory:",
+            width="stretch",
         ):
-            save_action(
-                "plan_lock",
-                {
-                    "planId": selected_plan["id"],
-                    "expectedRevision": int(selected_plan.get("revision", 0)),
-                },
-                "Review plan locked.",
-            )
-    left, right = st.columns(2)
-    with left:
-        if st.button("Prepare evidence export", key=f"export_{selected_plan['id']}"):
             exported = load("plan_export", {"planId": selected_plan["id"]})
             st.download_button(
                 "Download review evidence",
@@ -1362,68 +1836,106 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 mime="application/json",
                 key=f"download_{selected_plan['id']}",
                 on_click="ignore",
-            )
-    with right:
-        review_jobs = [
-            row
-            for row in review.get("jobs", [])
-            if str(value(row, "plan_id", "planId", default=""))
-            == str(selected_plan.get("id"))
-        ]
-        if review_jobs:
-            st.caption("Recorded review activity")
-            dataframe(
-                [
-                    {
-                        "Status": row.get("status"),
-                        "Stage": row.get("stage"),
-                        "Execution mode": row.get("mode") or "Not recorded",
-                        "Run reference": row.get("run_id") or "Not available",
-                        "Issue": row.get("error_code") or "None recorded",
-                    }
-                    for row in review_jobs
-                ]
+                icon=":material/download:",
+                width="stretch",
             )
 
+    if not review_jobs:
+        return
+    ui.section(
+        "Agent run",
+        "Each student moves through the coordinator, four data agents, risk analysis, retrieval, drafting and validation, then stops at the mentor gate.",
+        icon=":material/hub:",
+    )
+    traced = [job for job in review_jobs if job.get("node_trace")]
+    if traced:
+        trace_job = traced[0]
+        if len(traced) > 1:
+            trace_id = st.selectbox(
+                "Show agent trace for",
+                [str(job["id"]) for job in traced],
+                format_func=lambda jid: names.get(
+                    str(
+                        next(j for j in traced if str(j["id"]) == jid).get("student_id")
+                    ),
+                    "Student",
+                ),
+                key=f"trace_{selected_id}",
+            )
+            trace_job = next(job for job in traced if str(job["id"]) == trace_id)
+        ui.pipeline_stepper(trace_job.get("node_trace"))
+    dataframe(
+        [
+            {
+                "Student": names.get(str(row.get("student_id")), "Student"),
+                "Status": labels.status_label(row.get("status")),
+                "Stage": labels.status_label(row.get("stage")),
+                "Mode": labels.mode_label(row.get("mode")),
+                "Issue": labels.issue_label(row.get("error_code")),
+            }
+            for row in review_jobs
+        ]
+    )
+    for job in review_jobs:
+        if job.get("status") == "needs_human":
+            who = names.get(str(job.get("student_id")), "A student")
+            ui.gate_banner(
+                f"{who}: the repair or execution budget is exhausted, so nothing was advanced. Review the diagnosis before creating another review.",
+                title="Needs your decision",
+            )
+            with st.expander("Diagnosis", icon=":material/troubleshoot:"):
+                st.json(job.get("failure_diagnosis") or {})
+            if job.get("offered_template"):
+                with st.expander(
+                    "Rule template offered for human consideration",
+                    icon=":material/description:",
+                ):
+                    st.caption(
+                        "This template has not advanced to approval or publication."
+                    )
+                    st.json(job["offered_template"])
     for job in review_jobs:
         if job.get("retrieval"):
-            with st.expander("Retrieved support references · " + str(job["id"])[:8]):
+            with st.expander(
+                f"Similar past support · {names.get(str(job.get('student_id')), 'Student')}",
+                icon=":material/travel_explore:",
+            ):
                 st.caption(
-                    "Prior cases are restricted to this account's student scope and reduced to approved action categories. Similarity uses the recorded lexical embedding."
+                    "Prior cases are restricted to this account's student scope and reduced to approved action categories."
                 )
                 dataframe(
                     [
                         {
-                            "Reference": str(ref["id"])[:12],
-                            "Tags": ", ".join(ref["tags"]),
+                            "Reference": labels.short_ref(ref["id"]),
+                            "Tags": ", ".join(
+                                labels.domain_label(t) for t in ref["tags"]
+                            ),
                             "Similarity": round(ref["similarity"], 3),
                             "Summary": ref["text"],
                         }
                         for ref in job["retrieval"]
-                    ]
+                    ],
+                    column_config={
+                        "Similarity": st.column_config.ProgressColumn(
+                            "Similarity", min_value=0, max_value=1, format="%.2f"
+                        )
+                    },
                 )
     for job in review_jobs:
-        if job.get("status") == "needs_human":
-            st.error(
-                "Mentor attention required: the repair or execution budget is exhausted."
-            )
-            st.json(job.get("failure_diagnosis") or {})
-            if job.get("offered_template"):
-                with st.expander("Rule template offered for human consideration"):
-                    st.caption(
-                        "This template has not advanced to approval or publication. Review the diagnosis before creating another review."
-                    )
-                    st.json(job["offered_template"])
-    for job in review_jobs:
         if job.get("source_timings"):
-            with st.expander("Collector timings · " + str(job["id"])[:8]):
+            with st.expander(
+                f"Data agent timings · {names.get(str(job.get('student_id')), 'Student')}",
+                icon=":material/timer:",
+            ):
                 st.caption(
-                    "Independent source readers use one exported database snapshot. Revision: "
-                    + str(job.get("evidence_revision"))
+                    "The four data agents read one shared database snapshot concurrently."
                 )
                 dataframe(
                     [
-                        {"Source": name, "Milliseconds": round(elapsed, 2)}
+                        {
+                            "Data agent": labels.source_label(name),
+                            "Milliseconds": round(elapsed, 2),
+                        }
                         for name, elapsed in job["source_timings"].items()
                     ]
                 )
@@ -1432,66 +1944,143 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
 def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None:
     if actor.get("role") != "faculty":
         return
-    st.subheader("Composite risk view")
+    ui.section(
+        "Composite risk view",
+        "Scores combine the four signals using your approved policy. A flag only opens a review path; it is never a label.",
+    )
     rows = review.get("riskView") or []
     plan_options = {
         p["id"]: (p.get("body") or {}).get("request", "Review plan")
         for p in review.get("plans", [])
     }
-    plan_filter = st.selectbox(
-        "Risk cycle",
-        [None, *plan_options],
-        format_func=lambda item: (
-            "All assigned cycles" if item is None else plan_options[item]
-        ),
-        key="risk_cycle",
-    )
-    flagged_only = st.checkbox("Flagged students only", key="risk_flagged")
+    filter_col, toggle_col = st.columns([3, 1], vertical_alignment="bottom")
+    with filter_col:
+        plan_filter = st.selectbox(
+            "Risk cycle",
+            [None, *plan_options],
+            format_func=lambda item: (
+                "All assigned cycles" if item is None else plan_options[item]
+            ),
+            key="risk_cycle",
+        )
+    with toggle_col:
+        flagged_only = st.checkbox("Flagged students only", key="risk_flagged")
     scoped = [
         row
         for row in rows
         if (not plan_filter or row.get("planId") == plan_filter)
         and (not flagged_only or row.get("flagged"))
     ]
+    evaluated = [row for row in scoped if row.get("score") is not None]
+    ui.kpi_row(
+        [
+            {
+                "label": "Evaluated",
+                "value": len(evaluated),
+                "icon": ":material/fact_check:",
+            },
+            {
+                "label": "Flagged for review",
+                "value": sum(1 for row in scoped if row.get("flagged")),
+                "icon": ":material/flag:",
+            },
+            {
+                "label": "High band",
+                "value": sum(1 for row in scoped if row.get("band") == "high"),
+                "icon": ":material/priority_high:",
+            },
+            {
+                "label": "Medium band",
+                "value": sum(1 for row in scoped if row.get("band") == "medium"),
+                "icon": ":material/trending_up:",
+            },
+        ]
+    )
     dataframe(
         [
             {
                 "Student": row["studentName"],
                 "Register number": row["registerNumber"],
                 "Score": row["score"],
-                "Band": row["band"],
-                "Status": row["status"],
+                "Band": labels.risk_label(row["band"]),
+                "Status": labels.status_label(row["status"]),
                 "Contributing signals": ", ".join(
-                    signal["code"] for signal in row["signals"]
+                    labels.signal_label(signal["code"]) for signal in row["signals"]
                 ),
             }
             for row in scoped
-        ]
+        ],
+        empty="No evaluated students match these filters.",
+        column_config={
+            "Score": st.column_config.ProgressColumn(
+                "Score", min_value=0, max_value=100, format="%d"
+            )
+        },
     )
-    for row in scoped:
-        if row.get("flagged"):
-            with st.expander(f"{row['studentName']} · {row['band']} · {row['score']}"):
-                st.write(row["reviewPath"])
-                dataframe(
-                    [
-                        {
-                            "Signal": signal["code"],
-                            "Source": signal["source"],
-                            "Value": signal["value"],
-                            "Threshold": signal["threshold"],
-                            "Points": signal["points"],
-                            "Reason": signal["explanation"],
-                        }
-                        for signal in row["signals"]
-                    ]
-                )
+    flagged = [row for row in scoped if row.get("flagged")]
+    if flagged:
+        st.markdown("##### Why each student was flagged")
+    for row in flagged:
+        with st.expander(
+            f"{row['studentName']} · {labels.risk_label(row['band'])} · score {row['score']}",
+            icon=":material/flag:",
+        ):
+            st.markdown(ui.risk_md(row.get("band"), row.get("score")))
+            ui.html_block(ui.signal_chips(row["signals"]))
+            st.caption(f":material/front_hand: {row['reviewPath']}")
+            dataframe(
+                [
+                    {
+                        "Signal": labels.signal_label(signal["code"]),
+                        "Source": labels.source_label(signal["source"]),
+                        "Value": signal["value"],
+                        "Threshold": signal["threshold"],
+                        "Points": signal["points"],
+                        "Reason": signal["explanation"],
+                    }
+                    for signal in row["signals"]
+                ]
+            )
 
 
 def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     plans = queue.get("plans") or []
+    ui.section(
+        "Intervention outcomes",
+        "Approved plans, what happened next, and the immutable history of every decision.",
+        icon=":material/timeline:",
+    )
     if not plans:
+        ui.empty_state(
+            "No approved plans yet",
+            "Plans appear here after a mentor approves a draft.",
+            "📋",
+        )
         return
-    st.subheader("Intervention outcomes")
+    ui.kpi_row(
+        [
+            {
+                "label": "Approved plans",
+                "value": len(plans),
+                "icon": ":material/verified:",
+            },
+            {
+                "label": "In progress",
+                "value": sum(1 for row in plans if row.get("status") == "in_progress"),
+                "icon": ":material/pending:",
+            },
+            {
+                "label": "Completed",
+                "value": sum(1 for row in plans if row.get("status") == "completed"),
+                "icon": ":material/task_alt:",
+            },
+            {
+                "label": "Withdrawn",
+                "value": sum(1 for row in plans if row.get("status") == "withdrawn"),
+                "icon": ":material/undo:",
+            },
+        ]
+    )
     log_rows = [
         {
             "Student": row.get("display_name"),
@@ -1499,12 +2088,12 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                 action.get("label", "")
                 for action in (row.get("plan") or {}).get("actions", [])
             ),
-            "Status": row.get("status"),
+            "Status": labels.status_label(row.get("status")),
             "Outcome": row.get("outcome"),
             "Visible": "Yes" if row.get("visible_to_student") else "No",
-            "Decision": row.get("decision"),
+            "Decision": labels.status_label(row.get("decision")),
             "Decided by": row.get("decided_by"),
-            "Decision time": row.get("decided_at"),
+            "Decision time": labels.nice_time(row.get("decided_at")),
             "Rationale": row.get("rationale"),
         }
         for row in plans
@@ -1513,331 +2102,482 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         {
             "Student": event.get("student_name"),
             "Approved actions": "",
-            "Status": (event.get("payload") or {}).get("status"),
+            "Status": labels.status_label((event.get("payload") or {}).get("status")),
             "Outcome": (event.get("payload") or {}).get("outcome"),
             "Visible": "Recorded event",
-            "Decision": event.get("event_type"),
+            "Decision": labels.humanize(event.get("event_type")),
             "Decided by": event.get("actor_name"),
-            "Decision time": event.get("occurred_at"),
+            "Decision time": labels.nice_time(event.get("occurred_at")),
             "Rationale": "Immutable intervention history",
         }
         for event in queue.get("interventionLog", [])
     )
-    st.markdown("#### Intervention log")
+    log_head, log_button = st.columns([3, 1], vertical_alignment="bottom")
+    with log_head:
+        st.markdown("##### Intervention log")
+    with log_button:
+        st.download_button(
+            "Download intervention log CSV",
+            pd.DataFrame(log_rows).to_csv(index=False),
+            file_name="intervention-log.csv",
+            mime="text/csv",
+            on_click="ignore",
+            icon=":material/download:",
+            width="stretch",
+        )
     dataframe(log_rows)
-    st.download_button(
-        "Download intervention log CSV",
-        pd.DataFrame(log_rows).to_csv(index=False),
-        file_name="intervention-log.csv",
-        mime="text/csv",
-        on_click="ignore",
-    )
-
-    dataframe(
-        [
-            {
-                "Student": row.get("display_name"),
-                "Status": row.get("status"),
-                "Outcome": row.get("outcome") or "Not recorded",
-                "Visible to student": "Yes" if row.get("visible_to_student") else "No",
-            }
-            for row in plans
-        ]
-    )
     if actor.get("role") != "faculty":
         return
-    selected = st.selectbox(
-        "Intervention",
-        plans,
-        format_func=lambda row: (
-            f"{row.get('display_name', 'Student')} · {row.get('status', 'planned').replace('_', ' ')}"
-        ),
-        key="intervention_plan",
-    )
-    versions = [
-        v for v in queue.get("versions", []) if v["support_plan_id"] == selected["id"]
-    ]
-    if versions:
-        st.markdown("#### Approved publication history")
-        dataframe(
-            [
-                {
-                    "Version": v["version"],
-                    "Published": short_time(v["created_at"]),
-                    "Content hash": v["content_hash"][:12],
-                }
-                for v in versions
-            ]
+    with ui.card("intervention_update"):
+        st.markdown("##### Update an intervention")
+        selected = st.selectbox(
+            "Intervention",
+            plans,
+            format_func=lambda row: (
+                f"{row.get('display_name', 'Student')} · {labels.status_label(row.get('status', 'planned'))}"
+            ),
+            key="intervention_plan",
         )
-        for version in versions:
-            if st.button(
-                f"Restore version {version['version']}",
-                key=f"restore_{selected['id']}_{version['version']}",
-            ):
+        versions = [
+            v
+            for v in queue.get("versions", [])
+            if v["support_plan_id"] == selected["id"]
+        ]
+        if versions:
+            st.caption(":material/history: Approved publication history")
+            dataframe(
+                [
+                    {
+                        "Version": v["version"],
+                        "Published": labels.nice_time(v["created_at"]),
+                        "Reference": labels.short_ref(v["content_hash"], 10),
+                    }
+                    for v in versions
+                ]
+            )
+            restore_cols = st.columns(min(len(versions), 4))
+            for index, version in enumerate(versions):
+                with restore_cols[index % len(restore_cols)]:
+                    if st.button(
+                        f"Restore version {version['version']}",
+                        key=f"restore_{selected['id']}_{version['version']}",
+                        icon=":material/restore:",
+                        width="stretch",
+                    ):
+                        save_action(
+                            "version_restore",
+                            {
+                                "planId": selected["id"],
+                                "version": version["version"],
+                                "expectedVersion": max(v["version"] for v in versions),
+                            },
+                            "Earlier approved version restored as a new publication.",
+                        )
+        current = selected.get("status", "planned")
+        statuses = ["planned", "in_progress", "completed", "withdrawn"]
+        with st.form("record_outcome", border=False):
+            status = st.selectbox(
+                "Status",
+                statuses,
+                index=statuses.index(current) if current in statuses else 0,
+                format_func=lambda item: (
+                    "Withdraw plan"
+                    if item == "withdrawn"
+                    else labels.status_label(item)
+                ),
+            )
+            outcome = st.text_area(
+                "Outcome or reason for withdrawal",
+                value=str(selected.get("outcome", "") or ""),
+                max_chars=1200,
+            )
+            submitted = st.form_submit_button("Save outcome", type="primary")
+        if submitted:
+            if len(outcome.strip()) < 12:
+                st.error(
+                    "Enter an outcome or withdrawal reason of at least twelve characters."
+                )
+            else:
                 save_action(
-                    "version_restore",
+                    "outcome",
                     {
                         "planId": selected["id"],
-                        "version": version["version"],
-                        "expectedVersion": max(v["version"] for v in versions),
+                        "expectedRevision": int(selected.get("revision", 0)),
+                        "status": status,
+                        "outcome": outcome.strip(),
                     },
-                    "Earlier approved version restored as a new publication.",
+                    "Intervention outcome saved.",
                 )
-    current = selected.get("status", "planned")
-    statuses = ["planned", "in_progress", "completed", "withdrawn"]
-    with st.form("record_outcome"):
-        status = st.selectbox(
-            "Status",
-            statuses,
-            index=statuses.index(current) if current in statuses else 0,
-            format_func=lambda item: (
-                "Withdraw plan"
-                if item == "withdrawn"
-                else item.replace("_", " ").title()
-            ),
-        )
-        outcome = st.text_area(
-            "Outcome or reason for withdrawal",
-            value=str(selected.get("outcome", "") or ""),
-            max_chars=1200,
-        )
-        submitted = st.form_submit_button("Save outcome", type="primary")
-    if submitted:
-        if len(outcome.strip()) < 12:
-            st.error(
-                "Enter an outcome or withdrawal reason of at least twelve characters."
-            )
-        else:
-            save_action(
-                "outcome",
-                {
-                    "planId": selected["id"],
-                    "expectedRevision": int(selected.get("revision", 0)),
-                    "status": status,
-                    "outcome": outcome.strip(),
-                },
-                "Intervention outcome saved.",
-            )
 
 
-def render_draft_reviews(queue: dict[str, Any], actor: dict[str, Any]) -> None:
+def check_line(name: str, result: Any) -> str:
+    label = CHECK_LABELS.get(name, labels.humanize(name))
+    if result is True:
+        return f":green[:material/check_circle:] {label}"
+    if result is False:
+        return f":red[:material/cancel:] {label}"
+    return f":gray[:material/remove_circle_outline:] {label} · not recorded for this version"
+
+
+def render_draft_reviews(
+    queue: dict[str, Any],
+    actor: dict[str, Any],
+    risk_by_student: dict[str, dict[str, Any]],
+) -> None:
     drafts = queue.get("drafts") or []
-    st.subheader("Support reviews")
+    ui.section(
+        "Support reviews",
+        "Drafts the agents prepared for flagged students. Nothing reaches a student or family until you approve it.",
+    )
     if not drafts:
-        st.caption("No support drafts are waiting for review.")
+        ui.empty_state(
+            "Nothing is waiting for you",
+            "When a review run drafts support for a flagged student, it appears here for your decision.",
+            "✅",
+        )
         return
+    per_row = 3
+    for start in range(0, min(len(drafts), 9), per_row):
+        cols = st.columns(per_row)
+        for col, row in zip(cols, drafts[start : start + per_row]):
+            risk = risk_by_student.get(str(row.get("student_id"))) or {}
+            with col, ui.card(f"queue_{row.get('id')}"):
+                st.markdown(
+                    f"**{ui._md_safe(labels.pretty_name(row.get('display_name', 'Student')))}**"
+                )
+                badges = [ui.status_md(row.get("status"))]
+                if risk.get("band"):
+                    badges.append(ui.risk_md(risk.get("band"), risk.get("score")))
+                st.markdown(" ".join(badges))
+                if risk.get("signals"):
+                    ui.html_block(ui.signal_chips(risk["signals"][:3]))
+                st.caption(
+                    f":material/smart_toy: {labels.mode_label(row.get('mode'))} draft · version {row.get('revision', '?')}"
+                )
+    if len(drafts) > 9:
+        st.caption(
+            f":material/more_horiz: {len(drafts) - 9} more drafts are in the selector below."
+        )
     selected = st.selectbox(
         "Draft",
         drafts,
         format_func=lambda row: (
-            f"{row.get('display_name', 'Student')} · revision {row.get('revision', '?')}"
+            f"{row.get('display_name', 'Student')} · version {row.get('revision', '?')}"
         ),
         key="support_draft",
     )
     packet = selected.get("recommendation") or {}
     validation = selected.get("validation") or {}
-    st.markdown("#### Recorded validation report")
-    st.write(
-        f"Recorded packet checks: {'passed' if validation.get('valid') else 'not passed'} · Mode: {selected.get('mode', 'not recorded')} · Model: {selected.get('model_id') or 'none'}"
+    ui.gate_banner(
+        "You are the final authority. Approving publishes this exact version to the student and their family; "
+        "editing saves a new version that is validated again."
     )
-    st.write(
-        f"Fallback: {'yes' if validation.get('fallback') else 'no'} · Provider issue: {validation.get('providerError') or 'none'}"
-    )
-    st.caption(
-        "Historical reports describe the checks implemented when the artifact was recorded. They do not certify additional checks introduced later."
-    )
-    dataframe(
+    draft_col, check_col = st.columns([3, 2], gap="medium")
+    with draft_col, ui.card(f"draft_{selected['id']}"):
+        st.html('<p class="aura-eyebrow">Draft recommendation</p>')
+        st.markdown(
+            f"#### {ui._md_safe(labels.pretty_name(selected.get('display_name', 'Student')))}"
+        )
+        st.write(packet.get("summary", "No summary recorded."))
+        if validation.get("mentorEdited"):
+            st.caption(
+                ":material/edit: This version includes edits by the mentor account."
+            )
+        actions = packet.get("actions") or []
+        if actions:
+            st.markdown("**Proposed actions**")
+            dataframe(
+                [
+                    {
+                        "Action": row.get("label"),
+                        "Owner": ACTION_OWNER_LABELS.get(
+                            row.get("owner"), labels.humanize(row.get("owner"))
+                        ),
+                        "Due in days": row.get("dueInDays"),
+                    }
+                    for row in actions
+                ],
+                column_config={
+                    "Action": st.column_config.TextColumn("Action", width="large"),
+                    "Owner": st.column_config.TextColumn("Owner", width="small"),
+                    "Due in days": st.column_config.NumberColumn(
+                        "Due in days", width="small"
+                    ),
+                },
+            )
+        if packet.get("citations"):
+            st.markdown("**Evidence cited**")
+            ui.citation_chips(packet.get("citations", []))
+    with check_col, ui.card(f"validation_{selected['id']}"):
+        st.html('<p class="aura-eyebrow">Validation report</p>')
+        st.markdown(
+            ui.badge_md("Passed every check", "green", ":material/verified:")
+            if validation.get("valid")
+            else ui.badge_md("Did not pass", "red", ":material/report:")
+        )
+        checks = validation.get("checks") or {}
+        checks = checks if isinstance(checks, dict) else {}
+        st.caption("Chapter 11 acceptance checks")
+        for name in CHECK_LABELS:
+            st.markdown(check_line(name, checks.get(name)))
+        st.caption(
+            f"Drafted by: {labels.mode_label(selected.get('mode'))}"
+            + (f" · {selected.get('model_id')}" if selected.get("model_id") else "")
+        )
+        if validation.get("fallback"):
+            st.caption(
+                ":material/swap_horiz: A rule-based fallback produced this draft."
+            )
+        if validation.get("providerError"):
+            st.caption(
+                f":material/cloud_off: Model issue: {labels.issue_label(validation.get('providerError'))}"
+            )
+        repairs = validation.get("repairs", [])
+        if repairs:
+            st.caption(
+                f":material/build: {len(repairs)} targeted repair attempt(s) before review."
+            )
+            with st.expander("Repair history", icon=":material/build:"):
+                dataframe(
+                    [
+                        {
+                            "Attempt": item.get("attempt"),
+                            "What failed": ", ".join(
+                                labels.issue_label(f.get("code"))
+                                for f in item.get("failures", [])
+                            ),
+                        }
+                        for item in repairs
+                    ]
+                )
+        if validation.get("failures"):
+            with st.expander("Open issues", icon=":material/report:"):
+                for failure in validation["failures"]:
+                    st.markdown(
+                        f"- {ui._md_safe(labels.issue_label(failure.get('code')))}"
+                    )
+        st.caption(
+            "Reports describe the checks that existed when this version was recorded."
+        )
+    ui.tech_details(
         [
-            {
-                "Attempt": item.get("attempt"),
-                "Failures": json.dumps(item.get("failures", [])),
-            }
-            for item in validation.get("repairs", [])
+            ("Case reference", selected.get("id")),
+            ("Draft version reference", selected.get("artifact_id")),
+            ("Content hash", selected.get("content_hash")),
+            ("Case revision", selected.get("revision")),
         ]
     )
-    if validation.get("failures"):
-        st.json(validation["failures"])
-    if validation.get("checks"):
-        dataframe(validation["checks"])
-
-    st.write(
-        f"**Current version:** {selected.get('artifact_id')} · **Status:** {selected.get('status')}"
-    )
-    st.write(packet.get("summary", "No summary recorded."))
-    if validation.get("mentorEdited"):
-        st.caption("This artifact includes edits by the mentor account.")
-    st.caption("Evidence references")
-    dataframe(
-        [
-            {"Statement": row.get("statement"), "Source field": row.get("evidencePath")}
-            for row in packet.get("citations", [])
-        ]
-    )
-    actions = packet.get("actions") or []
-    if actions:
-        st.caption("Proposed actions")
-        dataframe(
-            [
+    if actor.get("role") != "faculty":
+        st.info("This view is read-only for your role.", icon=":material/visibility:")
+        return
+    edit_col, decide_col = st.columns(2, gap="medium")
+    with edit_col, ui.card(f"edit_{selected['id']}"):
+        st.markdown("##### Edit the draft")
+        with st.form(
+            f"edit_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
+        ):
+            summary = st.text_area(
+                "Recommendation summary",
+                value=str(packet.get("summary", "")),
+                max_chars=600,
+            )
+            action_rows = [
                 {
-                    "Action": row.get("label"),
-                    "Owner": row.get("owner"),
-                    "Due in days": row.get("dueInDays"),
+                    "Action": row.get("label", ""),
+                    "Owner": ACTION_OWNER_LABELS.get(
+                        row.get("owner"), "Assigned faculty"
+                    ),
+                    "Due in days": int(row.get("dueInDays", 7)),
                 }
                 for row in actions
             ]
-        )
-    if actor.get("role") != "faculty":
-        st.info("This view is read-only for your role.")
-        return
-    with st.form(f"edit_draft_{selected['id']}_{selected.get('artifact_id')}"):
-        summary = st.text_area(
-            "Recommendation summary",
-            value=str(packet.get("summary", "")),
-            max_chars=600,
-        )
-        action_rows = [
-            {
-                "Action": row.get("label", ""),
-                "Owner": ACTION_OWNER_LABELS.get(row.get("owner"), "Assigned faculty"),
-                "Due in days": int(row.get("dueInDays", 7)),
+            edited_actions = st.data_editor(
+                pd.DataFrame(action_rows),
+                column_config={
+                    "Action": st.column_config.TextColumn("Action", max_chars=180),
+                    "Owner": st.column_config.SelectboxColumn(
+                        "Owner",
+                        options=list(ACTION_OWNER_LABELS.values()),
+                        required=True,
+                    ),
+                    "Due in days": st.column_config.NumberColumn(
+                        "Due in days", min_value=1, max_value=14, step=1
+                    ),
+                },
+                hide_index=True,
+                num_rows="fixed",
+                width="stretch",
+                key=f"draft_actions_{selected['id']}_{selected.get('artifact_id')}",
+            )
+            edit_rationale = st.text_area("Reason for this edit", max_chars=600)
+            edit_submitted = st.form_submit_button(
+                "Save new draft version", icon=":material/edit_document:"
+            )
+        if edit_submitted:
+            edited = edited_actions.to_dict(orient="records")
+            original_codes = [row.get("code") for row in actions]
+            for index, row in enumerate(edited):
+                row["code"] = original_codes[index]
+                row["label"] = str(row.pop("Action", "")).strip()
+                row["owner"] = {
+                    label: code for code, label in ACTION_OWNER_LABELS.items()
+                }.get(str(row.get("Owner", "Assigned faculty")), "assigned_faculty")
+                row["dueInDays"] = int(row.get("Due in days", 7))
+                row.pop("Owner", None)
+                row.pop("Due in days", None)
+            updated_packet = {
+                "summary": summary.strip(),
+                "actions": edited,
+                "citations": packet.get("citations", []),
+                "prohibited": packet.get("prohibited", []),
             }
-            for row in actions
-        ]
-        edited_actions = st.data_editor(
-            pd.DataFrame(action_rows),
-            column_config={
-                "Action": st.column_config.TextColumn("Action", max_chars=180),
-                "Owner": st.column_config.SelectboxColumn(
-                    "Owner", options=list(ACTION_OWNER_LABELS.values()), required=True
-                ),
-                "Due in days": st.column_config.NumberColumn(
-                    "Due in days", min_value=1, max_value=14, step=1
-                ),
-            },
-            hide_index=True,
-            num_rows="fixed",
-            width="stretch",
-            key=f"draft_actions_{selected['id']}_{selected.get('artifact_id')}",
+            if len(edit_rationale.strip()) < 12:
+                st.error("Enter an edit reason of at least twelve characters.")
+            else:
+                save_action(
+                    "draft_edit",
+                    {
+                        "caseId": selected["id"],
+                        "expectedRevision": int(selected["revision"]),
+                        "artifactId": selected["artifact_id"],
+                        "packet": updated_packet,
+                        "rationale": edit_rationale.strip(),
+                    },
+                    "A new draft version was saved.",
+                )
+    with decide_col, st.container(border=True, key="gate_decision"):
+        st.html(
+            '<p class="aura-eyebrow" style="color:#7A4F0A">✋ Mentor decision · human gate</p>'
         )
-        edit_rationale = st.text_area("Reason for this edit", max_chars=600)
-        edit_submitted = st.form_submit_button("Save new draft version")
-    if edit_submitted:
-        edited = edited_actions.to_dict(orient="records")
-        original_codes = [row.get("code") for row in actions]
-        for index, row in enumerate(edited):
-            row["code"] = original_codes[index]
-            row["label"] = str(row.pop("Action", "")).strip()
-            row["owner"] = {
-                label: code for code, label in ACTION_OWNER_LABELS.items()
-            }.get(str(row.get("Owner", "Assigned faculty")), "assigned_faculty")
-            row["dueInDays"] = int(row.get("Due in days", 7))
-            row.pop("Owner", None)
-            row.pop("Due in days", None)
-        updated_packet = {
-            "summary": summary.strip(),
-            "actions": edited,
-            "citations": packet.get("citations", []),
-            "prohibited": packet.get("prohibited", []),
-        }
-        if len(edit_rationale.strip()) < 12:
-            st.error("Enter an edit reason of at least twelve characters.")
-        else:
-            save_action(
-                "draft_edit",
-                {
-                    "caseId": selected["id"],
-                    "expectedRevision": int(selected["revision"]),
-                    "artifactId": selected["artifact_id"],
-                    "packet": updated_packet,
-                    "rationale": edit_rationale.strip(),
-                },
-                "A new draft version was saved.",
+        st.markdown("##### Approve or decline this version")
+        with st.form(
+            f"decide_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
+        ):
+            decision = st.radio(
+                "Decision",
+                ["approved", "rejected"],
+                format_func=lambda item: (
+                    ":material/verified: Approve and publish"
+                    if item == "approved"
+                    else ":material/cancel: Do not approve"
+                ),
+                horizontal=True,
             )
-    with st.form(f"decide_draft_{selected['id']}_{selected.get('artifact_id')}"):
-        decision = st.radio(
-            "Decision",
-            ["approved", "rejected"],
-            format_func=lambda item: item.title(),
-            horizontal=True,
-        )
-        rationale = st.text_area("Decision rationale", max_chars=600)
-        decided = st.form_submit_button("Save decision", type="primary")
-    if decided:
-        if len(rationale.strip()) < 8:
-            st.error("Enter a decision rationale of at least eight characters.")
-        else:
-            save_action(
-                "case_decide",
-                {
-                    "caseId": selected["id"],
-                    "expectedRevision": int(selected["revision"]),
-                    "artifactId": selected["artifact_id"],
-                    "contentHash": selected["content_hash"],
-                    "decision": decision,
-                    "rationale": rationale.strip(),
-                },
-                "Decision saved against the displayed draft version.",
+            rationale = st.text_area("Decision rationale", max_chars=600)
+            decided = st.form_submit_button(
+                "Save decision", type="primary", icon=":material/gavel:"
             )
+        if decided:
+            if len(rationale.strip()) < 8:
+                st.error("Enter a decision rationale of at least eight characters.")
+            else:
+                save_action(
+                    "case_decide",
+                    {
+                        "caseId": selected["id"],
+                        "expectedRevision": int(selected["revision"]),
+                        "artifactId": selected["artifact_id"],
+                        "contentHash": selected["content_hash"],
+                        "decision": decision,
+                        "rationale": rationale.strip(),
+                    },
+                    "Decision saved against the displayed draft version.",
+                )
 
 
 def render_review_page(actor: dict[str, Any]) -> None:
-    st.title("Support reviews")
-    st.write("Review saved plans, source references and the current workflow status.")
-    review = load("review_overview")
-    render_plan_workbench(review, actor)
-    render_composite_risk(review, actor)
     role = actor.get("role")
+    ui.page_header(
+        "Support reviews",
+        "AI agents gather evidence, score risk and draft support. You decide what reaches a student.",
+        eyebrow="Mentor workspace" if role == "faculty" else "Department oversight",
+    )
+    review = load("review_overview")
     if role in {"faculty", "hod"}:
         queue = load("review_queue")
-        render_draft_reviews(queue, actor)
-        render_outcomes(queue, actor)
+        risk_rows = review.get("riskView") or []
+        risk_by_student = {str(row.get("studentId")): row for row in risk_rows}
+        drafts = queue.get("drafts") or []
+        ui.kpi_row(
+            [
+                {
+                    "label": "Awaiting your decision"
+                    if role == "faculty"
+                    else "Awaiting mentors",
+                    "value": len(drafts),
+                    "icon": ":material/front_hand:",
+                },
+                {
+                    "label": "Flagged students",
+                    "value": sum(1 for row in risk_rows if row.get("flagged"))
+                    if role == "faculty"
+                    else "—",
+                    "icon": ":material/flag:",
+                },
+                {
+                    "label": "Approved plans",
+                    "value": len(queue.get("plans") or []),
+                    "icon": ":material/verified:",
+                },
+                {
+                    "label": "AI model",
+                    "value": "Connected"
+                    if review.get("modelConfigured")
+                    else "Rule-based",
+                    "icon": ":material/smart_toy:",
+                },
+            ]
+        )
+        tab_queue, tab_risk, tab_plans, tab_outcomes, tab_policies = st.tabs(
+            [
+                f":material/front_hand: Review queue ({len(drafts)})",
+                ":material/monitoring: Risk view",
+                ":material/hub: Plans & agent runs",
+                ":material/timeline: Outcomes",
+                ":material/policy: Policies",
+            ]
+        )
+        with tab_queue:
+            render_draft_reviews(queue, actor, risk_by_student)
+        with tab_risk:
+            if role == "faculty":
+                render_composite_risk(review, actor)
+            else:
+                st.caption(
+                    ":material/lock: Individual risk scores are visible only to each student's assigned mentor. Department trends are on the overview."
+                )
+        with tab_plans:
+            render_plan_workbench(review, actor)
+        with tab_outcomes:
+            render_outcomes(queue, actor)
+        with tab_policies:
+            render_policies(review, actor)
     else:
-        st.subheader("Review operations")
+        render_plan_workbench(review, actor)
+        ui.section("Review operations", icon=":material/hub:")
         jobs = review.get("jobs") or []
         dataframe(
             [
                 {
-                    "Plan": row.get("plan_id"),
-                    "Status": row.get("status"),
-                    "Stage": row.get("stage"),
-                    "Execution mode": row.get("mode") or "Not recorded",
-                    "Run reference": row.get("run_id") or "Not available",
-                    "Issue": row.get("error_code") or "None recorded",
+                    "Status": labels.status_label(row.get("status")),
+                    "Stage": labels.status_label(row.get("stage")),
+                    "Mode": labels.mode_label(row.get("mode")),
+                    "Issue": labels.issue_label(row.get("error_code")),
                 }
                 for row in jobs
             ]
         )
-        replayable = [row for row in jobs if row.get("run_id")]
-        if actor.get("role") == "governance" and replayable:
-            run_id = select_id(
-                "Completed run",
-                replayable,
-                lambda row: str(row.get("run_id", "")),
-                lambda row: (
-                    f"{row.get('status', 'Run')} · {short_time(row.get('updated_at'))}"
-                ),
-                key="replay_run",
-            )
-            if (
-                st.button("Replay saved run", type="primary", key="replay_saved_run")
-                and run_id
-            ):
-                result = save_action("replay", {"runId": run_id}, "Replay completed.")
-                if result:
-                    replay = result.get("replay") or {}
-                    st.write(
-                        "Replay matched the saved run."
-                        if replay.get("matched")
-                        else "Replay did not match the saved run."
-                    )
-                    st.write(f"Input hash: {replay.get('inputHash', 'Not recorded')}")
-                    st.write(f"Output hash: {replay.get('outputHash', 'Not recorded')}")
-        elif actor.get("role") == "governance":
-            st.caption("No completed run is available for replay.")
 
 
 def render_lms(actor: dict[str, Any]) -> None:
-    st.title("Learning workspace")
+    is_student = actor.get("role") == "student"
+    ui.page_header(
+        "Learning",
+        "Lessons, assignments and feedback for your courses."
+        if is_student
+        else "Publish lessons and assignments, then review submissions and give feedback.",
+        eyebrow="Learning workspace · LMS",
+    )
     lms = load("lms_overview")
     courses = lms.get("courses") or []
     offering_id = select_id(
@@ -1850,28 +2590,69 @@ def render_lms(actor: dict[str, Any]) -> None:
         key="lms_course",
     )
     if not offering_id:
-        st.info("No courses are available in your current learning workspace.")
+        ui.empty_state(
+            "No courses yet",
+            "Courses appear here once you are enrolled or assigned.",
+            "📚",
+        )
         return
     detail = load("lms_course", {"courseId": offering_id})
     course = detail.get("course") or {}
-    st.subheader(f"{course.get('code', '')} · {course.get('title', '')}")
-    is_student = actor.get("role") == "student"
     lessons = detail.get("lessons") or []
     assignments = detail.get("assignments") or []
     submissions = detail.get("submissions") or []
-    st.markdown("#### Lessons")
+    st.subheader(f"{course.get('code', '')} · {course.get('title', '')}", anchor=False)
+    open_assignments = [a for a in assignments if not a.get("deadline_passed")]
+    ui.kpi_row(
+        [
+            {
+                "label": "Lessons",
+                "value": len(lessons),
+                "icon": ":material/auto_stories:",
+            },
+            {
+                "label": "Assignments",
+                "value": len(assignments),
+                "icon": ":material/assignment:",
+            },
+            {
+                "label": "Still open",
+                "value": len(open_assignments),
+                "icon": ":material/schedule:",
+            },
+            {
+                "label": "Your submissions" if is_student else "Submissions",
+                "value": len(submissions),
+                "icon": ":material/upload_file:",
+            },
+        ]
+    )
+    ui.section("Lessons", icon=":material/auto_stories:")
     if not lessons:
-        st.caption("No lessons are available for this course yet.")
+        ui.empty_state(
+            "No lessons yet", "Lessons appear here when they are published.", "📖"
+        )
     for lesson in lessons:
-        with st.expander(str(lesson.get("title", "Lesson"))):
+        with st.expander(
+            str(lesson.get("title", "Lesson")),
+            icon=":material/article:"
+            if lesson.get("published", True)
+            else ":material/visibility_off:",
+        ):
             if lesson.get("body"):
                 st.write(lesson["body"])
             if lesson.get("material_url"):
-                st.link_button("Open course material", lesson["material_url"])
+                st.link_button(
+                    "Open course material",
+                    lesson["material_url"],
+                    icon=":material/open_in_new:",
+                )
             if lesson.get("attachment_name"):
-                st.caption(f"Attachment: {lesson['attachment_name']}")
+                st.caption(f":material/attach_file: {lesson['attachment_name']}")
             if is_student and st.button(
-                "Mark lesson as opened", key=f"open_lesson_{lesson['id']}"
+                "Mark lesson as opened",
+                key=f"open_lesson_{lesson['id']}",
+                icon=":material/done:",
             ):
                 save_action(
                     "lms_command",
@@ -1880,222 +2661,258 @@ def render_lms(actor: dict[str, Any]) -> None:
                 )
 
     if not is_student:
-        st.markdown("#### Add or update a lesson")
-        lesson_choices: list[dict[str, Any] | None] = [None, *lessons]
-        selected_lesson = st.selectbox(
-            "Lesson to edit",
-            lesson_choices,
-            format_func=lambda row: (
-                "New lesson" if row is None else str(row.get("title", "Lesson"))
-            ),
-            key=f"lesson_edit_{offering_id}",
-        )
-        with st.form(
-            f"lesson_form_{offering_id}_{(selected_lesson or {}).get('id', 'new')}"
-        ):
-            title = st.text_input(
-                "Lesson title",
-                value=str(selected_lesson.get("title", "") if selected_lesson else ""),
-                max_chars=160,
-            )
-            body = st.text_area(
-                "Lesson content",
-                value=str(selected_lesson.get("body", "") if selected_lesson else ""),
-                max_chars=40000,
-                height=180,
-            )
-            material_url = st.text_input(
-                "Material link",
-                value=str(
-                    selected_lesson.get("material_url", "") if selected_lesson else ""
+        with st.expander("Add or update a lesson", icon=":material/post_add:"):
+            lesson_choices: list[dict[str, Any] | None] = [None, *lessons]
+            selected_lesson = st.selectbox(
+                "Lesson to edit",
+                lesson_choices,
+                format_func=lambda row: (
+                    "New lesson" if row is None else str(row.get("title", "Lesson"))
                 ),
-                max_chars=2000,
+                key=f"lesson_edit_{offering_id}",
             )
-            position = st.number_input(
-                "Order",
-                min_value=1,
-                max_value=1000,
-                value=int(
-                    selected_lesson.get("position", len(lessons) + 1)
-                    if selected_lesson
-                    else len(lessons) + 1
-                ),
-                step=1,
-            )
-            published = st.checkbox(
-                "Make lesson available to students",
-                value=bool(
-                    selected_lesson.get("published", False)
-                    if selected_lesson
-                    else False
-                ),
-            )
-            lesson_file = st.file_uploader(
-                "Add a lesson file (optional, up to 2 MB)",
-                key=f"lesson_file_{offering_id}_{(selected_lesson or {}).get('id', 'new')}",
-                max_upload_size=2,
-                help="A new file replaces the current attachment. Leave this empty to keep it.",
-            )
-            submitted = st.form_submit_button("Save lesson", type="primary")
-        if submitted:
-            if len(title.strip()) < 3:
-                st.error("Enter a lesson title with at least three characters.")
-            else:
-                attachment, attachment_error = attachment_payload(lesson_file)
-                if attachment_error:
-                    st.error(attachment_error)
+            with st.form(
+                f"lesson_form_{offering_id}_{(selected_lesson or {}).get('id', 'new')}"
+            ):
+                title = st.text_input(
+                    "Lesson title",
+                    value=str(
+                        selected_lesson.get("title", "") if selected_lesson else ""
+                    ),
+                    max_chars=160,
+                )
+                body = st.text_area(
+                    "Lesson content",
+                    value=str(
+                        selected_lesson.get("body", "") if selected_lesson else ""
+                    ),
+                    max_chars=40000,
+                    height=180,
+                )
+                material_url = st.text_input(
+                    "Material link",
+                    value=str(
+                        selected_lesson.get("material_url", "")
+                        if selected_lesson
+                        else ""
+                    ),
+                    max_chars=2000,
+                )
+                position = st.number_input(
+                    "Order",
+                    min_value=1,
+                    max_value=1000,
+                    value=int(
+                        selected_lesson.get("position", len(lessons) + 1)
+                        if selected_lesson
+                        else len(lessons) + 1
+                    ),
+                    step=1,
+                )
+                published = st.checkbox(
+                    "Make lesson available to students",
+                    value=bool(
+                        selected_lesson.get("published", False)
+                        if selected_lesson
+                        else False
+                    ),
+                )
+                lesson_file = st.file_uploader(
+                    "Add a lesson file (optional, up to 2 MB)",
+                    key=f"lesson_file_{offering_id}_{(selected_lesson or {}).get('id', 'new')}",
+                    max_upload_size=2,
+                    help="A new file replaces the current attachment. Leave this empty to keep it.",
+                )
+                submitted = st.form_submit_button("Save lesson", type="primary")
+            if submitted:
+                if len(title.strip()) < 3:
+                    st.error("Enter a lesson title with at least three characters.")
                 else:
-                    payload = {
-                        "action": "save-lesson",
-                        "offeringId": offering_id,
-                        "title": title.strip(),
-                        "body": body,
-                        "materialUrl": material_url.strip(),
-                        "published": published,
-                        "position": int(position),
-                    }
-                    if attachment:
-                        payload["attachment"] = attachment
-                    if selected_lesson:
-                        payload.update(
-                            {
-                                "id": selected_lesson["id"],
-                                "expectedRevision": int(selected_lesson["revision"]),
-                            }
-                        )
-                    save_action("lms_command", payload, "Lesson saved.")
+                    attachment, attachment_error = attachment_payload(lesson_file)
+                    if attachment_error:
+                        st.error(attachment_error)
+                    else:
+                        payload = {
+                            "action": "save-lesson",
+                            "offeringId": offering_id,
+                            "title": title.strip(),
+                            "body": body,
+                            "materialUrl": material_url.strip(),
+                            "published": published,
+                            "position": int(position),
+                        }
+                        if attachment:
+                            payload["attachment"] = attachment
+                        if selected_lesson:
+                            payload.update(
+                                {
+                                    "id": selected_lesson["id"],
+                                    "expectedRevision": int(
+                                        selected_lesson["revision"]
+                                    ),
+                                }
+                            )
+                        save_action("lms_command", payload, "Lesson saved.")
 
-    st.markdown("#### Assignments")
+    ui.section("Assignments", icon=":material/assignment:")
     if not assignments:
-        st.caption("No assignments are available for this course yet.")
-    for assignment in assignments:
-        with st.expander(
-            f"{assignment.get('title', 'Assignment')} · due {short_time(assignment.get('due_at'))}"
-        ):
-            st.write(assignment.get("instructions", ""))
-            st.write(
-                f"Maximum score: {assignment.get('maximum_score', 'Not recorded')}"
-            )
-            if assignment.get("deadline_passed"):
-                st.caption("The recorded deadline has passed.")
-            if assignment.get("attachment_name"):
-                st.caption(f"Attachment: {assignment['attachment_name']}")
-    if not is_student:
-        st.markdown("#### Add or update an assignment")
-        assignment_choices: list[dict[str, Any] | None] = [None, *assignments]
-        selected_assignment = st.selectbox(
-            "Assignment to edit",
-            assignment_choices,
-            format_func=lambda row: (
-                "New assignment" if row is None else str(row.get("title", "Assignment"))
-            ),
-            key=f"assignment_edit_{offering_id}",
+        ui.empty_state(
+            "No assignments yet",
+            "Assignments appear here when they are published.",
+            "📝",
         )
-        try:
-            initial_due = (
-                datetime.fromisoformat(
-                    str(selected_assignment.get("due_at"))
-                ).astimezone()
-                if selected_assignment
-                else datetime.now().astimezone() + timedelta(days=7)
-            )
-        except ValueError:
-            initial_due = datetime.now().astimezone() + timedelta(days=7)
-        with st.form(
-            f"assignment_form_{offering_id}_{(selected_assignment or {}).get('id', 'new')}"
+    submitted_ids = {row.get("assignment_id") for row in submissions}
+    for assignment in assignments:
+        passed = bool(assignment.get("deadline_passed"))
+        with st.expander(
+            f"{assignment.get('title', 'Assignment')} · due {labels.nice_time(assignment.get('due_at'))}",
+            icon=":material/event_busy:" if passed else ":material/assignment:",
         ):
-            title = st.text_input(
-                "Assignment title",
-                value=str(
-                    selected_assignment.get("title", "") if selected_assignment else ""
-                ),
-                max_chars=160,
+            badges = [
+                ui.badge_md("Deadline passed", "red", ":material/event_busy:")
+                if passed
+                else ui.badge_md(
+                    labels.due_phrase(assignment.get("due_at")),
+                    "orange",
+                    ":material/schedule:",
+                )
+            ]
+            if is_student:
+                badges.append(
+                    ui.badge_md("Submitted", "green", ":material/check:")
+                    if assignment.get("id") in submitted_ids
+                    else ui.badge_md(
+                        "Not submitted", "gray", ":material/radio_button_unchecked:"
+                    )
+                )
+            st.markdown(" ".join(badges))
+            st.write(assignment.get("instructions", ""))
+            st.caption(
+                f":material/grade: Maximum score: {assignment.get('maximum_score', 'Not recorded')}"
             )
-            instructions = st.text_area(
-                "Instructions",
-                value=str(
-                    selected_assignment.get("instructions", "")
+            if assignment.get("attachment_name"):
+                st.caption(f":material/attach_file: {assignment['attachment_name']}")
+    if not is_student:
+        with st.expander("Add or update an assignment", icon=":material/post_add:"):
+            assignment_choices: list[dict[str, Any] | None] = [None, *assignments]
+            selected_assignment = st.selectbox(
+                "Assignment to edit",
+                assignment_choices,
+                format_func=lambda row: (
+                    "New assignment"
+                    if row is None
+                    else str(row.get("title", "Assignment"))
+                ),
+                key=f"assignment_edit_{offering_id}",
+            )
+            try:
+                initial_due = (
+                    datetime.fromisoformat(
+                        str(selected_assignment.get("due_at"))
+                    ).astimezone()
                     if selected_assignment
-                    else ""
-                ),
-                max_chars=40000,
-                height=150,
-            )
-            due_date = st.date_input("Due date", value=initial_due.date())
-            due_time = st.time_input(
-                "Due time", value=initial_due.time().replace(second=0, microsecond=0)
-            )
-            maximum = st.number_input(
-                "Maximum score",
-                min_value=0.01,
-                max_value=1000.0,
-                value=float(
-                    selected_assignment.get("maximum_score", 100)
-                    if selected_assignment
-                    else 100
-                ),
-                step=1.0,
-            )
-            published = st.checkbox(
-                "Make assignment available to students",
-                value=bool(
-                    selected_assignment.get("published", False)
-                    if selected_assignment
-                    else False
-                ),
-            )
-            allow_late = st.checkbox(
-                "Accept late submissions",
-                value=bool(
-                    selected_assignment.get("allow_late", True)
-                    if selected_assignment
-                    else True
-                ),
-            )
-            assignment_file = st.file_uploader(
-                "Add an assignment file (optional, up to 2 MB)",
-                key=f"assignment_file_{offering_id}_{(selected_assignment or {}).get('id', 'new')}",
-                max_upload_size=2,
-                help="A new file replaces the current attachment. Leave this empty to keep it.",
-            )
-            submitted = st.form_submit_button("Save assignment", type="primary")
-        if submitted:
-            if len(title.strip()) < 3 or len(instructions.strip()) < 5:
-                st.error("Enter an assignment title and instructions.")
-            else:
-                attachment, attachment_error = attachment_payload(assignment_file)
-                if attachment_error:
-                    st.error(attachment_error)
+                    else datetime.now().astimezone() + timedelta(days=7)
+                )
+            except ValueError:
+                initial_due = datetime.now().astimezone() + timedelta(days=7)
+            with st.form(
+                f"assignment_form_{offering_id}_{(selected_assignment or {}).get('id', 'new')}"
+            ):
+                title = st.text_input(
+                    "Assignment title",
+                    value=str(
+                        selected_assignment.get("title", "")
+                        if selected_assignment
+                        else ""
+                    ),
+                    max_chars=160,
+                )
+                instructions = st.text_area(
+                    "Instructions",
+                    value=str(
+                        selected_assignment.get("instructions", "")
+                        if selected_assignment
+                        else ""
+                    ),
+                    max_chars=40000,
+                    height=150,
+                )
+                due_date = st.date_input("Due date", value=initial_due.date())
+                due_time = st.time_input(
+                    "Due time",
+                    value=initial_due.time().replace(second=0, microsecond=0),
+                )
+                maximum = st.number_input(
+                    "Maximum score",
+                    min_value=0.01,
+                    max_value=1000.0,
+                    value=float(
+                        selected_assignment.get("maximum_score", 100)
+                        if selected_assignment
+                        else 100
+                    ),
+                    step=1.0,
+                )
+                published = st.checkbox(
+                    "Make assignment available to students",
+                    value=bool(
+                        selected_assignment.get("published", False)
+                        if selected_assignment
+                        else False
+                    ),
+                )
+                allow_late = st.checkbox(
+                    "Accept late submissions",
+                    value=bool(
+                        selected_assignment.get("allow_late", True)
+                        if selected_assignment
+                        else True
+                    ),
+                )
+                assignment_file = st.file_uploader(
+                    "Add an assignment file (optional, up to 2 MB)",
+                    key=f"assignment_file_{offering_id}_{(selected_assignment or {}).get('id', 'new')}",
+                    max_upload_size=2,
+                    help="A new file replaces the current attachment. Leave this empty to keep it.",
+                )
+                submitted = st.form_submit_button("Save assignment", type="primary")
+            if submitted:
+                if len(title.strip()) < 3 or len(instructions.strip()) < 5:
+                    st.error("Enter an assignment title and instructions.")
                 else:
-                    local_zone = datetime.now().astimezone().tzinfo
-                    due_at = datetime.combine(
-                        due_date, due_time, tzinfo=local_zone
-                    ).isoformat(timespec="seconds")
-                    payload = {
-                        "action": "save-assignment",
-                        "offeringId": offering_id,
-                        "title": title.strip(),
-                        "instructions": instructions.strip(),
-                        "dueAt": due_at,
-                        "maximumScore": float(maximum),
-                        "published": published,
-                        "allowLate": allow_late,
-                    }
-                    if attachment:
-                        payload["attachment"] = attachment
-                    if selected_assignment:
-                        payload.update(
-                            {
-                                "id": selected_assignment["id"],
-                                "expectedRevision": int(
-                                    selected_assignment["revision"]
-                                ),
-                            }
-                        )
-                    save_action("lms_command", payload, "Assignment saved.")
+                    attachment, attachment_error = attachment_payload(assignment_file)
+                    if attachment_error:
+                        st.error(attachment_error)
+                    else:
+                        local_zone = datetime.now().astimezone().tzinfo
+                        due_at = datetime.combine(
+                            due_date, due_time, tzinfo=local_zone
+                        ).isoformat(timespec="seconds")
+                        payload = {
+                            "action": "save-assignment",
+                            "offeringId": offering_id,
+                            "title": title.strip(),
+                            "instructions": instructions.strip(),
+                            "dueAt": due_at,
+                            "maximumScore": float(maximum),
+                            "published": published,
+                            "allowLate": allow_late,
+                        }
+                        if attachment:
+                            payload["attachment"] = attachment
+                        if selected_assignment:
+                            payload.update(
+                                {
+                                    "id": selected_assignment["id"],
+                                    "expectedRevision": int(
+                                        selected_assignment["revision"]
+                                    ),
+                                }
+                            )
+                        save_action("lms_command", payload, "Assignment saved.")
 
     if is_student and assignments:
-        st.markdown("#### Submit assignment")
+        ui.section("Submit your work", icon=":material/upload_file:")
         submissions_by_assignment = {
             row.get("assignment_id"): row for row in submissions
         }
@@ -2111,11 +2928,19 @@ def render_lms(actor: dict[str, Any]) -> None:
         )
         current_submission = submissions_by_assignment.get(assignment_id)
         if current_submission:
-            st.caption(
-                f"Last submitted {short_time(current_submission.get('submitted_at'))}. Revision {current_submission.get('revision')}."
+            st.markdown(
+                ui.badge_md(
+                    f"Submitted {labels.nice_time(current_submission.get('submitted_at'))}",
+                    "green",
+                    ":material/check:",
+                )
             )
             if current_submission.get("feedback"):
-                st.write(f"**Feedback:** {current_submission['feedback']}")
+                with ui.card(f"feedback_{current_submission.get('id')}"):
+                    st.html('<p class="aura-eyebrow">Feedback from your teacher</p>')
+                    if current_submission.get("score") is not None:
+                        st.markdown(f"**Score: {current_submission.get('score')}**")
+                    st.write(current_submission["feedback"])
         with st.form(f"student_submission_{assignment_id}"):
             answer = st.text_area(
                 "Your response",
@@ -2131,7 +2956,9 @@ def render_lms(actor: dict[str, Any]) -> None:
                 max_upload_size=2,
                 help="If you already attached a file, it will be kept when you submit without a replacement.",
             )
-            submitted = st.form_submit_button("Submit assignment", type="primary")
+            submitted = st.form_submit_button(
+                "Submit assignment", type="primary", icon=":material/send:"
+            )
         if submitted:
             attachment, attachment_error = attachment_payload(submission_file)
             if attachment_error:
@@ -2166,7 +2993,7 @@ def render_lms(actor: dict[str, Any]) -> None:
                     save_action("lms_command", payload, "Assignment submitted.")
 
     if not is_student and submissions:
-        st.markdown("#### Review submissions")
+        ui.section("Review submissions", icon=":material/rate_review:")
         assignment_by_id = {row.get("id"): row for row in assignments}
         submission = st.selectbox(
             "Submission",
@@ -2190,7 +3017,9 @@ def render_lms(actor: dict[str, Any]) -> None:
                 value=str(submission.get("feedback", "") or ""),
                 max_chars=12000,
             )
-            submitted = st.form_submit_button("Publish feedback", type="primary")
+            submitted = st.form_submit_button(
+                "Publish feedback", type="primary", icon=":material/send:"
+            )
         if submitted:
             if len(feedback.strip()) < 3:
                 st.error("Enter feedback with at least three characters.")
@@ -2224,7 +3053,7 @@ def render_lms(actor: dict[str, Any]) -> None:
                     }
                 )
     if course_files:
-        st.markdown("#### Course files")
+        ui.section("Course files", icon=":material/folder_open:")
         file_id = select_id(
             "File",
             course_files,
@@ -2261,196 +3090,534 @@ def render_lms(actor: dict[str, Any]) -> None:
                 st.error("The selected file could not be prepared for download.")
 
 
+def rate(raw: Any) -> float | None:
+    try:
+        return None if raw is None else round(float(raw) * 100, 1)
+    except (TypeError, ValueError):
+        return None
+
+
 def render_evaluation_metrics(review: dict[str, Any]) -> None:
-    st.subheader("Evaluation by review cycle")
+    ui.section(
+        "How the agents performed",
+        "Calculated from recorded checkpoints, immutable drafts and mentor decisions. Undecided cases are excluded from decision metrics.",
+        icon=":material/insights:",
+    )
     metrics = review.get("metrics") or {}
     cycles = metrics.get("cycles") or []
-    st.caption(
-        "Calculated from recorded checkpoints, immutable artifacts and decisions. Pending cases are excluded from decision metrics; blank values mean no decision yet."
+    per_run = metrics.get("perRun") or []
+    if not per_run:
+        ui.empty_state(
+            "No evaluated runs yet",
+            "Metrics appear after the first review run is validated.",
+            "📈",
+        )
+        return
+    decided = [r for r in per_run if r.get("decision")]
+    approved = [r for r in decided if r.get("decision") == "approved"]
+    total = len(per_run)
+    ui.kpi_row(
+        [
+            {
+                "label": "Validation pass rate",
+                "value": f"{round(100 * sum(1 for r in per_run if r.get('validationPassed')) / total)}%",
+                "icon": ":material/verified:",
+                "help": "Share of drafts that passed every acceptance check before mentor review.",
+            },
+            {
+                "label": "Targeted repairs",
+                "value": sum(int(r.get("repairsUsed") or 0) for r in per_run),
+                "icon": ":material/build:",
+            },
+            {
+                "label": "Escalated to a mentor",
+                "value": sum(1 for r in per_run if r.get("escalated")),
+                "icon": ":material/front_hand:",
+            },
+            {
+                "label": "Approved as drafted",
+                "value": f"{round(100 * sum(1 for r in approved if r.get('approveAsIs')) / len(approved))}%"
+                if approved
+                else "—",
+                "icon": ":material/thumb_up:",
+                "help": "Of approved drafts, how many mentors approved without editing.",
+            },
+        ]
     )
-    dataframe([{**row, "cycleId": str(row["cycleId"])[:8]} for row in cycles])
-    if metrics.get("perRun"):
-        with st.expander("Per-run metrics"):
-            dataframe(metrics["perRun"])
+    dataframe(
+        [
+            {
+                "Cycle": labels.short_ref(row.get("cycleId")),
+                "Runs": row.get("evaluatedRuns"),
+                "Pass rate": rate(row.get("validationPassRate")),
+                "Repairs": row.get("repairsUsed"),
+                "Fallback rate": rate(row.get("fallbackRate")),
+                "Escalation rate": rate(row.get("escalationRate")),
+                "AI model runs": row.get("modelRuns"),
+                "Rule runs": row.get("ruleRuns"),
+                "Decided": row.get("decidedRuns"),
+                "Approved as drafted": rate(row.get("approveAsIsRate")),
+                "Avg. decision time (min)": None
+                if row.get("averageDecisionSeconds") is None
+                else round(float(row["averageDecisionSeconds"]) / 60, 1),
+            }
+            for row in cycles
+        ],
+        column_config={
+            name: st.column_config.NumberColumn(name, format="%.0f%%")
+            for name in (
+                "Pass rate",
+                "Fallback rate",
+                "Escalation rate",
+                "Approved as drafted",
+            )
+        },
+    )
+    with st.expander("Per-run metrics", icon=":material/table_rows:"):
+        dataframe(
+            [
+                {
+                    "Run": labels.short_ref(row.get("jobId")),
+                    "Cycle": labels.short_ref(row.get("cycleId")),
+                    "Passed checks": "Yes" if row.get("validationPassed") else "No",
+                    "Repairs": row.get("repairsUsed"),
+                    "Fallback": "Yes" if row.get("fallback") else "No",
+                    "Escalated": "Yes" if row.get("escalated") else "No",
+                    "Mode": labels.mode_label(row.get("mode")),
+                    "Decision": labels.status_label(row.get("decision"))
+                    if row.get("decision")
+                    else "Pending",
+                    "Mentor edit distance": row.get("mentorEditDistance"),
+                }
+                for row in per_run
+            ]
+        )
+
+
+TREND_SERIES = {
+    "reviewed": ("Reviewed", "#1B2A4A"),
+    "flagged": ("Flagged", "#6B3FA0"),
+    "blocked": ("Blocked", "#B42318"),
+    "awaiting_approval": ("Awaiting mentor", "#B7791F"),
+    "approved": ("Approved", "#1F7A4D"),
+    "completed": ("Completed", "#2F6FB0"),
+    "withdrawn": ("Withdrawn", "#8A94A6"),
+}
+BAND_SERIES = {
+    "low": ("Low", "#8A94A6"),
+    "medium": ("Medium", "#6B3FA0"),
+    "high": ("High", "#B42318"),
+}
+
+
+def trend_axis_config(chart: alt.Chart) -> alt.Chart:
+    return (
+        chart.configure_axis(
+            labelFont="IBM Plex Sans",
+            titleFont="IBM Plex Sans",
+            labelColor="#4A5568",
+            titleColor="#4A5568",
+            gridColor="#ECE8E0",
+            domainColor="#D9D4C9",
+            tickColor="#D9D4C9",
+        )
+        .configure_legend(
+            labelFont="IBM Plex Sans",
+            titleFont="IBM Plex Sans",
+            orient="bottom",
+            labelColor="#14213D",
+        )
+        .configure_view(strokeWidth=0)
+    )
 
 
 def render_review_trends(review: dict[str, Any]) -> None:
-    st.subheader("Support trends by review cycle")
-    st.caption(
-        "Each cycle is a saved plan. Reviewed means risk evaluated; approvals and outcomes are recorded decisions. Counts may overlap. This panel contains aggregates only."
+    ui.section(
+        "Support trends by review cycle",
+        "Each cycle is one saved review plan. Aggregates only; no student can be identified here.",
+        icon=":material/monitoring:",
     )
     rows = review.get("trends") or []
     if not rows:
-        st.info("No evaluated review cycles yet.")
+        ui.empty_state(
+            "No evaluated review cycles yet",
+            "Trends appear after mentors run their first review.",
+            "📊",
+        )
         return
+    evaluated = [r for r in rows if int(r.get("reviewed") or 0) > 0]
+    if evaluated:
+        rows = evaluated
+    recent = 8
+    if len(rows) > recent and not st.toggle(
+        f"Show all {len(rows)} cycles", key="trend_all_cycles"
+    ):
+        rows = rows[-recent:]
+        st.caption(f"Showing the {recent} most recent cycles with evaluated students.")
+    order = [f"C{index}" for index in range(1, len(rows) + 1)]
     counts = pd.DataFrame(
         [
             {
-                "Cycle": r["day"],
-                **{
-                    k.replace("_", " ").title(): r.get(k, 0)
-                    for k in (
-                        "reviewed",
-                        "flagged",
-                        "blocked",
-                        "awaiting_approval",
-                        "approved",
-                        "completed",
-                        "withdrawn",
-                    )
-                },
+                "Cycle": order[index],
+                "Review cycle": str(r["day"]),
+                "Measure": label,
+                "Count": int(r.get(key, 0) or 0),
             }
-            for r in rows
+            for index, r in enumerate(rows)
+            for key, (label, _) in TREND_SERIES.items()
         ]
-    ).set_index("Cycle")
-    st.bar_chart(counts, stack=False)
+    )
     averages = pd.DataFrame(
         [
             {
-                "Cycle": r["day"],
-                **{
-                    band.title(): r.get("average_" + band)
-                    for band in ("low", "medium", "high")
-                },
+                "Cycle": order[index],
+                "Review cycle": str(r["day"]),
+                "Band": label,
+                "Average score": r.get("average_" + key),
             }
-            for r in rows
+            for index, r in enumerate(rows)
+            for key, (label, _) in BAND_SERIES.items()
+            if r.get("average_" + key) is not None
         ]
-    ).set_index("Cycle")
-    st.line_chart(averages)
-    st.caption(
-        "Average composite risk by band. Gaps mean no evaluated cases in that band."
     )
-    st.dataframe(counts, width="stretch")
+    left, right = st.columns([3, 2], gap="medium")
+    with left, ui.card("trend_outcomes"):
+        st.markdown("**Outcomes per cycle**")
+        bars = (
+            alt.Chart(counts)
+            .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+            .encode(
+                x=alt.X("Cycle:N", title=None, sort=order, axis=alt.Axis(labelAngle=0)),
+                xOffset=alt.XOffset(
+                    "Measure:N", sort=[v[0] for v in TREND_SERIES.values()]
+                ),
+                y=alt.Y("Count:Q", title="Students", axis=alt.Axis(tickMinStep=1)),
+                color=alt.Color(
+                    "Measure:N",
+                    sort=[v[0] for v in TREND_SERIES.values()],
+                    scale=alt.Scale(
+                        domain=[v[0] for v in TREND_SERIES.values()],
+                        range=[v[1] for v in TREND_SERIES.values()],
+                    ),
+                    title=None,
+                ),
+                tooltip=["Review cycle", "Measure", "Count"],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(trend_axis_config(bars), width="stretch")
+    with right, ui.card("trend_bands"):
+        st.markdown("**Average risk score by band**")
+        if averages.empty:
+            averages = pd.DataFrame(
+                [
+                    {
+                        "Cycle": "C1",
+                        "Review cycle": "",
+                        "Band": "Low",
+                        "Average score": None,
+                    }
+                ]
+            )
+        lines = (
+            alt.Chart(averages)
+            .mark_line(point=alt.OverlayMarkDef(size=60, filled=True), strokeWidth=2.5)
+            .encode(
+                x=alt.X("Cycle:N", title=None, sort=order, axis=alt.Axis(labelAngle=0)),
+                y=alt.Y(
+                    "Average score:Q",
+                    title="Score (0–100)",
+                    scale=alt.Scale(domain=[0, 100]),
+                ),
+                color=alt.Color(
+                    "Band:N",
+                    scale=alt.Scale(
+                        domain=[v[0] for v in BAND_SERIES.values()],
+                        range=[v[1] for v in BAND_SERIES.values()],
+                    ),
+                    title=None,
+                ),
+                tooltip=[
+                    "Review cycle",
+                    "Band",
+                    alt.Tooltip("Average score:Q", format=".1f"),
+                ],
+            )
+            .properties(height=300)
+        )
+        st.altair_chart(trend_axis_config(lines), width="stretch")
+        st.caption("Gaps mean no evaluated students in that band for the cycle.")
 
 
 def render_department_home(overview: dict[str, Any]) -> None:
-    st.title("Department overview")
+    ui.page_header(
+        "Department overview",
+        "How the department's students and support reviews are doing, in aggregate.",
+        eyebrow="Department head",
+    )
     review = load("review_overview")
+    counts = overview.get("counts") or {}
+    ui.kpi_row(
+        [
+            {
+                "label": "Students in scope",
+                "value": value(
+                    counts, "students", default=len(overview.get("students", []))
+                ),
+                "icon": ":material/groups:",
+            },
+            {
+                "label": "Courses",
+                "value": value(
+                    counts, "courses", default=len(overview.get("courses", []))
+                ),
+                "icon": ":material/menu_book:",
+            },
+            {
+                "label": "Follow-ups overdue",
+                "value": value(counts, "overdue_followups", default=0),
+                "icon": ":material/alarm:",
+            },
+            {
+                "label": "Reviews awaiting work",
+                "value": value(counts, "pending_reviews", default=0),
+                "icon": ":material/front_hand:",
+            },
+        ]
+    )
     render_review_trends(review)
     render_evaluation_metrics(review)
-    counts = overview.get("counts") or {}
-    cols = st.columns(4)
-    cols[0].metric(
-        "Students in scope",
-        value(counts, "students", default=len(overview.get("students", []))),
+    tab_courses, tab_students = st.tabs(
+        [":material/menu_book: Courses", ":material/groups: Students"]
     )
-    cols[1].metric(
-        "Courses", value(counts, "courses", default=len(overview.get("courses", [])))
-    )
-    cols[2].metric("Follow-ups overdue", value(counts, "overdue_followups", default=0))
-    cols[3].metric("Reviews awaiting work", value(counts, "pending_reviews", default=0))
-    st.subheader("Courses")
-    dataframe(
-        [
-            {
-                "Course": f"{r.get('code', '')} · {r.get('title', '')}",
-                "Section": r.get("section"),
-                "Faculty": r.get("faculty_name"),
-                "Enrolled": r.get("enrolled"),
-                "Status": r.get("status"),
-            }
-            for r in overview.get("courses", [])
-        ]
-    )
-    st.subheader("Students in department scope")
-    dataframe(
-        [
-            {
-                "Student": display_name(r),
-                "Register number": r.get("register_number"),
-                "Semester": r.get("semester"),
-                "Mentor": r.get("mentor_name"),
-                "Courses": r.get("course_count"),
-            }
-            for r in overview.get("students", [])
-        ]
-    )
+    with tab_courses:
+        dataframe(
+            [
+                {
+                    "Course": f"{r.get('code', '')} · {r.get('title', '')}",
+                    "Section": r.get("section"),
+                    "Faculty": r.get("faculty_name"),
+                    "Enrolled": r.get("enrolled"),
+                    "Status": labels.status_label(r.get("status")),
+                }
+                for r in overview.get("courses", [])
+            ]
+        )
+    with tab_students:
+        dataframe(
+            [
+                {
+                    "Student": display_name(r),
+                    "Register number": r.get("register_number"),
+                    "Semester": r.get("semester"),
+                    "Mentor": r.get("mentor_name"),
+                    "Courses": r.get("course_count"),
+                }
+                for r in overview.get("students", [])
+            ]
+        )
 
 
 def render_agent_graph(review: dict[str, Any]) -> None:
-    st.subheader("Agent graph and execution")
+    ui.section(
+        "Agent graph",
+        "The executor runs this graph for every student. Validation can regenerate at most twice; publication waits for the assigned mentor's approval of the exact draft.",
+        icon=":material/account_tree:",
+    )
+    jobs = [job for job in review.get("jobs", []) if job.get("node_trace")]
+    trace = None
+    if jobs:
+        job_id = st.selectbox(
+            "Show node activity for run",
+            [str(job["id"]) for job in jobs],
+            format_func=lambda jid: (
+                f"Run {labels.short_ref(jid)} · "
+                f"{labels.status_label(next(j for j in jobs if str(j['id']) == jid).get('status'))}"
+            ),
+            key="graph_job",
+        )
+        trace = next(job for job in jobs if str(job["id"]) == job_id).get("node_trace")
+    ui.pipeline_stepper(trace)
+    if trace:
+        with st.expander("Node timings", icon=":material/timer:"):
+            dataframe(
+                [
+                    {
+                        "Node": labels.node_label(node),
+                        "Status": labels.NODE_STATES.get(
+                            state["status"], (labels.humanize(state["status"]), "")
+                        )[0],
+                        "Visits": state["visits"],
+                        "Milliseconds": round(state["elapsedMs"], 2),
+                    }
+                    for node, state in trace.items()
+                ]
+            )
     graph = review.get("graph") or {}
     edges = graph.get("edges") or []
     if edges:
-        dot = (
-            "digraph AURA { rankdir=LR; "
-            + " ".join(
-                f'"{edge["from"]}" -> "{edge["to"]}" [label="{edge["condition"]}"];'
+        with st.expander(
+            "Full graph with transition conditions", icon=":material/schema:"
+        ):
+
+            def node_id(raw: Any) -> str:
+                return "".join(ch for ch in str(raw) if ch.isalnum()) or "Node"
+
+            def node_text(raw: Any) -> str:
+                return labels.node_label(raw).replace('"', "'")
+
+            nodes = {edge["from"] for edge in edges} | {edge["to"] for edge in edges}
+            colours = {
+                "coordinator": "#1B2A4A",
+                "agent": "#2F6FB0",
+                "gate": "#B7791F",
+                "publish": "#1F7A4D",
+            }
+            declarations = " ".join(
+                f'{node_id(n)} [label="{node_text(n)}", color="{colours.get(labels.AGENT_NODES.get(str(n), ("", "agent"))[1], "#2F6FB0")}"];'
+                for n in sorted(nodes)
+            )
+            links = " ".join(
+                f'{node_id(edge["from"])} -> {node_id(edge["to"])} [label="{str(edge.get("condition", "")).replace(chr(34), chr(39))}"];'
                 for edge in edges
             )
-            + " }"
-        )
-        st.graphviz_chart(dot, width="stretch")
-        st.caption(
-            "The executor follows this graph. Validation can regenerate at most twice. Publication requires the assigned mentor's exact-artifact approval."
-        )
-    for job in review.get("jobs", []):
-        if job.get("node_trace"):
-            with st.expander("Node activity · " + str(job["id"])[:8]):
-                dataframe(
-                    [
-                        {
-                            "Node": node,
-                            "Status": state["status"],
-                            "Visits": state["visits"],
-                            "Milliseconds": round(state["elapsedMs"], 2),
-                        }
-                        for node, state in job["node_trace"].items()
-                    ]
-                )
+            st.graphviz_chart(
+                "digraph AURA { rankdir=LR; bgcolor=transparent; "
+                'node [shape=box, style="rounded,filled", fillcolor=white, fontname="Helvetica", fontsize=11, penwidth=2]; '
+                'edge [fontname="Helvetica", fontsize=9, color="#8A94A6", fontcolor="#4A5568"]; '
+                + declarations
+                + " "
+                + links
+                + " }",
+                width="stretch",
+            )
 
 
 def render_governance(actor: dict[str, Any]) -> None:
-    st.title("Review operations")
-    review = load("review_overview")
-    st.write(
-        "Check saved plan activity, replay completed runs and export review evidence."
+    ui.page_header(
+        "AI activity",
+        "Watch the agents work, verify recorded runs and export evidence. This workspace can observe but never decide.",
+        eyebrow="Governance & audit",
     )
-    render_plan_workbench(review, actor)
-    render_evaluation_metrics(review)
-    render_agent_graph(review)
+    review = load("review_overview")
     jobs = review.get("jobs") or []
-    dataframe(
+    per_run = (review.get("metrics") or {}).get("perRun") or []
+    ui.kpi_row(
         [
             {
-                "Plan status": row.get("status"),
-                "Stage": row.get("stage"),
-                "Execution mode": row.get("mode") or "Not recorded",
-                "Run reference": "Available" if row.get("run_id") else "Not available",
-                "Issue": str(row.get("error_code") or "None recorded")
-                .replace("_", " ")
-                .title(),
-            }
-            for row in jobs
+                "label": "Recorded runs",
+                "value": len(jobs),
+                "icon": ":material/smart_toy:",
+            },
+            {
+                "label": "AI model runs",
+                "value": sum(1 for job in jobs if job.get("mode") == "model"),
+                "icon": ":material/psychology:",
+            },
+            {
+                "label": "Passed validation",
+                "value": f"{round(100 * sum(1 for r in per_run if r.get('validationPassed')) / len(per_run))}%"
+                if per_run
+                else "—",
+                "icon": ":material/verified:",
+            },
+            {
+                "label": "Escalations",
+                "value": sum(1 for job in jobs if job.get("status") == "needs_human"),
+                "icon": ":material/front_hand:",
+            },
         ]
     )
-    replayable = [row for row in jobs if row.get("run_id")]
-    if actor.get("role") == "governance" and replayable:
-        run_id = select_id(
-            "Completed run",
-            replayable,
-            lambda row: str(row.get("run_id", "")),
-            lambda row: (
-                f"{row.get('status', 'Run')} · {short_time(row.get('updated_at'))}"
-            ),
-            key="governance_replay_run",
+    tab_graph, tab_runs, tab_eval, tab_plans, tab_policies = st.tabs(
+        [
+            ":material/account_tree: Agent graph",
+            ":material/history: Runs & replay",
+            ":material/insights: Evaluation",
+            ":material/hub: Plans",
+            ":material/policy: Policies",
+        ]
+    )
+    with tab_graph:
+        render_agent_graph(review)
+    with tab_runs:
+        ui.section("Recorded runs", icon=":material/history:")
+        dataframe(
+            [
+                {
+                    "Run": labels.short_ref(row.get("id")),
+                    "Status": labels.status_label(row.get("status")),
+                    "Stage": labels.status_label(row.get("stage")),
+                    "Mode": labels.mode_label(row.get("mode")),
+                    "Replay record": "Available"
+                    if row.get("run_id")
+                    else "Not available",
+                    "Issue": labels.issue_label(row.get("error_code")),
+                }
+                for row in jobs
+            ],
+            empty="No runs have been recorded yet.",
         )
-        if (
-            st.button("Replay saved run", type="primary", key="governance_replay")
-            and run_id
-        ):
-            result = save_action("replay", {"runId": run_id}, "Replay completed.")
-            if result:
-                replay = result.get("replay") or {}
-                st.write(
-                    "Replay matched the saved run."
-                    if replay.get("matched")
-                    else "Replay did not match the saved run."
+        replayable = [row for row in jobs if row.get("run_id")]
+        if actor.get("role") == "governance" and replayable:
+            with ui.card("replay"):
+                st.markdown("##### Verify a recorded run")
+                st.caption(
+                    "Recomputes policy and validation checks from the recorded inputs and compares hashes. It does not re-run model inference."
                 )
-                st.write(f"Input hash: {replay.get('inputHash', 'Not recorded')}")
-                st.write(f"Output hash: {replay.get('outputHash', 'Not recorded')}")
-    elif actor.get("role") != "governance":
-        st.info("This governance workspace is read-only for your account.")
+                run_id = select_id(
+                    "Completed run",
+                    replayable,
+                    lambda row: str(row.get("run_id", "")),
+                    lambda row: (
+                        f"{labels.status_label(row.get('status', 'Run'))} · {labels.nice_time(row.get('updated_at'))}"
+                    ),
+                    key="governance_replay_run",
+                )
+                if (
+                    st.button(
+                        "Replay saved run",
+                        type="primary",
+                        key="governance_replay",
+                        icon=":material/replay:",
+                    )
+                    and run_id
+                ):
+                    result = save_action(
+                        "replay", {"runId": run_id}, "Replay completed."
+                    )
+                    if result:
+                        replay = result.get("replay") or {}
+                        if replay.get("matched"):
+                            st.success(
+                                "Replay matched the saved run.",
+                                icon=":material/verified:",
+                            )
+                        else:
+                            st.warning(
+                                "Replay did not match the saved run.",
+                                icon=":material/report:",
+                            )
+                        ui.tech_details(
+                            [
+                                ("Input hash", replay.get("inputHash", "Not recorded")),
+                                (
+                                    "Output hash",
+                                    replay.get("outputHash", "Not recorded"),
+                                ),
+                            ],
+                            label="Replay hashes",
+                        )
+        elif actor.get("role") != "governance":
+            st.info(
+                "This governance workspace is read-only for your account.",
+                icon=":material/visibility:",
+            )
+    with tab_eval:
+        render_evaluation_metrics(review)
+    with tab_plans:
+        render_plan_workbench(review, actor)
+    with tab_policies:
+        render_policies(review, actor)
 
 
 def portal_pages(portal: str) -> list[str]:
@@ -2477,12 +3644,76 @@ def portal_pages(portal: str) -> list[str]:
             "Support reviews",
             "Source records",
         ],
-        "governance": ["Operations", "Source records"],
+        "governance": ["AI activity", "Source records"],
         "lms": ["Learning"],
     }.get(portal, ["Overview"])
 
 
+def page_label(page: str) -> str:
+    return f"{PAGE_ICONS.get(page, ':material/circle:')} {page}"
+
+
+def render_mentor_home(overview: dict[str, Any], actor: dict[str, Any]) -> None:
+    ui.page_header(
+        f"Welcome, {display_name(actor)}",
+        "Your mentees, courses and the decisions waiting for you today.",
+        eyebrow="Mentor workspace",
+    )
+    counts = overview.get("counts") or {}
+    pending = value(counts, "pending_reviews", default=0)
+    ui.kpi_row(
+        [
+            {
+                "label": "Assigned students",
+                "value": len(overview.get("students") or []),
+                "icon": ":material/groups:",
+            },
+            {
+                "label": "Courses",
+                "value": value(
+                    counts, "courses", default=len(overview.get("courses", []))
+                ),
+                "icon": ":material/menu_book:",
+            },
+            {
+                "label": "Reviews awaiting you",
+                "value": pending,
+                "icon": ":material/front_hand:",
+            },
+            {
+                "label": "Overdue follow-ups",
+                "value": value(counts, "overdue_followups", default=0),
+                "icon": ":material/alarm:",
+            },
+        ]
+    )
+    if pending:
+        ui.gate_banner(
+            f"{pending} support draft{'s are' if pending != 1 else ' is'} waiting at the mentor gate. "
+            "Open Support reviews to approve, edit or decline them.",
+            title="Needs you today",
+        )
+    followups = overview.get("followups", [])
+    ui.section("Upcoming check-ins", icon=":material/event_note:")
+    dataframe(
+        [
+            {
+                "Student": r.get("student_name"),
+                "Due": labels.nice_date(r.get("due_on")),
+                "When": "Overdue"
+                if r.get("overdue")
+                else labels.due_phrase(r.get("due_on")),
+                "Note": r.get("note"),
+                "Status": labels.status_label(r.get("status")),
+            }
+            for r in followups
+        ],
+        empty="No check-ins scheduled. Add one from Mentor follow-ups.",
+    )
+
+
 def main() -> None:
+    ui.inject_styles()
     actor = st.session_state.get("actor")
     if not actor or not st.session_state.get("token"):
         login_view()
@@ -2498,18 +3729,21 @@ def main() -> None:
     sign_in_sidebar(actor)
     success_notice = st.session_state.pop("success_notice", None)
     if success_notice:
-        st.success(success_notice)
+        st.toast(success_notice, icon=":material/check_circle:")
     pages = portal_pages(portal)
     page = (
-        st.sidebar.radio("Workspace", pages, label_visibility="collapsed")
+        st.sidebar.radio(
+            "Workspace", pages, label_visibility="collapsed", format_func=page_label
+        )
         if len(pages) > 1
         else pages[0]
     )
+    sidebar_footer()
 
     if portal == "lms" or page == "Learning":
         render_lms(actor)
         return
-    if portal == "governance" and page == "Operations":
+    if portal == "governance" and page == "AI activity":
         render_governance(actor)
         return
     overview = load("overview")
@@ -2534,32 +3768,7 @@ def main() -> None:
             render_parent_records(overview, actor, page)
     elif portal == "faculty":
         if page == "Overview":
-            st.title(f"Welcome, {display_name(actor)}")
-            st.write("Your assigned courses, mentees and upcoming follow-ups.")
-            counts = overview.get("counts") or {}
-            cols = st.columns(4)
-            cols[0].metric("Assigned students", len(overview.get("students") or []))
-            cols[1].metric(
-                "Courses",
-                value(counts, "courses", default=len(overview.get("courses", []))),
-            )
-            cols[2].metric(
-                "Pending reviews", value(counts, "pending_reviews", default=0)
-            )
-            cols[3].metric(
-                "Overdue follow-ups", value(counts, "overdue_followups", default=0)
-            )
-            dataframe(
-                [
-                    {
-                        "Student": r.get("student_name"),
-                        "Due": r.get("due_on"),
-                        "Note": r.get("note"),
-                        "Status": r.get("status"),
-                    }
-                    for r in overview.get("followups", [])
-                ]
-            )
+            render_mentor_home(overview, actor)
         elif page == "Classroom":
             render_classroom(overview)
         elif page == "Mentor follow-ups":

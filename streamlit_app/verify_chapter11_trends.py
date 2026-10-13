@@ -39,7 +39,7 @@ finally:
     c.logout(login["token"])
     c.close()
 at = AppTest.from_file(str(root / "streamlit_app/app.py"), default_timeout=30).run()
-at.selectbox[0].select("hod")
+at.segmented_control[0].set_value("hod")
 at.text_input[0].set_value(account["email"])
 at.text_input[1].set_value(account["password"])
 next(b for b in at.button if b.label == "Sign in").click().run()

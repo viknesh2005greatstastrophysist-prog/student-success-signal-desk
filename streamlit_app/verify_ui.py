@@ -22,7 +22,7 @@ for portal, id in ids.items():
     account = next(a for a in accounts if a["id"] == id)
     at = AppTest.from_file(str(root / "streamlit_app/app.py"), default_timeout=30).run()
     assert not at.exception, [e.message for e in at.exception]
-    at.selectbox[0].select(portal)
+    at.segmented_control[0].set_value(portal)
     at.text_input[0].set_value(account["email"])
     at.text_input[1].set_value(account["password"])
     next(b for b in at.button if b.label == "Sign in").click().run()
@@ -32,7 +32,9 @@ for portal, id in ids.items():
     radios = [r for r in at.radio if r.label == "Workspace"]
     pages = []
     if radios:
-        for label in radios[0].options:
+        for shown in radios[0].options:
+            # Options render as ":material/icon: Page"; the value is the page name.
+            label = shown.split(": ", 1)[1] if shown.startswith(":material/") else shown
             next(r for r in at.radio if r.label == "Workspace").set_value(label).run()
             assert not at.exception, [e.message for e in at.exception]
             assert not at.error, [e.value for e in at.error]
