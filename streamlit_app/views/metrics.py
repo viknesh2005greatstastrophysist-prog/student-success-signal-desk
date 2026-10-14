@@ -69,33 +69,40 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
             },
         ]
     )
+    cycle_rows = [
+        {
+            "Cycle": f"{cycle_map.get(str(row.get('cycleId')), 'C?')} · {labels.short_ref(row.get('cycleId'))}",
+            "Runs": row.get("evaluatedRuns"),
+            "Pass rate": rate(row.get("validationPassRate")),
+            "Repairs": row.get("repairsUsed"),
+            "Escalation rate": rate(row.get("escalationRate")),
+            "Approved as drafted": rate(row.get("approveAsIsRate")),
+            "AI model runs": row.get("modelRuns"),
+            "Legacy rule-based runs": row.get("legacyRuleRuns"),
+            "Decided": row.get("decidedRuns"),
+            "Avg. decision time (min)": None
+            if row.get("averageDecisionSeconds") is None
+            else round(float(row["averageDecisionSeconds"]) / 60, 1),
+        }
+        for row in cycles
+    ]
+    main_columns = ("Cycle", "Runs", "Pass rate", "Repairs", "Escalation rate", "Approved as drafted")
+    if all(row["Approved as drafted"] is None for row in cycle_rows):
+        main_columns = main_columns[:-1]  # nothing decided yet: the column says nothing
     dataframe(
-        [
-            {
-                "Cycle": f"{cycle_map.get(str(row.get('cycleId')), 'C?')} · {labels.short_ref(row.get('cycleId'))}",
-                "Runs": row.get("evaluatedRuns"),
-                "Pass rate": rate(row.get("validationPassRate")),
-                "Repairs": row.get("repairsUsed"),
-                "Escalation rate": rate(row.get("escalationRate")),
-                "AI model runs": row.get("modelRuns"),
-                "Legacy rule-based runs": row.get("legacyRuleRuns"),
-                "Decided": row.get("decidedRuns"),
-                "Approved as drafted": rate(row.get("approveAsIsRate")),
-                "Avg. decision time (min)": None
-                if row.get("averageDecisionSeconds") is None
-                else round(float(row["averageDecisionSeconds"]) / 60, 1),
-            }
-            for row in cycles
-        ],
+        [{k: v for k, v in row.items() if k in main_columns} for row in cycle_rows],
         column_config={
             name: st.column_config.NumberColumn(name, format="%.0f%%")
-            for name in (
-                "Pass rate",
-                "Escalation rate",
-                "Approved as drafted",
-            )
+            for name in ("Pass rate", "Escalation rate", "Approved as drafted")
         },
     )
+    with st.expander("More per cycle", icon=":material/table_rows:"):
+        dataframe(
+            [
+                {k: v for k, v in row.items() if k == "Cycle" or k not in main_columns}
+                for row in cycle_rows
+            ]
+        )
     with st.expander("Per-run metrics", icon=":material/table_rows:"):
         dataframe(
             [
@@ -120,18 +127,18 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
 
 
 TREND_SERIES = {
-    "reviewed": ("Reviewed", "#0E1116"),
-    "flagged": ("Flagged", "#E5A200"),
-    "blocked": ("Blocked", "#E5484D"),
-    "awaiting_approval": ("Awaiting mentor", "#FF5A1F"),
-    "approved": ("Approved", "#2F9E6F"),
-    "completed": ("Completed", "#1B6B49"),
-    "withdrawn": ("Withdrawn", "#A8A396"),
+    "reviewed": ("Reviewed", "#0071E3"),
+    "flagged": ("Flagged", "#FF9F0A"),
+    "blocked": ("Blocked", "#FF3B30"),
+    "awaiting_approval": ("Awaiting mentor", "#86868B"),
+    "approved": ("Approved", "#34C759"),
+    "completed": ("Completed", "#1F8A3B"),
+    "withdrawn": ("Withdrawn", "#C7C7CC"),
 }
 BAND_SERIES = {
-    "low": ("Low", "#2F9E6F"),
-    "medium": ("Medium", "#E5A200"),
-    "high": ("High", "#E5484D"),
+    "low": ("Low", "#34C759"),
+    "medium": ("Medium", "#FF9F0A"),
+    "high": ("High", "#FF3B30"),
 }
 
 
@@ -300,16 +307,14 @@ def render_review_trends(review: dict[str, Any]) -> None:
 
 
 def render_agent_graph(review: dict[str, Any]) -> None:
-    ui.section(
-        "Agent graph",
-        "The executor runs this graph for every student. Validation can regenerate at most twice; publication waits for the assigned mentor's approval of the exact draft.",
-        icon=":material/account_tree:",
+    st.caption(
+        "The executor runs this graph for every student. Validation can regenerate at most twice; publication waits for the assigned mentor's approval of the exact draft."
     )
     jobs = [job for job in review.get("jobs", []) if job.get("node_trace")]
     trace = None
     if jobs:
         job_id = pick(
-            "Show node activity for run",
+            "Run",
             [str(job["id"]) for job in jobs],
             format_func=lambda jid: (
                 f"Run {labels.short_ref(jid)} · "
@@ -384,13 +389,13 @@ def render_agent_graph(review: dict[str, Any]) -> None:
 
             nodes = {edge["from"] for edge in edges} | {edge["to"] for edge in edges}
             colours = {
-                "coordinator": "#0E1116",
-                "agent": "#2B59FF",
-                "gate": "#FF5A1F",
-                "publish": "#2F9E6F",
+                "coordinator": "#1D1D1F",
+                "agent": "#0071E3",
+                "gate": "#FF9F0A",
+                "publish": "#34C759",
             }
             declarations = " ".join(
-                f'{node_id(n)} [label="{node_text(n)}", color="{colours.get(labels.AGENT_NODES.get(str(n), ("", "agent"))[1], "#2B59FF")}"];'
+                f'{node_id(n)} [label="{node_text(n)}", color="{colours.get(labels.AGENT_NODES.get(str(n), ("", "agent"))[1], "#0071E3")}"];'
                 for n in sorted(nodes)
             )
             links = " ".join(
@@ -399,8 +404,8 @@ def render_agent_graph(review: dict[str, Any]) -> None:
             )
             st.graphviz_chart(
                 "digraph AURA { rankdir=LR; bgcolor=transparent; "
-                'node [shape=box, style="rounded,filled", fillcolor=white, fontname="Helvetica", fontsize=11, penwidth=2]; '
-                'edge [fontname="Helvetica", fontsize=9, color="#A8A396", fontcolor="#3A3F47"]; '
+                'node [shape=box, style="rounded,filled", fillcolor=white, fontname="Inter, Helvetica", fontsize=11, penwidth=1.5]; '
+                'edge [fontname="Helvetica", fontsize=9, color="#C7C7CC", fontcolor="#6E6E73"]; '
                 + declarations
                 + " "
                 + links

@@ -27,7 +27,6 @@ def render_lms(actor: dict[str, Any]) -> None:
         "Lessons, assignments and feedback for your courses."
         if is_student
         else "Publish lessons and assignments, then review submissions and give feedback.",
-        eyebrow="Learning workspace · LMS",
     )
     lms = load("lms_overview")
     courses = lms.get("courses") or []
@@ -52,31 +51,6 @@ def render_lms(actor: dict[str, Any]) -> None:
     assignments = detail.get("assignments") or []
     submissions = detail.get("submissions") or []
     st.subheader(f"{course.get('code', '')} · {course.get('title', '')}", anchor=False)
-    open_assignments = [a for a in assignments if not a.get("deadline_passed")]
-    ui.kpi_row(
-        [
-            {
-                "label": "Lessons",
-                "value": len(lessons),
-                "icon": ":material/auto_stories:",
-            },
-            {
-                "label": "Assignments",
-                "value": len(assignments),
-                "icon": ":material/assignment:",
-            },
-            {
-                "label": "Still open",
-                "value": len(open_assignments),
-                "icon": ":material/schedule:",
-            },
-            {
-                "label": "Your submissions" if is_student else "Submissions",
-                "value": len(submissions),
-                "icon": ":material/upload_file:",
-            },
-        ]
-    )
     ui.section("Lessons", icon=":material/auto_stories:")
     if not lessons:
         ui.empty_state(

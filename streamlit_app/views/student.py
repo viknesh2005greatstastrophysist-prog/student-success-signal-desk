@@ -21,38 +21,27 @@ from common import (
 
 
 def render_course_cards(courses: list[dict[str, Any]]) -> None:
-    per_row = 3
-    for start in range(0, len(courses), per_row):
-        cols = st.columns(per_row)
-        for col, row in zip(cols, courses[start : start + per_row]):
-            with col, ui.card(f"course_{row.get('id', start)}_{row.get('code', '')}"):
-                st.markdown(f"**{ui._md_safe(row.get('code', ''))}**")
-                st.caption(str(row.get("title", "")))
-                attendance = percent(row.get("percentage"))
-                if attendance is None:
-                    st.caption(":material/event_busy: Attendance not recorded yet")
-                else:
-                    st.progress(
-                        min(max(attendance / 100, 0.0), 1.0),
-                        text=f"Attendance · {attendance:g}%",
-                    )
-                if (
-                    row.get("result_published")
-                    and row.get("result_percentage") is not None
-                ):
-                    st.markdown(
-                        ui.badge_md(
-                            f"Result {percent_text(row['result_percentage'])}",
-                            "green",
-                            ":material/grading:",
-                        )
-                    )
-                else:
-                    st.markdown(
-                        ui.badge_md(
-                            "Result not published", "gray", ":material/hourglass_empty:"
-                        )
-                    )
+    """Courses as one inset list: title, code and result, attendance on the right."""
+    rows = []
+    for row in courses:
+        attendance = percent(row.get("percentage"))
+        published = (
+            row.get("result_published") and row.get("result_percentage") is not None
+        )
+        rows.append(
+            {
+                "title": row.get("title") or row.get("code") or "Course",
+                "sub": f"{row.get('code', '')} · "
+                + (
+                    f"Result {percent_text(row['result_percentage'])}"
+                    if published
+                    else "Result not published yet"
+                ),
+                "bar": attendance,
+                "end": "Attendance not recorded" if attendance is None else f"{attendance:g}%",
+            }
+        )
+    ui.inset_list(rows)
 
 
 def render_mentor_updates(followups: list[dict[str, Any]]) -> None:
@@ -62,20 +51,17 @@ def render_mentor_updates(followups: list[dict[str, Any]]) -> None:
     ui.section("Updates from your mentor", "Check-ins your mentor has shared with you.")
     for index, row in enumerate(shared):
         with ui.card(f"update_{row.get('id', index)}"):
-            top, badge = st.columns([4, 1.4], vertical_alignment="center")
-            with top:
-                st.markdown(
-                    f"**{ui._md_safe(row.get('mentor_name') or 'Your mentor')}**"
-                )
-                st.caption(
-                    f"{labels.nice_date(row.get('due_on'))} · {labels.due_phrase(row.get('due_on'))}"
-                )
-            with badge:
-                st.markdown(ui.status_md(row.get("status")))
+            ui.html_block(
+                '<div class="aura-item" style="padding:0">'
+                f'<div class="aura-item-main"><div class="aura-item-title">{ui.esc(row.get("mentor_name") or "Your mentor")}</div>'
+                f'<div class="aura-item-sub">{ui.esc(labels.nice_date(row.get("due_on")))} · {ui.esc(labels.due_phrase(row.get("due_on")))}</div></div>'
+                f'<div class="aura-item-end">{ui.status_html(labels.status_label(row.get("status")), labels.status_tone(row.get("status")))}</div></div>'
+            )
             ui.plain_text(row.get("note"))
 
 
 def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> None:
+    """The approved support plan as plain, readable text."""
     if not support:
         return
     heading = "Your support plan" if audience == "student" else "Approved support plan"
@@ -86,19 +72,23 @@ def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> Non
     for index, item in enumerate(support):
         plan = item.get("plan") or {}
         with ui.card(f"support_{index}"):
-            ui.agent_chip_block(
-                item.get("model_id"),
-                note="Drafted by an AI agent. Approved by your mentor.",
-            )
-            st.caption(
-                f":material/description: {ui._md_safe(labels.family_summary(plan.get('summary', 'Support plan')))}"
-            )
-            for action in plan.get("actions", []):
-                due = action.get("dueInDays")
-                st.markdown(
-                    f":material/check_circle: **{ui._md_safe(action.get('label', 'Next step'))}**"
-                    + (f" · within {due} days" if due is not None else "")
+            ui.sheet_paragraph(labels.family_summary(plan.get("summary", "Support plan")))
+            actions = [a for a in plan.get("actions", []) if isinstance(a, dict)]
+            if actions:
+                ui.sheet_heading("What happens next")
+                ui.inset_list(
+                    [
+                        {
+                            "title": action.get("label", "Next step"),
+                            "sub": f"Within {action.get('dueInDays')} days"
+                            if action.get("dueInDays") is not None
+                            else "",
+                        }
+                        for action in actions
+                    ],
+                    flat=True,
                 )
+            ui.provenance_caption()
             if plan.get("citations"):
                 with st.expander("Why this plan was suggested", icon=":material/info:"):
                     ui.citation_chips(plan.get("citations", []))
@@ -115,7 +105,7 @@ def _student_context() -> tuple[dict[str, Any], dict[str, Any]] | None:
 
 
 def overview_page() -> None:
-    """This term at a glance: the numbers, then the courses."""
+    """A greeting, a few figures, the courses, then the support plan."""
     context = _student_context()
     if not context:
         return
@@ -123,52 +113,40 @@ def overview_page() -> None:
     student = detail.get("student") or {}
     name = display_name(student) if student else display_name(actor)
     ui.page_header(
-        f"Welcome, {name.split()[0].title() if name else 'there'}",
-        "Your term at a glance: courses, attendance and results.",
-        eyebrow="Student workspace",
+        f"{ui.greeting()}, {ui.first_name(name)}",
+        "Here is where your term stands.",
     )
     courses = detail.get("courses") or []
-    followups = detail.get("followups") or []
+    support = detail.get("support") or []
     attendance_avg = average([percent(row.get("percentage")) for row in courses])
     published = [row for row in courses if row.get("result_published")]
-    ui.kpi_row(
-        [
-            {
-                "label": "Courses this term",
-                "value": len(courses),
-                "icon": ":material/menu_book:",
-            },
-            {
-                "label": "Average attendance",
-                "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
-                "icon": ":material/event_available:",
-            },
-            {
-                "label": "Results published",
-                "value": f"{len(published)} of {len(courses)}" if courses else "0",
-                "icon": ":material/grading:",
-            },
-            {
-                "label": "Mentor check-ins ahead",
-                "value": sum(1 for r in followups if r.get("status") != "completed"),
-                "icon": ":material/event_note:",
-            },
-        ]
-    )
     if courses:
-        ui.section("Your courses", "Attendance and results recorded so far this term.")
+        ui.kpi_row(
+            [
+                {
+                    "label": "Attendance this term",
+                    "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
+                },
+                {
+                    "label": "Results published",
+                    "value": f"{len(published)} of {len(courses)}",
+                },
+                {
+                    "label": "Support plan",
+                    "value": "Agreed" if support else "None yet",
+                },
+            ]
+        )
+        ui.section("Your courses")
         render_course_cards(courses)
-        st.caption(":material/fact_check: " + labels.ATTENDANCE_BASIS_NOTE)
+        st.caption(labels.ATTENDANCE_BASIS_NOTE)
     else:
         ui.empty_state(
             "No courses yet",
             "Your registered courses will appear here once the term begins.",
         )
-    if detail.get("support"):
-        st.caption(
-            ":material/handshake: Your mentor has confirmed support for you. "
-            "Open **My support plan** to read it."
-        )
+    if support:
+        render_support_cards(support[:1], audience="student")
 
 
 def courses_page() -> None:
@@ -180,7 +158,6 @@ def courses_page() -> None:
     ui.page_header(
         "Courses",
         "Attendance and marks for each course this term.",
-        eyebrow="Student workspace",
     )
     courses = detail.get("courses") or []
     if not courses:
@@ -261,7 +238,6 @@ def support_page() -> None:
     ui.page_header(
         "My support plan",
         "What your mentor has agreed to help with. These are next steps, not a judgement.",
-        eyebrow="Student workspace",
     )
     support = detail.get("support") or []
     followups = detail.get("followups") or []
@@ -286,10 +262,9 @@ def profile_page() -> None:
     ui.page_header(
         display_name(student).title() if student else "Profile",
         "Your details as the college has them.",
-        eyebrow="Student workspace",
     )
-    with ui.card("student_profile"):
-        for label, shown in [
+    ui.detail_list(
+        [
             ("Register number", student.get("register_number")),
             ("Semester", student.get("semester")),
             ("Email", student.get("email") or actor.get("email")),
@@ -301,9 +276,8 @@ def profile_page() -> None:
                 if gpa.get("cgpa") is not None
                 else None,
             ),
-        ]:
-            if shown not in (None, ""):
-                st.markdown(f"**{label}**  \n{ui._md_safe(str(shown))}")
+        ]
+    )
     st.caption(
-        ":material/lock: Only you, your parent or guardian and your mentor can see this record."
+        "Only you, your parent or guardian and your mentor can see this record."
     )

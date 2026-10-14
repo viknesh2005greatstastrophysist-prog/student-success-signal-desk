@@ -402,6 +402,8 @@ def select_id(
 
 
 SEGMENT_MAX = 7  # up to this many options: a segmented control, never a drop-down
+SEGMENT_LABEL_MAX = 28  # a longer label does not fit a segment: it becomes a drop-down
+SEGMENT_TOTAL_MAX = 96  # and so do labels that together would wrap
 SEARCH_FROM = 12  # from this many options: a separate search box narrows the picker
 
 
@@ -432,8 +434,12 @@ def pick(
     if not options:
         return None
     index = max(0, min(index, len(options) - 1))
-    if len(options) <= SEGMENT_MAX and all(
-        isinstance(o, (str, int, float)) and not isinstance(o, bool) for o in options
+    shown_labels = [str(format_func(o)) for o in options] if len(options) <= SEGMENT_MAX else []
+    if (
+        len(options) <= SEGMENT_MAX
+        and all(isinstance(o, (str, int, float)) and not isinstance(o, bool) for o in options)
+        and max(map(len, shown_labels)) <= SEGMENT_LABEL_MAX
+        and sum(map(len, shown_labels)) <= SEGMENT_TOTAL_MAX
     ):
         _forget_stale(key, options)
         chosen = st.segmented_control(
@@ -555,17 +561,19 @@ def _sized_columns(
 
     Columns the caller already configured keep their configuration."""
     config = dict(column_config or {})
+    if len(rows[0]) <= 2:
+        return config  # two columns share the width, on any screen
     sized: dict[str, int] = {}
     for name in rows[0]:
         if name in config:
             continue
         longest = max((len(str(row.get(name) or "")) for row in rows[:80]), default=0)
         sized[name] = int(
-            min(420, max(84, len(str(name)) * 8 + 44, longest * 7.8 + 28))
+            min(420, max(84, len(str(name)) * 8.4 + 44, longest * 8.3 + 30))
         )
     # Shrink the widest columns until the table fits the page; text then ellipsises, never the header.
     while (
-        sum(sized.values()) + 120 * len(config) > 900
+        sum(sized.values()) + 120 * len(config) > 960
         and max(sized.values(), default=0) > 150
     ):
         widest = max(sized, key=sized.get)
@@ -594,6 +602,7 @@ def dataframe(
         frame,
         hide_index=True,
         width="stretch",
+        row_height=44,
         key=key,
         column_config=_sized_columns(rows, column_config),
     )

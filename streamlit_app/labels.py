@@ -416,7 +416,7 @@ EVIDENCE_FIELDS = {
 
 def readable_claim(statement: Any) -> str:
     """Display form of a canonical evidence statement; the stored text is unchanged."""
-    text = str(statement or "")
+    text = re.sub(r"\d+\.\d{3,}", lambda m: f"{float(m.group(0)):.1f}", str(statement or ""))
     for field, label in EVIDENCE_FIELDS.items():
         if text.startswith(field + " "):
             return label + text[len(field) :]

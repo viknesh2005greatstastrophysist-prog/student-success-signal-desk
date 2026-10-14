@@ -76,9 +76,9 @@ def overview_page() -> None:
     ui.page_header(
         "Department overview",
         "How the department's students and support reviews are doing, in aggregate.",
-        eyebrow="Department head",
     )
     counts = overview.get("counts") or {}
+    overdue = value(counts, "overdue_followups", default=0)
     ui.kpi_row(
         [
             {
@@ -88,18 +88,11 @@ def overview_page() -> None:
                 ),
                 "icon": ":material/groups:",
             },
-            {
-                "label": "Courses",
-                "value": value(
-                    counts, "courses", default=len(overview.get("courses", []))
-                ),
-                "icon": ":material/menu_book:",
-            },
-            {
-                "label": "Follow-ups overdue",
-                "value": value(counts, "overdue_followups", default=0),
-                "icon": ":material/alarm:",
-            },
+            *(
+                [{"label": "Follow-ups overdue", "value": overdue}]
+                if overdue
+                else []
+            ),
             {
                 "label": "Reviews awaiting work",
                 "value": value(counts, "pending_reviews", default=0),
@@ -122,7 +115,6 @@ def students_page() -> None:
     ui.page_header(
         "Students",
         "Search the department's students and open a read-only profile.",
-        eyebrow="Department head",
     )
     students_body()
 
@@ -143,7 +135,6 @@ def mentors_page() -> None:
     ui.page_header(
         "Mentors",
         "Each mentor's workload and how quickly their decisions are made.",
-        eyebrow="Department head",
     )
     dataframe(
         mentor_workload(overview, queue),
@@ -160,6 +151,5 @@ def policies_page() -> None:
     ui.page_header(
         "Policies",
         "The thresholds and rules the review agents apply. Mentors approve them; you can read them.",
-        eyebrow="Department head",
     )
     render_policies(load("review_overview"), actor)

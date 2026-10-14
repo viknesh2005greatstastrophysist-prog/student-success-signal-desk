@@ -50,11 +50,6 @@ def runs_page() -> None:
                 "help": f"Reviews that have started. {len(waiting)} more are waiting to start and are listed separately.",
             },
             {
-                "label": "AI model runs",
-                "value": sum(1 for job in jobs if job.get("mode") == "model"),
-                "icon": ":material/psychology:",
-            },
-            {
                 "label": "Passed validation",
                 "value": labels.percent_text(
                     totals.get("validationPassed", 0), totals.get("evaluated", 0)

@@ -26,11 +26,15 @@ from views.student import (
 )
 
 
+def _whole_rupees(text: str) -> str:
+    """Headline figures show whole rupees; the invoice table keeps the exact amounts."""
+    return text[:-3] if text.endswith(".00") else text
+
+
 def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
     ui.page_header(
         "Fees and receipts",
         "Invoices, payments and receipts for this term.",
-        eyebrow="Fees",
     )
     invoices = detail.get("invoices") or []
     if not invoices:
@@ -45,13 +49,13 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
         [
             {
                 "label": "Billed",
-                "value": money(billed),
+                "value": _whole_rupees(money(billed)),
                 "icon": ":material/receipt_long:",
             },
-            {"label": "Paid", "value": money(paid), "icon": ":material/paid:"},
+            {"label": "Paid", "value": _whole_rupees(money(paid))},
             {
                 "label": "Balance",
-                "value": money(max(0, billed - paid)),
+                "value": _whole_rupees(money(max(0, billed - paid))),
                 "icon": ":material/account_balance_wallet:",
             },
         ]
@@ -249,7 +253,7 @@ def _child_context() -> tuple[dict[str, Any], dict[str, Any]] | None:
 
 
 def overview_page() -> None:
-    """The child's term at a glance, in plain words: no scores or labels."""
+    """The child's term: a greeting, a few figures, the courses, then the support plan."""
     context = _child_context()
     if not context:
         return
@@ -257,43 +261,37 @@ def overview_page() -> None:
     child_name = display_name(detail.get("student") or {}).title()
     ui.page_header(
         f"{child_name}'s term",
-        "Attendance, results and fees at a glance.",
-        eyebrow="Family workspace",
+        "Attendance, fees and support, in plain words.",
     )
     courses = detail.get("courses") or []
+    support = detail.get("support") or []
     attendance_avg = average([percent(row.get("percentage")) for row in courses])
     open_balance = sum(
         max(0, int(i.get("amount_paise") or 0) - int(i.get("paid_paise") or 0))
         for i in detail.get("invoices", [])
+        if i.get("status") != "void"
     )
     ui.kpi_row(
         [
             {
-                "label": "Courses this term",
-                "value": len(courses),
-                "icon": ":material/menu_book:",
-            },
-            {
-                "label": "Average attendance",
+                "label": "Attendance this term",
                 "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
-                "icon": ":material/event_available:",
             },
-            {
-                "label": "Open fee balance",
-                "value": money(open_balance),
-                "icon": ":material/account_balance_wallet:",
-            },
+            {"label": "Open fee balance", "value": _whole_rupees(money(open_balance))},
+            {"label": "Support plan", "value": "Agreed" if support else "None yet"},
         ]
     )
     if courses:
-        ui.section("Courses", "Attendance and results recorded so far this term.")
+        ui.section("Courses")
         render_course_cards(courses)
-        st.caption(":material/fact_check: " + labels.ATTENDANCE_BASIS_NOTE)
+        st.caption(labels.ATTENDANCE_BASIS_NOTE)
     else:
         ui.empty_state(
             "No courses yet",
             "Registered courses will appear here once the term begins.",
         )
+    if support:
+        render_support_cards(support[:1], audience="family")
 
 
 def support_page() -> None:
@@ -305,7 +303,6 @@ def support_page() -> None:
     ui.page_header(
         "Support plan and mentor updates",
         f"What {child_name}'s mentor has agreed, and how it is going.",
-        eyebrow="Family workspace",
     )
     support = detail.get("support") or []
     followups = detail.get("followups") or []
@@ -337,19 +334,17 @@ def profile_page() -> None:
     ui.page_header(
         "Profile",
         "Your family account and the student it is linked to.",
-        eyebrow="Family workspace",
     )
-    with ui.card("parent_profile"):
-        for label, shown in [
+    ui.detail_list(
+        [
             ("Student", display_name(student).title() if student else None),
             ("Register number", student.get("register_number")),
             ("Semester", student.get("semester")),
             ("Mentor", mentor.get("name")),
             ("Mentor email", mentor.get("email")),
             ("Your account", actor.get("email") or actor.get("displayName")),
-        ]:
-            if shown not in (None, ""):
-                st.markdown(f"**{label}**  \n{ui._md_safe(str(shown))}")
+        ]
+    )
     st.caption(
-        ":material/lock: Only you, the student and the student's mentor can see this record."
+        "Only you, the student and the student's mentor can see this record."
     )

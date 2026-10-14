@@ -130,30 +130,6 @@ def render_profile(student_id: str, role: str) -> None:
         MENTOR_SECTIONS if is_mentor else HOD_SECTIONS, key=f"profile_section_{role}"
     )
     if section == "Overview":
-        average_attendance = average([percent(r.get("percentage")) for r in courses])
-        ui.kpi_row(
-            [
-                {
-                    "label": "Courses this term",
-                    "value": len(courses),
-                    "icon": ":material/menu_book:",
-                },
-                {
-                    "label": "Average attendance",
-                    "value": "—"
-                    if average_attendance is None
-                    else f"{average_attendance:g}%",
-                    "icon": ":material/event_available:",
-                },
-                {
-                    "label": "Open check-ins",
-                    "value": sum(
-                        1 for r in followups if r.get("status") != "completed"
-                    ),
-                    "icon": ":material/event_note:",
-                },
-            ]
-        )
         if courses:
             render_course_cards(courses)
         if followups:
