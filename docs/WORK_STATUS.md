@@ -1,6 +1,36 @@
-# Work status — 15 October 2026, rework 1 (structure, speed, drop-downs), rework 2 (realistic data) and 2b (attendance from the college report)
+# Work status — 15 October 2026, final verification (rework worker 4 of 4)
 
-Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes.
+Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes. Everything above the line "Older notes" is the current state; everything below is history, newest first.
+
+## Current state
+
+**What works (verified 15 Oct, local database and hosted app)**
+
+- Per-role pages (student, parent, mentor, department head, AI activity), realistic generated data (v2) with attendance anchored to the college report (v3), the Apple-style design, non-typeable pickers. Read-only walk `walk.py --pass final`: 9 sessions, 140 views, 94 screenshots, 0 exceptions, 0 error alerts, 0 console errors, 0 failed requests, 0 overflow, 0 truncated, 0 leaked text, 0 walk errors, 0 forbidden pages.
+- Live agentic run (C3, now done): planner, investigator, Academic, Attendance and Wellbeing-referral specialists, packet validator, regenerator (real diagnoses, plus an escalation after the repair budget), judge (scored every draft, injected low score repaired), human gate (Today to gate, edit, revalidate, approve, publish), student, parent, HoD and AI activity views, evidence export. Hosted: one student end to end (mentor1 approves, student and parent see the plan). Evidence: `docs/E2E_TEST_LOG.md`, "Pass 3 / final". About 26 to 34 Groq calls, 0 Gemini.
+- Checks at HEAD: Core `tsc` and eslint clean, Core tests 207 (198 pass, 9 opt-in skipped), platform tests, the four DB suites in disposable local schemas (all dropped), `check:engine` passes, every `verify_*.py` except `verify_local.py` and `verify_cloud.py` passes (new: `verify_bridge_pool.py`), CI green on the previous push.
+
+**Hosted speed (the owner's "abhorrently slow")** — `docs/E2E_TEST_LOG.md`, "Rework: hosted speed". Cause: the app runs in the US, Neon is in Singapore (`ap-southeast-1`), about 0.23 s per database round trip and 12 to 25 sequential round trips per engine call. Sign-in to landing page 8.7 to 13.4 s before, 4.7 to 6.5 s after the round-trip cuts; engine pages 4 to 7.5 s before, 2.6 to 4.8 s after; pages without an engine call 0.43 s (browser round trip). The real fix is to move Neon to a US region (owner action, steps in the log); expected result: page switches near 0.5 s.
+
+**Engine**: one Node engine per process, now three processes behind `bridge.py` (two readers, one agent process for planner, plan run and replay), started lazily and warmed while the sign-in card is shown. Sessions and leases are in the database, so any process serves any request.
+
+**Open list**
+
+1. Move Neon to a US region (owner, Neon console; steps in the E2E log). Until then hosted pages that read the database take 2.6 to 4.8 s.
+2. Fewer sequential queries inside the Core reads (`experienceOverview`, `experienceStudent`: about ten each); return the role's first batch from the sign-in call (about 0.9 s hosted).
+3. The mentor's Risk view shows the last stored evaluation, which can be stale against today's data (P3: show the evaluation date or refresh).
+4. A rewrite that fixes one validator failure can create another (length limit); the length-failure instruction does not quote the sentence (P3).
+5. Parent-student pairing unchanged; LMS inactivity grows daily because the evidence reads the clock; attendance is "based on the college attendance report", not raw registers; the future option of the college's real course codes (rework 2b) is undecided.
+6. Vercel portals remain paused (503) by owner decision; Codex's subscription ended 14 Oct (Claude implements under a usage cap).
+
+**Pushing.** Plain `git push` fails (keychain holds `vikneshwaranmarimuthu-cmyk`; the repo belongs to `viknesh2005greatstastrophysist-prog`): `gh auth switch --user viknesh2005greatstastrophysist-prog >/dev/null && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project; gh auth switch --user vikneshwaranmarimuthu-cmyk >/dev/null`. Streamlit Cloud redeploys on every push (about two minutes).
+
+**Servers.** Local runs use 8503 (own server, stopped afterwards); 8502 belongs to another session. Local Postgres 127.0.0.1:55432 `aura_project`.
+
+---
+
+## Older notes (history, newest first)
+
 
 ## Rework 2b (15 Oct): attendance anchored to the college report (worker 2b)
 
@@ -45,8 +75,8 @@ Owner decisions: `~/Personal Brain/brainstorms/2026-10-14-aura-app-rework.md`. T
 | Item | State |
 |---|---|
 | Branch | `streamlit-college-project` |
-| HEAD | Fix pass B on top of fix pass A (`1d0c7bf`): `02a7cef` (Core: one definition of awaiting decision, student-level risk counts, shared run totals, late flag), `ddcd7a3` (rebuilt engine bundle), `7ceabe5` (Streamlit: consistent counts, validation headline, late submissions, verify scripts, CI step), then a docs commit; pushed to `origin/streamlit-college-project` after the checks below passed. Fix pass A: `2a3b7bc`, `59756cc`, `53379bd`. |
-| Hosted Streamlit (aura-college-workspace.streamlit.app) | Last confirmed deployed from `5f7db7e` (Briefs 1–9); it should redeploy on push but the running version is unconfirmed (private app, owner sign-in required). `GROQ_API_KEY` added to its Streamlit secrets (`[aura]` section) by the owner on 14 Oct. |
+| HEAD | See `git log`: speed commits `604bf39` (engine) and `c09a87c` (bridge), then the E2E harness, then the docs commit (final verification, rework worker 4). Earlier fix-pass history is in the sections below. |
+| Hosted Streamlit (aura-college-workspace.streamlit.app) | Public; serves the latest push (verified 15 Oct: the Apple sign-in and the faster engine are live). `GROQ_API_KEY` is in its secrets `[aura]` section. Timings: E2E log, "Rework: hosted speed". |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude) / 8503 (rework runs). Local Postgres 127.0.0.1:55432 `aura_project`. |
 
