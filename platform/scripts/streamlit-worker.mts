@@ -141,19 +141,29 @@ async function login(raw: unknown) {
       `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '15 minutes'`,
     ),
   );
-  const count = async (key: string) =>
+  // Only failed attempts count toward the limit (#38): a successful sign-in
+  // never uses up the allowance, so a harness or a busy mentor is not locked out.
+  const failedAttempts = async (key: string) =>
     withCoreTransaction(
       async (c) =>
         (
           await c.query(
-            `INSERT INTO ${authSchema}.streamlit_login_attempts(email_hash,window_at,attempts) VALUES($1,now(),1) ON CONFLICT(email_hash) DO UPDATE SET attempts=CASE WHEN streamlit_login_attempts.window_at<now()-interval '15 minutes' THEN 1 ELSE streamlit_login_attempts.attempts+1 END,window_at=CASE WHEN streamlit_login_attempts.window_at<now()-interval '15 minutes' THEN now() ELSE streamlit_login_attempts.window_at END RETURNING attempts`,
+            `SELECT attempts FROM ${authSchema}.streamlit_login_attempts WHERE email_hash=$1 AND window_at>=now()-interval '15 minutes'`,
             [sha(key)],
           )
-        ).rows[0].attempts,
+        ).rows[0]?.attempts ?? 0,
     );
-  const sourceAllowed = (await count("source:" + input.source)) <= 120;
+  const recordFailure = async (key: string) =>
+    withCoreTransaction((c) =>
+      c.query(
+        `INSERT INTO ${authSchema}.streamlit_login_attempts(email_hash,window_at,attempts) VALUES($1,now(),1) ON CONFLICT(email_hash) DO UPDATE SET attempts=CASE WHEN streamlit_login_attempts.window_at<now()-interval '15 minutes' THEN 1 ELSE streamlit_login_attempts.attempts+1 END,window_at=CASE WHEN streamlit_login_attempts.window_at<now()-interval '15 minutes' THEN now() ELSE streamlit_login_attempts.window_at END`,
+        [sha(key)],
+      ),
+    );
+  const sourceKey = "source:" + input.source,
+    emailKey = "email:" + input.source + ":" + email;
   const allowed =
-    sourceAllowed && (await count("email:" + input.source + ":" + email)) <= 10;
+    (await failedAttempts(sourceKey)) < 120 && (await failedAttempts(emailKey)) < 10;
   if (!allowed)
     throw new AccessError(
       "RATE_LIMITED",
@@ -173,12 +183,15 @@ async function login(raw: unknown) {
     hash: user?.password ?? dummy,
     password: input.password,
   });
-  if (!user?.password || !valid)
+  if (!user?.password || !valid) {
+    await recordFailure(sourceKey);
+    await recordFailure(emailKey);
     throw new AccessError(
       "UNAUTHENTICATED",
       "Check your account email and password",
       401,
     );
+  }
   const actor = await bind(user.id, input.portal),
     token = randomBytes(32).toString("base64url"),
     authId = randomUUID();
@@ -361,6 +374,9 @@ for await (const line of lines) {
               : expected
                 ? e.message
                 : "The action could not complete. Refresh and retry.",
+          ...(expected && typeof (e as { retryAfterSeconds?: unknown }).retryAfterSeconds === "number"
+            ? { retryAfterSeconds: (e as { retryAfterSeconds: number }).retryAfterSeconds }
+            : {}),
         },
       }) + "\n",
     );

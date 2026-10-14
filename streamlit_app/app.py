@@ -195,11 +195,35 @@ def load(action: str, data: dict[str, Any] | None = None) -> Any:
         st.stop()
 
 
+QUOTA_RETRIES = 2
+
+
+def request_waiting_for_quota(action: str, data: dict[str, Any]) -> Any:
+    """An AI request that finds the provider's quota window closed is retried by itself,
+    with the wait on screen ("Waiting for AI quota, about N s") instead of failing (#34)."""
+    attempt = 0
+    while True:
+        try:
+            return request(action, data)
+        except BridgeError as error:
+            if error.code != "AI_QUOTA_WAIT" or attempt >= QUOTA_RETRIES:
+                raise
+            attempt += 1
+            holder = st.empty()
+            for left in range(max(1, min(int(error.retry_after or 15), 120)), 0, -1):
+                holder.info(
+                    f"Waiting for AI quota, about {left} s. Your request is kept and retried automatically.",
+                    icon=":material/hourglass_top:",
+                )
+                time.sleep(1)
+            holder.empty()
+
+
 def save_action(action: str, data: dict[str, Any], success: str) -> Any | None:
     try:
         with st.spinner("Saving your changes…"):
             try:
-                result = request(action, data)
+                result = request_waiting_for_quota(action, data)
             finally:
                 # Never show pre-write data, even if the write failed part-way.
                 clear_read_cache()
@@ -222,6 +246,12 @@ def save_action(action: str, data: dict[str, Any], success: str) -> Any | None:
             st.session_state.pop("actor", None)
             st.session_state.pop("success_notice", None)
             st.warning("Your session has ended. Sign in again to continue.")
+        elif error.code == "AI_QUOTA_WAIT":
+            st.info(
+                f"Waiting for AI quota, about {error.retry_after or 'a few'} s. "
+                "Nothing was lost; press the button again in a moment.",
+                icon=":material/hourglass_top:",
+            )
         else:
             st.error(str(error))
         return None
@@ -2222,7 +2252,12 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 key=f"trace_{selected_id}",
             )
             trace_job = next(job for job in traced if str(job["id"]) == trace_id)
-        ui.pipeline_stepper(trace_job.get("node_trace"))
+        ui.pipeline_stepper(
+            trace_job.get("node_trace"),
+            judge=(trace_job.get("validation") or {}).get("judge")
+            if isinstance(trace_job.get("validation"), dict)
+            else None,
+        )
     render_ai_unavailable(selected_plan, review_jobs, can_plan)
     dataframe(
         [
@@ -2674,12 +2709,82 @@ def provenance_rows(validation: dict[str, Any], mode: Any, model_id: Any) -> lis
         rows.append({"Step": "Provider skipped", "Detail": f"{labels.provider_label(fallback.get('provider'))} {fallback.get('model', '')}: {fallback.get('reason', '')}"})
     if prov.get("tokens"):
         rows.append({"Step": "Tokens reported", "Detail": str(prov.get("tokens"))})
-    rows.append({"Step": "Remote requests", "Detail": f"{len(sent)} sent, {len(blocked)} stopped by the privacy guard" if egress else "none (local model only)"})
+    if not egress:
+        remote = "none (local model only)"
+    elif any("reached" in e for e in sent):
+        reached = [e for e in sent if e.get("reached")]
+        remote = (
+            f"{len(sent)} passed the privacy guard, {len(reached)} reached the model"
+            + (f", {len(blocked)} stopped by the guard" if blocked else "")
+        )
+    else:
+        remote = f"{len(sent)} sent, {len(blocked)} stopped by the privacy guard"
+    rows.append({"Step": "Remote requests", "Detail": remote})
     for item in sent[-2:]:
         rows.append({"Step": "Egress audit hash", "Detail": f"{str(item.get('payloadHash', ''))[:16]}… · {item.get('bytes', '?')} bytes · {len(item.get('fields') or [])} fields"})
     for item in blocked:
         rows.append({"Step": "Privacy guard", "Detail": f"Refused: {labels.humanize(item.get('category'))}"})
     rows.extend(agent_rows(prov.get("agent")))
+    rows.extend(judge_rows(prov.get("judge") or validation.get("judge")))
+    for item in prov.get("injected") or []:
+        if isinstance(item, dict):
+            rows.append(
+                {
+                    "Step": "Injected for testing",
+                    "Detail": f"{labels.humanize(item.get('kind'))} fault set by the test harness, not a natural failure",
+                }
+            )
+    return rows
+
+
+def judge_rows(judge: Any) -> list[dict[str, str]]:
+    """The judge agent's scores and reasons (mentor and governance panels)."""
+    if not isinstance(judge, dict):
+        return []
+    where = (
+        f"{labels.provider_label(judge.get('provider'))} · {judge.get('model') or 'model not recorded'}"
+        if judge.get("provider")
+        else "no model answered"
+    )
+    if judge.get("status") != "scored":
+        return [
+            {
+                "Step": "Judge",
+                "Detail": f"Judge unavailable ({labels.humanize(judge.get('unavailableReason'))}); the draft was not blocked",
+            }
+        ]
+    scores = judge.get("scores") or {}
+    reasons = judge.get("reasons") or {}
+    verdict = "passed" if judge.get("passed") else "needs repair"
+    rows = [
+        {
+            "Step": "Judge",
+            "Detail": f"{where} · mean {judge.get('mean')} of 5 · lowest {judge.get('min')} · {verdict}",
+        },
+        {
+            "Step": "Judge scores",
+            "Detail": " · ".join(
+                f"{labels.humanize(name)} {scores.get(name, '?')}" for name in labels.JUDGE_DIMENSIONS
+            ),
+        },
+    ]
+    for name in labels.JUDGE_DIMENSIONS:
+        if reasons.get(name):
+            rows.append({"Step": f"Judge: {name}", "Detail": str(reasons[name])})
+    previous = judge.get("previous")
+    if isinstance(previous, dict) and previous.get("status") == "scored":
+        first = previous.get("scores") or {}
+        rows.append(
+            {
+                "Step": "Judge first look",
+                "Detail": " · ".join(
+                    f"{labels.humanize(n)} {first.get(n, '?')}" for n in labels.JUDGE_DIMENSIONS
+                )
+                + f" · repair {previous.get('repair') or 'not needed'}",
+            }
+        )
+    elif judge.get("repair"):
+        rows.append({"Step": "Judge repair", "Detail": f"One targeted repair was {judge['repair']}"})
     return rows
 
 
@@ -2975,6 +3080,7 @@ def render_draft_reviews(
             selected.get("model_id"),
             note=f"drafted {labels.nice_time(selected.get('drafted_at'))} · version {labels.version_number(selected.get('artifact_version'))}",
         )
+        ui.judge_chip_block(validation.get("judge"))
         ui.plain_text(packet.get("summary") or "No summary recorded.")
         is_v2 = packet.get("schema") == "packet-v2"
         evidence_values = selected.get("evidence_values") or {}
@@ -4303,7 +4409,11 @@ def render_agent_graph(review: dict[str, Any]) -> None:
         selected_job = next(job for job in jobs if str(job["id"]) == job_id)
         trace = selected_job.get("node_trace")
     ui.pipeline_stepper(
-        trace, empty_text="" if not jobs else "Not reached"
+        trace,
+        empty_text="" if not jobs else "Not reached",
+        judge=(selected_job.get("validation") or {}).get("judge")
+        if jobs and isinstance(selected_job.get("validation"), dict)
+        else None,
     )
     if jobs:
         validation = selected_job.get("validation") or {}

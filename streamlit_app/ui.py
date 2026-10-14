@@ -649,6 +649,52 @@ def agent_chip(model: Any = None, label: str = "agent") -> str:
     return f'<span class="aura-agent" title="{esc(full) or "Produced by an AI model"}">{inner}</span>'
 
 
+def judge_scores_text(judge: Any) -> str:
+    """Compact judge score: mean and one letter per dimension, e.g. '4.0/5 · G4 S3 A4 T5'."""
+    if not isinstance(judge, dict) or judge.get("status") != "scored":
+        return ""
+    scores = judge.get("scores") or {}
+    letters = " ".join(
+        f"{name[0].upper()}{scores.get(name, '?')}" for name in labels.JUDGE_DIMENSIONS
+    )
+    return f"{judge.get('mean', '?')}/5 · {letters}"
+
+
+def judge_chip(judge: Any) -> str:
+    """Cobalt chip with the judge's compact score; the tooltip carries the reasons."""
+    if not isinstance(judge, dict):
+        return ""
+    if judge.get("status") != "scored":
+        return agent_chip("unavailable; the draft was not blocked", label="judge")
+    reasons = judge.get("reasons") or {}
+    scores = judge.get("scores") or {}
+    detail = "; ".join(
+        f"{labels.humanize(name)} {scores.get(name, '?')}: {reasons.get(name, '')}"
+        for name in labels.JUDGE_DIMENSIONS
+    )
+    return agent_chip(f"{judge_scores_text(judge)}; {detail}", label="judge")
+
+
+def judge_chip_block(judge: Any) -> None:
+    """The mentor's compact judge line under the draft's agent chip."""
+    chip = judge_chip(judge)
+    if not chip:
+        return
+    note = ""
+    if isinstance(judge, dict) and judge.get("status") == "scored":
+        previous = judge.get("previous")
+        if isinstance(previous, dict) and previous.get("repair") == "applied":
+            note = "repaired once after a low score, then scored again"
+        elif judge.get("repair") == "discarded":
+            note = "a repair was tried and not used; the earlier valid draft stands"
+        elif judge.get("low"):
+            note = "lowest: " + ", ".join(labels.humanize(n) for n in judge["low"])
+        if judge.get("injected") or (isinstance(previous, dict) and previous.get("injected")):
+            note = (note + " · " if note else "") + "a score was injected for testing"
+    extra = f'<span class="aura-plain-muted">{esc(note)}</span>' if note else ""
+    st.html(f'<div class="aura-meta">{chip}{extra}</div>')
+
+
 def agent_chip_block(model: Any = None, label: str = "agent", note: str = "") -> None:
     extra = f'<span class="aura-plain-muted">{esc(note)}</span>' if note else ""
     st.html(f'<div class="aura-meta">{agent_chip(model, label)}{extra}</div>')
@@ -818,7 +864,7 @@ def _collectors(trace: dict[str, Any], index: int) -> str:
 
 
 def pipeline_stepper(
-    trace: dict[str, Any] | None, *, empty_text: str = "Not reached"
+    trace: dict[str, Any] | None, *, empty_text: str = "Not reached", judge: Any = None
 ) -> None:
     trace = trace or {}
     _STATE_DEFAULT["text"] = empty_text if not trace else "Not reached"
@@ -850,7 +896,16 @@ def pipeline_stepper(
             ),
         )
     )
-    specs += [("PacketValidator", repair_note), ("HumanGate", ""), ("DashboardPublisher", "")]
+    specs.append(("PacketValidator", repair_note))
+    if trace.get("JudgeAgent"):
+        if isinstance(judge, dict) and judge.get("status") == "scored":
+            judge_note = f'<div class="aura-node-note">{esc(judge_scores_text(judge))}</div>'
+        elif isinstance(judge, dict):
+            judge_note = '<div class="aura-node-note">unavailable, draft not blocked</div>'
+        else:
+            judge_note = ""
+        specs.append(("JudgeAgent", judge_note))
+    specs += [("HumanGate", ""), ("DashboardPublisher", "")]
     parts: list[str] = []
     done = 0
     for index, (node_id, note) in enumerate(specs):

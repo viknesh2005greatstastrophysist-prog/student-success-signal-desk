@@ -25,9 +25,21 @@ REPO = ROOT.parent
 
 
 class BridgeError(RuntimeError):
-    def __init__(self, message: str, code: str = "REQUEST_FAILED", status: int = 500):
+    def __init__(
+        self,
+        message: str,
+        code: str = "REQUEST_FAILED",
+        status: int = 500,
+        retry_after: int | None = None,
+    ):
         super().__init__(message)
-        self.code, self.status = code, status
+        self.code, self.status, self.retry_after = code, status, retry_after
+
+
+# Seconds the bridge waits for the engine. A review may wait for a whole AI quota
+# window several times (each call up to about 70 s), so running one gets longer.
+REQUEST_SECONDS = 180
+LONG_REQUEST_SECONDS = {"plan_execute": 420}
 
 
 MODEL_ADAPTER_KEYS = frozenset({"GROQ_API_KEY", "CH11_MODEL_API_KEY"})
@@ -181,7 +193,12 @@ class Client:
                     json.dumps(request, separators=(",", ":")) + "\n"
                 )
                 self._process.stdin.flush()
-                ready, _, _ = select.select([self._process.stdout], [], [], 180)
+                ready, _, _ = select.select(
+                    [self._process.stdout],
+                    [],
+                    [],
+                    LONG_REQUEST_SECONDS.get(action, REQUEST_SECONDS),
+                )
                 if not ready:
                     self._process.terminate()
                     raise BridgeError(
@@ -205,6 +222,7 @@ class Client:
                         error["message"],
                         error.get("code", "REQUEST_FAILED"),
                         error.get("status", 500),
+                        error.get("retryAfterSeconds"),
                     )
                 return response["data"]
             except (BrokenPipeError, OSError, json.JSONDecodeError) as error:

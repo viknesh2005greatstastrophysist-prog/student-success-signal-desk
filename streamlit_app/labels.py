@@ -107,6 +107,10 @@ ISSUES = {
     "SPECIALIST_SCOPE": "Evidence outside the specialist's scope",
     "SPECIALIST_MISMATCH": "Draft from the wrong specialist",
     "EGRESS_BLOCKED": "Private details stopped before leaving the server",
+    "JUDGE_ACTIONABILITY_LOW": "Judge: actions not practical enough for the mentor",
+    "JUDGE_GROUNDING_LOW": "Judge: claims not grounded in the cited evidence",
+    "JUDGE_SPECIFICITY_LOW": "Judge: too generic, lacks the concrete values",
+    "JUDGE_TONE_LOW": "Judge: tone not safe and supportive enough",
     "MODEL_RATE_LIMITED": "Model rate limit reached",
     "MODEL_DAILY_CAP": "Daily model allowance used up",
     "MODEL_HTTP_429": "Model provider rate limit",
@@ -153,10 +157,13 @@ AGENT_NODES = {
     "AttendanceSpecialist": ("Attendance specialist", "agent"),
     "WellbeingReferralSpecialist": ("Wellbeing-referral specialist", "agent"),
     "PacketValidator": ("Validation gate", "coordinator"),
+    "JudgeAgent": ("Judge", "agent"),
     "Regenerator": ("Targeted repair", "agent"),
     "HumanGate": ("Mentor gate", "gate"),
     "DashboardPublisher": ("Publish", "publish"),
 }
+
+JUDGE_DIMENSIONS = ("grounding", "specificity", "actionability", "tone")
 
 NODE_STATES = {
     "completed": ("Done", "green"),

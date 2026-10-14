@@ -263,6 +263,60 @@ for validation, expected, absent in (
 at = render(f"ns['render_agent_graph'](json.loads({json.dumps(json.dumps(review))}))")
 assert "Diagnosis and repairs for this run" not in [e.label for e in at.status] + [e.label for e in at.expander]
 
+# 4c. Judge agent (#35): scores and reasons in the provenance rows, a compact cobalt chip,
+# a Judge node in the strip, the reached flag (#36), an injected fault and an unavailable judge.
+JUDGE = {
+    "status": "scored", "round": 2, "threshold": 2, "passed": True, "mean": 4.0, "min": 3,
+    "low": [], "provider": "groq", "model": "openai/gpt-oss-120b", "tokens": 1500, "latencyMs": 800,
+    "scores": {"grounding": 4, "specificity": 3, "actionability": 5, "tone": 4},
+    "reasons": {
+        "grounding": "Each sentence cites its value.", "specificity": "Names course CS401 and its figure.",
+        "actionability": "Practical mentor steps.", "tone": "Neutral and supportive.",
+    },
+    "fallbacks": [],
+    "previous": {
+        "status": "scored", "round": 1, "threshold": 2, "passed": False, "mean": 2.8, "min": 2, "low": ["grounding"],
+        "repair": "applied", "injected": True, "provider": "groq", "model": "openai/gpt-oss-120b",
+        "scores": {"grounding": 2, "specificity": 3, "actionability": 4, "tone": 4},
+        "reasons": {"grounding": "injected for testing: the grounding score was forced low", "specificity": "x", "actionability": "y", "tone": "z"},
+        "fallbacks": [],
+    },
+}
+JUDGED = {
+    **VALIDATION,
+    "judge": JUDGE,
+    "provenance": {
+        **VALIDATION["provenance"],
+        "judge": JUDGE,
+        "injected": [{"kind": "judge", "note": "injected for testing"}],
+        "egress": [
+            {"provider": "groq", "model": "m", "payloadHash": "ab" * 32, "fields": ["case"], "bytes": 900, "outcome": "sent", "reached": True},
+            {"provider": "groq", "model": "m", "payloadHash": "cd" * 32, "fields": ["case"], "bytes": 900, "outcome": "sent", "reached": False},
+        ],
+    },
+}
+at = render(f"ns['render_draft_provenance']({{'mode': 'model'}}, json.loads({json.dumps(json.dumps(JUDGED))}))")
+text = frames(at)
+for token in (
+    "2 passed the privacy guard, 1 reached the model", "mean 4.0 of 5", "Grounding 4",
+    "Names course CS401", "Judge first look", "repair applied", "Injected for testing",
+):
+    assert token in text, (token, text)
+at = render(f"ns['ui'].judge_chip_block(json.loads({json.dumps(json.dumps(JUDGE))}))")
+markup = " ".join(el.proto.body for el in at.get("html"))
+assert "judge" in markup and "4.0/5 · G4 S3 A5 T4" in markup, markup
+assert "repaired once after a low score" in markup and "injected for testing" in markup
+at = render(f"ns['ui'].judge_chip_block(json.loads({json.dumps(json.dumps({'status': 'unavailable', 'unavailableReason': 'MODEL_HTTP_503'}))}))")
+assert "unavailable; the draft was not blocked" in " ".join(el.proto.body for el in at.get("html"))
+unavailable = {**VALIDATION, "judge": {"status": "unavailable", "round": 1, "threshold": 2, "unavailableReason": "MODEL_HTTP_503", "fallbacks": []}}
+at = render(f"ns['render_draft_provenance']({{'mode': 'model'}}, json.loads({json.dumps(json.dumps(unavailable))}))")
+assert "the draft was not blocked" in frames(at)
+judged_job = {**review["jobs"][0], "validation": JUDGED}
+judged_job["node_trace"] = {**judged_job["node_trace"], "JudgeAgent": {"status": "completed", "visits": 2, "elapsedMs": 1500}}
+at = render(f"ns['render_agent_graph'](json.loads({json.dumps(json.dumps({**review, 'jobs': [judged_job]}))}))")
+markup = " ".join(el.proto.body for el in at.get("html"))
+assert "Judge" in markup and "4.0/5 · G4 S3 A5 T4" in markup, "the strip shows the judge node and its score"
+
 # 5. a plan without an agent trace renders no planner panel (rule-based plans unchanged)
 at = render("ns['render_planner_trace']({'request': 'x', 'questions': []})")
 assert not [e for e in at.status] + [e for e in at.expander]
@@ -277,6 +331,8 @@ print(
                 "labelled fallback",
                 "AI Activity node + tool calls",
                 "AI Activity repair diagnoses and ISSUES fallback",
+                "judge rows, chip, node and unavailable state",
+                "reached flag and injected fault rows",
                 "escaping",
                 "rule-based plans unchanged",
             ],
