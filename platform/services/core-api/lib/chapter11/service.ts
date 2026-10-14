@@ -40,6 +40,7 @@ import {
   type PolicyGuard,
 } from "./engine";
 import { configuredComposer } from "./provider";
+import type { EgressAudit, GuardRoster } from "./egress";
 import { readApprovedCollegeSource } from "../college-normalized";
 import { loadAuthenticatedCollegeSources } from "../college-vault";
 
@@ -764,6 +765,30 @@ export async function seedChapterSources(actor: ActorContext) {
   });
 }
 
+/** One append-only audit row per outbound (non-loopback) model request:
+ * payload hash, field list and byte size, or the blocked category. */
+async function recordEgress(
+  actor: ActorContext,
+  job: Job,
+  provenance: { egress: EgressAudit[] } | undefined,
+) {
+  const rows = provenance?.egress ?? [];
+  if (!rows.length) return;
+  await withCoreTransaction(async (client) => {
+    for (const row of rows)
+      await audit(
+        client,
+        job.generation_id,
+        actor,
+        job.id,
+        row.outcome === "blocked" ? "model.egress_blocked" : "model.egress",
+        row,
+        row.outcome === "blocked"
+          ? { code: "EGRESS_BLOCKED", category: row.category }
+          : { outcome: "sent" },
+      );
+  });
+}
 async function saveCheckpoint(
   actor: ActorContext,
   job: Job,
@@ -996,8 +1021,34 @@ export async function executePlan(
     );
     const approved = attestation.rows[0];
     const parsed = policySchema.parse(policy.rows[0]!.policy);
+    // Identities the egress guard must refuse to send (never sent themselves).
+    const identities = await client.query<{
+      name: string | null;
+      email: string | null;
+      register: string | null;
+      phrase: string | null;
+    }>(
+      `SELECT p.display_name AS name,p.email,sp.register_number AS register,NULL AS phrase FROM student_profiles sp JOIN people p ON p.id=sp.person_id WHERE sp.generation_id=$1 AND sp.id=ANY($2::uuid[])
+       UNION ALL SELECT p.display_name,p.email,NULL,NULL FROM parent_links pl JOIN people p ON p.id=pl.parent_person_id WHERE pl.generation_id=$1 AND pl.student_id=ANY($2::uuid[])
+       UNION ALL SELECT p.display_name,p.email,NULL,NULL FROM people p WHERE p.id=$3
+       UNION ALL SELECT NULL,NULL,NULL,d.name FROM departments d WHERE d.id=$4
+       UNION ALL SELECT NULL,NULL,NULL,i.name FROM departments d JOIN institutions i ON i.id=d.institution_id WHERE d.id=$4`,
+      [
+        plan.generation_id,
+        plan.body.studentIds!,
+        policy.rows[0]!.faculty_person_id,
+        plan.department_id,
+      ],
+    );
+    const roster: GuardRoster = {
+      names: identities.rows.flatMap((r) => (r.name ? [r.name] : [])),
+      emails: identities.rows.flatMap((r) => (r.email ? [r.email] : [])),
+      registers: identities.rows.flatMap((r) => (r.register ? [r.register] : [])),
+      phrases: identities.rows.flatMap((r) => (r.phrase ? [r.phrase] : [])),
+    };
     return {
       plan,
+      roster,
       policy: parsed,
       policyGuard: {
         version: approved?.policy_version ?? "",
@@ -1086,6 +1137,8 @@ export async function executePlan(
                     domain: initial.plan.body.domain!,
                     references: job.checkpoint.retrieval!,
                     policyGuard: initial.policyGuard,
+                    policy: initial.policy,
+                    roster: initial.roster,
                     baseline: formatSkill(
                       job.checkpoint.risk!,
                       initial.plan.body.domain!,
@@ -1100,6 +1153,7 @@ export async function executePlan(
                   composed.validation.escalated = true;
                   composed.validation.valid = false;
                 }
+                await recordEgress(actor, job, composed.validation.provenance);
                 await saveCheckpoint(actor, job, "publish", {
                   ...job.checkpoint,
                   composed,

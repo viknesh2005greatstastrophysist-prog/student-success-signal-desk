@@ -53,8 +53,12 @@ import {
   paymentAttemptInput,
 } from "../services/core-api/lib/payment-commands";
 import { sourceNames } from "../services/core-api/lib/chapter11/engine";
+import { captureModelCredentials } from "../services/core-api/lib/chapter11/provider";
 
 loadCoreConfig();
+// GROQ_API_KEY / CH11_MODEL_API_KEY are allowlisted for the model adapter only:
+// captured into the provider module and removed from the worker environment.
+captureModelCredentials();
 if (
   !["project", "college-project"].includes(identityMode()) ||
   !["project", "college-project"].includes(

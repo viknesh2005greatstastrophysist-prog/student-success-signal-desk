@@ -30,6 +30,9 @@ class BridgeError(RuntimeError):
         self.code, self.status = code, status
 
 
+MODEL_ADAPTER_KEYS = frozenset({"GROQ_API_KEY", "CH11_MODEL_API_KEY"})
+
+
 def read_environment_file(path: Path) -> dict[str, str]:
     if path.suffix == ".json":
         return json.loads(path.read_text())
@@ -69,10 +72,14 @@ def environment() -> dict[str, str]:
         raise BridgeError(
             "Configure the private AURA runtime before signing in.", "SETUP_REQUIRED"
         )
+    # Credential-vault entries (AURA_LOGIN_*, AURA_CLOUD_*) never reach the
+    # worker. Model-adapter keys are allowlisted explicitly; the worker moves
+    # them into the provider module and removes them from its environment.
     values = {
         key: value
         for key, value in values.items()
-        if not key.startswith(("AURA_LOGIN_", "AURA_CLOUD_"))
+        if key in MODEL_ADAPTER_KEYS
+        or not key.startswith(("AURA_LOGIN_", "AURA_CLOUD_"))
     }
     if values.get("CORE_IDENTITY_REALM") not in {"project", "college-project"}:
         raise BridgeError(

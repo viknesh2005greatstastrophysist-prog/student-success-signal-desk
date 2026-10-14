@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { validationRoute, type RunNode } from "./graph";
+import type { AliasMap, EgressAudit, GuardRoster } from "./egress";
 
 export const sourceNames = [
   "academic",
@@ -651,13 +652,30 @@ export type GenerationContext = {
   }>;
   baseline: Packet;
   policyGuard?: PolicyGuard;
+  /** approved policy (thresholds and weights may leave as numbers only) */
+  policy?: Policy;
+  /** in-scope identities the egress guard must never let leave */
+  roster?: GuardRoster;
+  /** per-run aliases shared by every model call for this case */
+  aliases?: AliasMap;
 };
+/** Filled by a provider for each call so the run trace can show who served it. */
+export type CallMeta = {
+  provider?: string;
+  model?: string;
+  fallbacks: Array<{ provider: string; model: string; reason: string }>;
+  egress: EgressAudit[];
+  usage?: { prompt?: number; completion?: number; total?: number };
+  latencyMs?: number;
+};
+export const newCallMeta = (): CallMeta => ({ fallbacks: [], egress: [] });
 export interface Composer {
   modelId: string;
   generate(
     context: GenerationContext,
     failing?: Diagnosis[],
     prior?: unknown,
+    meta?: CallMeta,
   ): Promise<unknown>;
 }
 function providerFailure(error: unknown): string {
@@ -669,10 +687,23 @@ function providerFailure(error: unknown): string {
     return "MODEL_TIMEOUT";
   if (
     error instanceof Error &&
-    /^MODEL_(HTTP_[0-9]{3}|EMPTY_RESPONSE)$/.test(error.message)
+    /^(MODEL_(HTTP_[0-9]{3}|EMPTY_RESPONSE|RATE_LIMITED|DAILY_CAP)|EGRESS_BLOCKED)$/.test(
+      error.message,
+    )
   )
     return error.message;
   return "MODEL_UNAVAILABLE";
+}
+function summariseCalls(metas: CallMeta[]) {
+  const served = [...metas].reverse().find((m) => m.provider);
+  return {
+    provider: served?.provider ?? null,
+    model: served?.model ?? null,
+    fallbacks: metas.flatMap((m) => m.fallbacks),
+    egress: metas.flatMap((m) => m.egress),
+    tokens: metas.reduce((n, m) => n + (m.usage?.total ?? 0), 0) || null,
+    calls: metas.length,
+  };
 }
 export async function compose(
   context: GenerationContext,
@@ -689,16 +720,21 @@ export async function compose(
     inputHash: string;
     output: unknown;
     outputHash: string;
+    call?: CallMeta;
   }> = [];
+  const metas: CallMeta[] = [];
   if (provider) {
+    const meta = newCallMeta();
+    metas.push(meta);
     try {
-      candidate = await provider.generate(context);
+      candidate = await provider.generate(context, undefined, undefined, meta);
       mode = "model";
       modelAttempts.push({
         attempt: 0,
         inputHash: digest(context),
         output: candidate,
         outputHash: digest(candidate),
+        call: meta,
       });
     } catch (error) {
       providerError = providerFailure(error);
@@ -721,15 +757,18 @@ export async function compose(
     repairs.push({ attempt, failures: report.failures });
     let patch: unknown = context.baseline;
     if (provider) {
+      const meta = newCallMeta();
+      metas.push(meta);
       try {
         patch = await runNode("Regenerator", () =>
-          provider.generate(context, report.failures, candidate),
+          provider.generate(context, report.failures, candidate, meta),
         );
         modelAttempts.push({
           attempt,
           inputHash: digest({ context, failures: report.failures, candidate }),
           output: patch,
           outputHash: digest(patch),
+          call: meta,
         });
       } catch (error) {
         providerError = providerFailure(error);
@@ -767,10 +806,16 @@ export async function compose(
     context.domain,
     context.policyGuard,
   );
+  const calls = summariseCalls(metas);
   return {
     packet: needsHuman ? context.baseline : packetSchema.parse(candidate),
     mode: needsHuman ? ("deterministic" as const) : mode,
-    modelId: !needsHuman && mode === "model" ? provider!.modelId : null,
+    modelId:
+      !needsHuman && mode === "model"
+        ? calls.model
+          ? `${calls.provider}:${calls.model}`
+          : provider!.modelId
+        : null,
     validation: {
       ...report,
       valid: !needsHuman && report.valid,
@@ -780,6 +825,16 @@ export async function compose(
       templateValid: offeredTemplate.valid,
       providerError,
       modelAttempts,
+      provenance: {
+        ...calls,
+        fallbackReason: needsHuman
+          ? providerError
+            ? `provider failed: ${providerError}`
+            : baselineRepair
+              ? "a repair needed template fields"
+              : "validation failed after the repair budget"
+          : null,
+      },
       selection: {
         candidates: provider
           ? ["validated-baseline", "model-candidate"]
