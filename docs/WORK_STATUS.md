@@ -1,4 +1,4 @@
-# Work status — 14 October 2026, fix pass A
+# Work status — 14 October 2026, fix pass B
 
 Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes.
 
@@ -7,7 +7,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 | Item | State |
 |---|---|
 | Branch | `streamlit-college-project` |
-| HEAD | Fix pass A on top of `ee6865a`: `2a3b7bc` (Core: AI-only reviews, scope-authoritative planner, role gates, risk privacy), `59756cc` (Streamlit UI, verify scripts, CI step), `53379bd` (rebuilt engine bundle), then a docs commit; pushed to `origin/streamlit-college-project` after the checks below passed. |
+| HEAD | Fix pass B on top of fix pass A (`1d0c7bf`): `02a7cef` (Core: one definition of awaiting decision, student-level risk counts, shared run totals, late flag), `ddcd7a3` (rebuilt engine bundle), `7ceabe5` (Streamlit: consistent counts, validation headline, late submissions, verify scripts, CI step), then a docs commit; pushed to `origin/streamlit-college-project` after the checks below passed. Fix pass A: `2a3b7bc`, `59756cc`, `53379bd`. |
 | Hosted Streamlit (aura-college-workspace.streamlit.app) | Last confirmed deployed from `5f7db7e` (Briefs 1–9); it should redeploy on push but the running version is unconfirmed (private app, owner sign-in required). `GROQ_API_KEY` added to its Streamlit secrets (`[aura]` section) by the owner on 14 Oct. |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
@@ -16,7 +16,18 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 `gh auth switch --user viknesh2005greatstastrophysist-prog && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project && gh auth switch --user vikneshwaranmarimuthu-cmyk`.
 Streamlit Cloud redeploys from the branch on every push. Codex's subscription ended 14 Oct; Claude implements under a strict usage cap (one agent at a time).
 
-## Verification at HEAD (run 14 Oct, fix pass A: AI-only reviews, planner scope, privacy, read-only roles)
+## Verification at HEAD (run 14 Oct, fix pass B: data correctness)
+
+- Core `tsc --noEmit` and eslint clean. Core tests 166: 157 pass, 0 fail, 9 skipped (opt-in DB suites; baseline 163: 154 pass). New: `chapter11-counts.test.ts` (3: awaiting drafts collapse to one per student with history, one latest risk row per student, evaluation totals). The agents DB suite now asserts that the queue, its count and the overview count agree for the mentor and the department head, and that a legacy draft is never counted.
+- Opt-in DB suites on the LOCAL Postgres (127.0.0.1:55432) in disposable schemas `aura_core_test_pb1`, `aura_core_test_ch11_pb2`, `aura_core_test_ch11_agent_pb3`, `aura_core_test_ch11_lease_pb4` (all dropped afterwards; nothing run against hosted Neon): `database.test.ts` 1/1, `chapter11-database.test.ts` 1/1, `chapter11-agents-database.test.ts` 2/2, `chapter11-lease-database.test.ts` 1/1.
+- `node scripts/build-streamlit-engine.mjs` run; `npm run check:engine` passes.
+- Python (`.venv/bin/python`): `verify_data_counts.py` (new, offline, added to the CI Streamlit job), `verify_draft_v2.py`, `verify_agent_trace.py`, `verify_read_cache.py`, `verify_ai_only_ui.py`, and against the local database `verify_ui.py` (6 logins, 21 pages), `verify_attachments.py`, `verify_chapter11_dashboard.py`, `verify_chapter11_trends.py` (now also asserts queue count equals overview count) and `verify_chapter11_planning.py` (now leaves its never-run plan paused) all pass. NOT run: `verify_local.py` and `verify_cloud.py` (live acceptance on fresh cases with the real model).
+- Read-only walk `streamlit_app/e2e/walk.py --pass 2b` on my own server (8503, stopped afterwards; 8502 untouched): 9 sessions, 180 views, 0 exceptions, 0 error alerts, 0 console errors, 0 failed requests, 0 overflow, 1 walk error (the "Completed run" selector on operations did not open; rerunning that role alone as `--pass 2bops` gave 0 walk errors, so it was a timing flake); 35 leaked-technical-text hits (36 in pass 2a).
+- Live data: counts now agree. Awaiting decision: mentors 52, 51 and 51, department head 154 (before: 112, 57, 329, 161). Risk view for a mentor: 107 students (before: 221 evaluated, 113 flagged). 20 never-run test plans (19 from `verify_chapter11_planning.py`, 1 "Stale refresh acceptance") were paused through the audited `review.paused` command with a recorded reason; no row deleted, no job touched.
+- Live model calls: 0 Groq, 0 Gemini. Student 021: the case `d398bbc3` was not touched (the pause step skipped any plan containing it; none did).
+- Not done: the live AI run with Groq (round 2), C2 (redesign), C3, C4, C6 and the visual and layout items; #29 is closed as source data (the seed repeats one scenario per student across courses).
+
+## Verification before fix pass B (run 14 Oct, fix pass A: AI-only reviews, planner scope, privacy, read-only roles)
 
 - Core `tsc --noEmit` and eslint clean. Core tests 163: 154 pass, 0 fail, 9 skipped (opt-in DB suites; baseline 140: 132 pass, 8 skipped). New: `chapter11-scope-rule.test.ts` (10: an explicit selection wins and a conflict is surfaced, narrowing only, grounded criteria and determinism, answered questions, notes), `chapter11-ai-unavailable.test.ts` (7: every provider fails gives no draft and recorded reasons, no model configured, mid-repair outage, planner without a fallback), `chapter11-read-only-roles.test.ts` (5: hod, governance, student and parent are rejected from every plan command). Stubs and the local mock server only.
 - Opt-in DB suites on the LOCAL Postgres (127.0.0.1:55432) in disposable schemas `aura_core_test_*` (all dropped afterwards; nothing run against hosted Neon): `database.test.ts`, `chapter11-database.test.ts`, `chapter11-agents-database.test.ts` (new scenario: audited AI-unavailable state and retry, scope keep and switch, answered questions, planner outage, mentor-only plan commands, risk privacy for the department head and governance, legacy drafts read-only and undecided), `chapter11-lease-database.test.ts` (adds the AI-unavailable retry loop) all pass (4/4); `demo-cohort.test.ts` (opt-in, not in CI) also passes with a stub composer.
