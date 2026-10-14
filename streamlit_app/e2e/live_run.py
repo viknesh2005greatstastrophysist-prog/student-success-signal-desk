@@ -24,6 +24,14 @@ Usage (repo root; start your own server first, never on 8502):
     .venv/bin/python streamlit_app/e2e/live_run.py --stage views          # student, parent, HoD, AI activity, export
     .venv/bin/python streamlit_app/e2e/live_run.py --stage all
 
+Round 3 (docs/E2E_TEST_LOG.md, "Pass 3") adds scenarios, each with its own state directory:
+    --scenario attendance    two students whose attendance points outweigh the rest (Attendance specialist)
+    --scenario wellbeing     two students, plan focus "Wellbeing referral" (Wellbeing-referral specialist)
+Start the server with CH11_FAULT_INJECT=draft:1,judge:1 to make the first review fail the validator once (the
+Regenerator runs live on real diagnoses) and the first judge look score low once (the judge-triggered repair
+runs live). Both are off unless that variable is set, and both are recorded as "injected for testing" in the
+draft's provenance and in the audit log. The judge itself is called live on every draft that passes validation.
+
 State between stages lives in runtime/streamlit-project/e2e/live2/state.json (git-ignored), so a failed
 stage never repeats the model calls of an earlier one. Screenshots go next to it.
 """
@@ -32,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import threading
@@ -61,6 +70,55 @@ MENTEES = [
     {"register": "01FE24BCI018", "name": "Preetam G"},
     {"register": "01FE23BCI058", "name": "Pooja Pattar"},
 ]
+SCENARIOS: dict[str, dict[str, Any]] = {
+    "pass2": {"out": "live2"},
+    "attendance": {
+        "out": "live3-attendance",
+        "request": "Prepare attendance support plans for these students; use the current cycle's figures and the approved policy.",
+        "answer": (
+            "Only the students I selected. The current review cycle is the window: use this cycle's attendance and "
+            "placement-activity figures. Use the faculty-approved mentor policy. Focus on attendance follow-up."
+        ),
+        "focus": "Attendance",
+        # medium-risk mentees of mentor1 whose only signals are ATTENDANCE_LOW (20 points) and PLACEMENT_ACTIVITY (15)
+        "mentees": [
+            {"register": "01FE24BCI073", "name": "Sunayana Kamat"},
+            {"register": "01FE24BCI036", "name": "Bhavana Hulagammanavara"},
+        ],
+    },
+    "wellbeing": {
+        "out": "live3-wellbeing",
+        "request": "Prepare optional wellbeing referral conversations for these students; use the current cycle's figures and the approved policy.",
+        "answer": (
+            "Only the students I selected. The current review cycle is the window: use this cycle's indicators only. "
+            "Use the faculty-approved mentor policy. Focus on an optional wellbeing referral conversation, nothing more."
+        ),
+        "focus": "Wellbeing referral",
+        "mentees": [
+            {"register": "01FE24BCI007", "name": "Tanmayee Kalal"},
+            {"register": "01FE23BCI076", "name": "Tanuja Ratan"},
+        ],
+    },
+}
+FOCUS = "Academic"
+# Seconds to pause between planner calls. Round 2 paced them by hand (70) because the limiter refused a call
+# that needed to wait; since the limiter waits (and the page shows the wait) round 3 sets 0 to prove it.
+PLANNER_COOLDOWN = int(os.environ.get("LIVE_PLANNER_COOLDOWN", "70"))
+
+
+def configure(name: str) -> None:
+    """Select a scenario: its students, request, answer, focus and state directory."""
+    global OUT, STATE, REQUEST, ANSWER, MENTEES, FOCUS
+    scenario = SCENARIOS[name]
+    OUT = ROOT / "runtime" / "streamlit-project" / "e2e" / scenario["out"]
+    STATE = OUT / "state.json"
+    REQUEST = scenario.get("request", REQUEST)
+    ANSWER = scenario.get("answer", ANSWER)
+    FOCUS = scenario.get("focus", FOCUS)
+    MENTEES = scenario.get("mentees", MENTEES)
+    assert PROTECTED_REGISTER not in [m["register"] for m in MENTEES], "student 021 is never used"
+
+
 PROTECTED_REGISTER = "01FE23BCI103"  # student 021, never touched
 PROTECTED_ENV = "STUDENT021"
 EDIT_REASON = "Claude test run as mentor: light rewording of one action for clarity, evidence unchanged."
@@ -317,7 +375,7 @@ def fill_create_form(live: Live, page: Page, state: dict[str, Any]) -> None:
         time.sleep(0.4)
     chips = multi.locator(".react-aria-ComboBox [data-tag]").count()
     note(state, f"selected {chips} students in the form")
-    assert chips == 3, f"expected 3 selected students, saw {chips}"
+    assert chips == len(MENTEES), f"expected {len(MENTEES)} selected students, saw {chips}"
     page.keyboard.press("Escape")
     live.shot(page, "02-mentor-create-plan-form")
 
@@ -375,14 +433,14 @@ def stage_plan(state: dict[str, Any], live: Live, core: Core, dry: bool, run_tim
             for attempt in range(1, 6):
                 if not read_questions(live, page):
                     break
-                cooldown = 70 - (time.time() - created_at)
+                cooldown = PLANNER_COOLDOWN - (time.time() - created_at)
                 if cooldown > 0:
                     note(state, f"waiting {int(cooldown)}s so the next planner call fits the tokens-per-minute budget")
                     time.sleep(cooldown)
                 live.open_expander(page, "Answer questions or revise this plan")
                 page.get_by_label("Revision feedback", exact=True).fill(ANSWER)
                 if live.select_value(page, "Revised focus").startswith("Choose"):
-                    live.pick_select(page, "Revised focus", "Academic")
+                    live.pick_select(page, "Revised focus", FOCUS)
                 if live.select_value(page, "Revised policy").startswith("Choose"):
                     box = page.locator('[data-testid="stSelectbox"]').filter(has_text="Revised policy").first
                     box.locator('input[role="combobox"]').click()
@@ -425,7 +483,7 @@ def stage_plan(state: dict[str, Any], live: Live, core: Core, dry: bool, run_tim
             summary = page.locator('[data-testid="stMain"]').get_by_text(re.compile(r"Students in scope \(\d+\)")).first.inner_text()
             plan_info["scope_summary"] = summary.strip()
             live.shot(page, "05-mentor-plan-scope", tall=True)
-            ok = opened and shown == expected and "(3)" in summary
+            ok = opened and shown == expected and f"({len(MENTEES)})" in summary
             plan_info["scope_assertion"] = "pass" if ok else "FAIL"
             note(state, f"scope assertion {plan_info['scope_assertion']}: {summary.strip()} {shown}")
             fresh = next(r for r in core.read("MENTOR1", "faculty", "review_overview")["plans"] if r["id"] == plan["id"])
@@ -436,7 +494,7 @@ def stage_plan(state: dict[str, Any], live: Live, core: Core, dry: bool, run_tim
             plan_info["planner_agent"] = fresh["body"].get("agent")
             plan_info["revision"] = fresh["revision"]
             if not ok:
-                finding(state, "P1", "Plan scope (L1)", f"scope did not show exactly the three selected names: {shown}")
+                finding(state, "P1", "Plan scope (L1)", f"scope did not show exactly the selected names: {shown}")
                 save_state(state)
                 raise SystemExit("scope assertion failed: not locking")
             assert not fresh["body"].get("questions"), f"questions remain: {fresh['body'].get('questions')}"
@@ -491,14 +549,17 @@ def stage_retry(state: dict[str, Any], live: Live, core: Core, run_timeout: int)
             live.shot(page, "08a-mentor-ai-unavailable", tall=True)
             for attempt in range(1, 9):
                 jobs = [j for j in core.read("MENTOR1", "faculty", "review_overview").get("jobs") or [] if j.get("plan_id") == plan_id]
-                waiting = [j for j in jobs if j.get("status") == "ai_unavailable"]
+                # one review runs per click under a budgeted remote model: queued ones need another Run review
+                waiting = [j for j in jobs if j.get("status") in ("ai_unavailable", "queued", "blocked")]
                 if not waiting:
                     break
-                note(state, f"retry {attempt}: {len(waiting)} of {len(jobs)} reviews wait for an AI model; one review runs per click under a budgeted remote model")
-                time.sleep(15)
+                note(state, f"retry {attempt}: {len(waiting)} of {len(jobs)} reviews still to run; one review runs per click under a budgeted remote model")
+                time.sleep(5)
                 button = live.button(page, "Retry AI review")
                 if button.count() == 0:
-                    note(state, "no Retry AI review button on the page")
+                    button = live.button(page, "Run review")
+                if button.count() == 0:
+                    note(state, "no Run review or Retry AI review button on the page")
                     break
                 stop = threading.Event()
                 watcher = threading.Thread(target=progress_watcher, args=(core, plan_id, stop, state), daemon=True)
@@ -525,6 +586,17 @@ def stage_retry(state: dict[str, Any], live: Live, core: Core, run_timeout: int)
 
 
 # --------------------------------------------------------------------------- stage: inspect
+def judge_facts(judge: Any) -> Any:
+    """The judge's verdict without free text, plus its first look when a repair followed."""
+    if not isinstance(judge, dict):
+        return None
+    keys = ("status", "round", "scores", "mean", "min", "passed", "repair", "injected", "provider", "model", "tokens", "unavailableReason")
+    out = {k: judge.get(k) for k in keys if k in judge}
+    if isinstance(judge.get("previous"), dict):
+        out["previous"] = judge_facts(judge["previous"])
+    return out
+
+
 def draft_facts(draft: dict[str, Any]) -> dict[str, Any]:
     import labels
 
@@ -575,6 +647,11 @@ def draft_facts(draft: dict[str, Any]) -> dict[str, Any]:
             "fallback_reason": agent.get("fallbackReason") or agent.get("skippedReason"),
         },
         "judge_recorded": bool(re.search(r"judge", json.dumps(prov), re.I)),
+        "judge": judge_facts(validation.get("judge")),
+        "injected": prov.get("injected"),
+        "repair_sources": [r.get("source") or "validator" for r in validation.get("repairs") or []],
+        "model_attempts": len(validation.get("modelAttempts") or []),
+        "egress_reached": sum(1 for e in egress if e.get("reached")),
         "summary_chars": len(((draft.get("recommendation") or {}).get("summary")) or ""),
         "actions": [a.get("label") for a in (draft.get("recommendation") or {}).get("actions") or []],
     }
@@ -656,6 +733,9 @@ def stage_inspect(state: dict[str, Any], live: Live, core: Core) -> None:
                         "repairs_caption": int(repairs.group(1)) if repairs else 0,
                         "provenance": live.table(page, "Step", "Detail"),
                         "tools": live.table(page, "Tool", "Outcome"),
+                        "judge_chip": " ".join(page.locator(".aura-agent").filter(has_text="judge").first.inner_text().split())
+                        if page.locator(".aura-agent").filter(has_text="judge").count()
+                        else None,
                         "errors": live.errors_on_page(page),
                     }
                 )
@@ -675,7 +755,8 @@ def stage_decide(state: dict[str, Any], live: Live, core: Core) -> None:
         finding(state, "P1", "Draft validation", "no draft passed validation, so nothing can be approved")
         save_state(state)
         raise SystemExit("no valid draft")
-    chosen = candidates[0]
+    # prefer the draft that went through the most repairs: it proves a repaired draft is publishable
+    chosen = max(candidates, key=lambda d: (d.get("repairs") or 0))
     state["chosen"] = {"student": chosen["student"], "register": chosen["register"], "case": chosen["case"], "version_before": chosen["version"]}
     note(state, f"chosen draft: {chosen['student']} {chosen['register']} case {str(chosen['case'])[:8]} version {chosen['version']}")
     original_label = chosen["actions"][0]
@@ -842,6 +923,11 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
                 live.shot(page, "20-ai-activity-overview", tall=True)
                 live.goto_tab(page, "Runs & replay")
                 results["gov_runs_ui"] = live.table(page, "Run", "Status", "Stage")
+                runs_text = live.main_text(page)
+                results["gov_runs_judge"] = {
+                    "judge_node_in_strip": "Judge" in runs_text,
+                    "judge_rows": live.table(page, "Step", "Detail")[:30],
+                }
                 live.shot(page, "21-ai-activity-runs", tall=True)
                 live.goto_tab(page, "Plans")
                 results["gov_plan_visible"] = state["plan"]["id"][:8] in live.main_text(page) or REQUEST[:30] in live.main_text(page)
@@ -896,6 +982,7 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stage", choices=["baseline", "plan", "inspect", "decide", "views", "retry", "all"], default="all")
+    parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="pass2")
     parser.add_argument("--base-url", default="http://127.0.0.1:8503")
     parser.add_argument("--resume", action="store_true", help="plan stage: continue the plan already in state.json instead of creating one")
     parser.add_argument("--dry", action="store_true", help="plan stage: fill the form and stop before saving")
@@ -903,6 +990,7 @@ def main() -> int:
     args = parser.parse_args()
     if ":8502" in args.base_url:
         raise SystemExit("port 8502 belongs to another session; use 8503")
+    configure(args.scenario)
     state = load_state()
     live = Live(args.base_url)
     core = Core(live.env)
