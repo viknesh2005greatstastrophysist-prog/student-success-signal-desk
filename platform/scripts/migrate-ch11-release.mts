@@ -28,6 +28,8 @@ async function snapshot() {
         "SELECT dataset_hash,md5(review::text) AS stored_review_hash FROM project_dataset ORDER BY id",
       )
     ).rows;
+    // Students whose latest case is still awaiting a mentor decision, chosen by
+    // status rather than by register number. Their state must survive the migration.
     const pending = (
       await c.query(
         `SELECT s.id,
@@ -37,21 +39,19 @@ async function snapshot() {
           (SELECT count(*)::int FROM support_cases sc WHERE sc.student_id=s.id AND sc.status='awaiting_faculty') AS pending_cases,
           (SELECT sc.status FROM support_cases sc WHERE sc.student_id=s.id ORDER BY sc.opened_at DESC,sc.id DESC LIMIT 1) AS latest_case_status,
           (SELECT count(*)::int FROM faculty_decisions d WHERE d.support_case_id=(SELECT sc.id FROM support_cases sc WHERE sc.student_id=s.id ORDER BY sc.opened_at DESC,sc.id DESC LIMIT 1)) AS latest_case_decisions
-         FROM student_profiles s WHERE s.register_number='01FE23BCI103'`,
+         FROM student_profiles s
+         WHERE (SELECT sc.status FROM support_cases sc WHERE sc.student_id=s.id ORDER BY sc.opened_at DESC,sc.id DESC LIMIT 1)='awaiting_faculty'
+         ORDER BY s.id`,
       )
-    ).rows[0];
-    assert.ok(pending);
-    assert.equal(pending.publications, 0);
-    assert.equal(pending.approvals, 0);
-    assert.ok(pending.pending_cases > 0);
-    assert.equal(pending.latest_case_status, "awaiting_faculty");
-    assert.equal(pending.latest_case_decisions, 0);
+    ).rows;
+    assert.ok(pending.length > 0, "no student with a pending case to preserve");
+    for (const row of pending) {
+      assert.ok(row.pending_cases > 0);
+      assert.equal(row.latest_case_decisions, 0);
+    }
     assert.equal(counts.student_profiles, 321);
     assert.equal(counts.people, 647);
-    return { counts, dataset, student021Pending: true,
-      student021History: { decisions: pending.decisions, approvals: pending.approvals,
-        pendingCases: pending.pending_cases, latestCaseStatus: pending.latest_case_status,
-        latestCaseDecisions: pending.latest_case_decisions } };
+    return { counts, dataset, pendingStudents: pending };
   });
 }
 try {
@@ -81,7 +81,7 @@ try {
       accounts: 647,
       allExistingCountsUnchanged: true,
       datasetHashUnchanged: true,
-      student021Pending: true,
+      pendingCasesPreserved: true,
     }),
   );
 } finally {

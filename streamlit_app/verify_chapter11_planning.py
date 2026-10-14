@@ -18,9 +18,11 @@ c = Client()
 login = c.login(account["email"], account["password"], "faculty")
 try:
     review = c.request("review_overview", token=login["token"])
-    student = next(
-        s["id"] for s in review["students"] if s["register_number"] != "01FE23BCI103"
-    )
+    # Pick a student by status: never one whose review is awaiting a mentor decision.
+    pending = {
+        j["student_id"] for j in review["jobs"] if j["status"] == "awaiting_faculty"
+    }
+    student = next(s["id"] for s in review["students"] if s["id"] not in pending)
     policy = review["policies"][0]["id"]
 finally:
     c.logout(login["token"])

@@ -207,7 +207,15 @@ test(
       await closePool(); // New connections simulate a process restarting after its checkpoint committed.
       const resumed = await executePlan(faculty, locked.id);
       assert.equal(resumed.results[0]!.completed, true);
+      assert.equal(resumed.alignment.planHash, locked.plan_hash);
       const exported = await exportPlan(faculty, locked.id);
+      const sourceTimings = exported.jobs[0]!.checkpoint.sourceTimings;
+      assert.ok(
+        sourceTimings &&
+          Object.values(sourceTimings).every(
+            (t) => typeof t === "number" && t > 0,
+          ),
+      );
       assert.equal(exported.jobs.length, 1);
       assert.equal(exported.jobs[0]!.status, "awaiting_faculty");
       assert.equal(

@@ -249,6 +249,16 @@ test(
       assert.equal(escalated.status, "failed");
       assert.equal(escalated.error_code, "REPAIR_BUDGET_EXHAUSTED");
       assert.ok(escalated.escalated_at);
+      // An escalated job opens no support case and is not run again.
+      const [{ support_case_id: openedCase }] = await sql<{
+        support_case_id: string | null;
+      }>("SELECT support_case_id FROM ch11_jobs WHERE plan_id=$1", [plan.id]);
+      assert.equal(openedCase, null);
+      assert.equal(
+        (await executePlan(faculty, plan.id, { composer: failingComposer }))
+          .results.length,
+        0,
+      );
     } finally {
       if (holder) {
         await holder.query("ROLLBACK").catch(() => undefined);
