@@ -373,3 +373,90 @@ def threshold_for(metric: str, signals: Any, policy: Any) -> Any:
             return signal.get("threshold")
     key = POLICY_THRESHOLDS.get(metric)
     return (policy or {}).get(key) if key and isinstance(policy, dict) else None
+
+
+# --- Counts shared by several screens (E2E log fix pass B) -------------------
+# Pure functions so the headline numbers can be checked without a server.
+
+CHECK_NAMES = (
+    "alerts_cite_triggers",
+    "thresholds_faculty_set",
+    "advisor_review_required",
+    "privacy_scope_enforced",
+)
+
+
+def percent_text(part: int, whole: int) -> str:
+    """A percentage that never rounds a failure up to 100%."""
+    if not whole:
+        return "—"
+    if part >= whole:
+        return "100%"
+    return f"{min(99.9, round(100 * part / whole, 1)):g}%"
+
+
+def validation_headline(validation: Any) -> tuple[str, str, str]:
+    """(text, colour, icon) for the validation report badge. A pass is claimed
+    only when the acceptance checks were recorded for this version."""
+    validation = validation if isinstance(validation, dict) else {}
+    checks = validation.get("checks")
+    checks = checks if isinstance(checks, dict) else {}
+    recorded = {name: checks.get(name) for name in CHECK_NAMES if isinstance(checks.get(name), bool)}
+    if validation.get("valid") is False or (recorded and not all(recorded.values())):
+        return ("Did not pass", "red", ":material/report:")
+    if not recorded:
+        return ("Checks not recorded for this version", "gray", ":material/help:")
+    if len(recorded) < len(CHECK_NAMES):
+        return (
+            f"Passed the {len(recorded)} recorded of {len(CHECK_NAMES)} checks",
+            "orange",
+            ":material/rule:",
+        )
+    return ("Passed every check", "green", ":material/verified:")
+
+
+def risk_scope(
+    rows: list[dict[str, Any]], plan_id: Any = None, flagged_only: bool = False
+) -> list[dict[str, Any]]:
+    """Risk rows are student x review cycle. For one cycle, that cycle's rows
+    (one per student). For all cycles, only each student's latest row, so the
+    count of rows is a count of students."""
+    scoped = [
+        row
+        for row in rows
+        if (row.get("planId") == plan_id if plan_id else row.get("latest", True))
+    ]
+    return [row for row in scoped if row.get("flagged")] if flagged_only else scoped
+
+
+def risk_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    evaluated = [row for row in rows if row.get("score") is not None]
+    return {
+        "students": len({row.get("studentId") for row in rows}),
+        "evaluated": len(evaluated),
+        "flagged": sum(1 for row in rows if row.get("flagged")),
+        "high": sum(1 for row in rows if row.get("band") == "high"),
+        "medium": sum(1 for row in rows if row.get("band") == "medium"),
+    }
+
+
+def outcome_counts(plans: list[dict[str, Any]]) -> dict[str, int]:
+    """Each approved plan counted once, by its current intervention status."""
+    counts = {"planned": 0, "in_progress": 0, "completed": 0, "withdrawn": 0}
+    for plan in plans:
+        status = str(plan.get("status") or "planned")
+        counts[status if status in counts else "planned"] += 1
+    return {"plans": len(plans), **counts}
+
+
+def is_late(due_at: Any, submitted_at: Any, flag: Any = None) -> bool:
+    """True when a submission came in after the due time. The Core's own flag
+    wins when it sends one; otherwise compare the two timestamps."""
+    if isinstance(flag, bool):
+        return flag
+    try:
+        due = datetime.fromisoformat(str(due_at))
+        sent = datetime.fromisoformat(str(submitted_at))
+        return sent > due
+    except (TypeError, ValueError):
+        return False

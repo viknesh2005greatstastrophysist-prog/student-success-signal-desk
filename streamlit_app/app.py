@@ -1150,9 +1150,27 @@ def render_classroom(overview: dict[str, Any]) -> None:
     roster = classroom.get("roster") or []
     sessions = classroom.get("sessions") or []
     assessments = classroom.get("assessments") or []
+    is_mentor = (overview.get("actor") or {}).get("role") == "faculty"
+    mentees = {str(r.get("id")) for r in overview.get("students") or []}
     ui.kpi_row(
         [
-            {"label": "Students", "value": len(roster), "icon": ":material/groups:"},
+            {
+                "label": "Course roster",
+                "value": len(roster),
+                "icon": ":material/groups:",
+                "help": "Everyone registered in this course, because attendance and marks are recorded per course.",
+            },
+            *(
+                [
+                    {
+                        "label": "Your mentees in it",
+                        "value": sum(1 for r in roster if str(r.get("id")) in mentees),
+                        "icon": ":material/school:",
+                    }
+                ]
+                if is_mentor
+                else []
+            ),
             {
                 "label": "Sessions recorded",
                 "value": len(sessions),
@@ -2222,36 +2240,39 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
         )
     with toggle_col:
         flagged_only = st.checkbox("Flagged students only", key="risk_flagged")
-    scoped = [
-        row
-        for row in rows
-        if (not plan_filter or row.get("planId") == plan_filter)
-        and (not flagged_only or row.get("flagged"))
-    ]
-    evaluated = [row for row in scoped if row.get("score") is not None]
+    # Rows are student x review cycle. All cycles: each student's latest row;
+    # one cycle: that cycle's rows. Either way one row is one student.
+    scoped = labels.risk_scope(rows, plan_filter, flagged_only)
+    counts = labels.risk_counts(scoped)
     ui.kpi_row(
         [
             {
-                "label": "Evaluated",
-                "value": len(evaluated),
+                "label": "Students evaluated",
+                "value": counts["evaluated"],
                 "icon": ":material/fact_check:",
+                "help": f"Of {counts['students']} students shown, this many have a risk score.",
             },
             {
-                "label": "Flagged for review",
-                "value": sum(1 for row in scoped if row.get("flagged")),
+                "label": "Students flagged",
+                "value": counts["flagged"],
                 "icon": ":material/flag:",
             },
             {
                 "label": "High band",
-                "value": sum(1 for row in scoped if row.get("band") == "high"),
+                "value": counts["high"],
                 "icon": ":material/priority_high:",
             },
             {
                 "label": "Medium band",
-                "value": sum(1 for row in scoped if row.get("band") == "medium"),
+                "value": counts["medium"],
                 "icon": ":material/trending_up:",
             },
         ]
+    )
+    st.caption(
+        "One row per student: the latest review cycle that evaluated them. Pick a cycle above to see that cycle only."
+        if not plan_filter
+        else "One row per student in the chosen review cycle."
     )
     dataframe(
         [
@@ -2314,26 +2335,35 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             "📋",
         )
         return
+    # Every figure below counts the same approved plans by their current status;
+    # the log lists the same plans first, then the changes that led to that status.
+    outcome = labels.outcome_counts(plans)
     ui.kpi_row(
         [
             {
                 "label": "Approved plans",
-                "value": len(plans),
+                "value": outcome["plans"],
                 "icon": ":material/verified:",
             },
             {
+                "label": "Planned",
+                "value": outcome["planned"],
+                "icon": ":material/event:",
+                "help": "Approved and not started yet. A plan that was withdrawn and then restored is planned again.",
+            },
+            {
                 "label": "In progress",
-                "value": sum(1 for row in plans if row.get("status") == "in_progress"),
+                "value": outcome["in_progress"],
                 "icon": ":material/pending:",
             },
             {
                 "label": "Completed",
-                "value": sum(1 for row in plans if row.get("status") == "completed"),
+                "value": outcome["completed"],
                 "icon": ":material/task_alt:",
             },
             {
                 "label": "Withdrawn",
-                "value": sum(1 for row in plans if row.get("status") == "withdrawn"),
+                "value": outcome["withdrawn"],
                 "icon": ":material/undo:",
             },
         ]
@@ -2345,6 +2375,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                 action.get("label", "")
                 for action in (row.get("plan") or {}).get("actions", [])
             ),
+            "Row": "Plan, current status",
             "Status": labels.status_label(row.get("status")),
             "Outcome": row.get("outcome"),
             "Visible": "Yes" if row.get("visible_to_student") else "No",
@@ -2359,6 +2390,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         {
             "Student": event.get("student_name"),
             "Approved actions": "",
+            "Row": "Earlier change",
             "Status": labels.status_label((event.get("payload") or {}).get("status")),
             "Outcome": (event.get("payload") or {}).get("outcome"),
             "Visible": "Recorded event",
@@ -2372,6 +2404,11 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     log_head, log_button = st.columns([3, 1], vertical_alignment="bottom")
     with log_head:
         st.markdown("##### Intervention log")
+        st.caption(
+            f"{outcome['plans']} plan{'s' if outcome['plans'] != 1 else ''} with their current status, followed by "
+            f"{len(queue.get('interventionLog', []))} earlier change{'s' if len(queue.get('interventionLog', [])) != 1 else ''}. "
+            "The counts above use the current status only."
+        )
     with log_button:
         st.download_button(
             "Download intervention log CSV",
@@ -2739,12 +2776,13 @@ def render_draft_reviews(
                     else labels.status_label(row.get("status")),
                     "Drafted by": labels.mode_label(row.get("mode")),
                     "Drafted": labels.nice_time(row.get("drafted_at")),
+                    "Earlier drafts": row.get("earlier_count") or 0,
                 }
                 for row in drafts
             ]
         )
         st.caption(
-            ":material/lock: Draft contents, risk scores and evidence are visible only to the student's assigned mentor."
+            ":material/lock: One row per student, showing the latest AI draft. Draft contents, risk scores and evidence are visible only to the student's assigned mentor."
         )
         return
     per_row = 3
@@ -2763,7 +2801,12 @@ def render_draft_reviews(
                 if risk.get("signals"):
                     ui.html_block(ui.signal_chips(risk["signals"][:3]))
                 st.caption(
-                    f":material/smart_toy: {labels.mode_label(row.get('mode'))} draft · version {row.get('revision', '?')}"
+                    f":material/smart_toy: {labels.mode_label(row.get('mode'))} draft · version {row.get('artifact_version', '?')}"
+                    + (
+                        f" · {row['earlier_count']} earlier"
+                        if row.get("earlier_count")
+                        else ""
+                    )
                 )
     if len(drafts) > 9:
         st.caption(
@@ -2773,10 +2816,29 @@ def render_draft_reviews(
         "Draft",
         drafts,
         format_func=lambda row: (
-            f"{row.get('display_name', 'Student')} · version {row.get('revision', '?')}"
+            f"{labels.pretty_name(row.get('display_name', 'Student'))} · version {row.get('artifact_version', '?')} · {labels.nice_time(row.get('drafted_at'))}"
         ),
         key="support_draft",
     )
+    if selected.get("earlier_drafts"):
+        with st.expander(
+            f"Earlier drafts for this student ({len(selected['earlier_drafts'])})",
+            icon=":material/history:",
+        ):
+            st.caption(
+                "Newer drafts replace these in the queue. They stay on record, read-only, and are not counted as waiting."
+            )
+            dataframe(
+                [
+                    {
+                        "Draft version": e.get("artifact_version"),
+                        "Drafted": labels.nice_time(e.get("drafted_at")),
+                        "Review cycle opened": labels.nice_time(e.get("opened_at")),
+                        "Case": labels.short_ref(e.get("case_id")),
+                    }
+                    for e in selected["earlier_drafts"]
+                ]
+            )
     packet = selected.get("recommendation") or {}
     validation = selected.get("validation") or {}
     ui.gate_banner(
@@ -2864,11 +2926,8 @@ def render_draft_reviews(
             ui.citation_chips(packet.get("citations", []))
     with check_col, ui.card(f"validation_{selected['id']}"):
         st.html('<p class="aura-eyebrow">Validation report</p>')
-        st.markdown(
-            ui.badge_md("Passed every check", "green", ":material/verified:")
-            if validation.get("valid")
-            else ui.badge_md("Did not pass", "red", ":material/report:")
-        )
+        headline, tone, icon = labels.validation_headline(validation)
+        st.markdown(ui.badge_md(headline, tone, icon))
         checks = validation.get("checks") or {}
         checks = checks if isinstance(checks, dict) else {}
         st.caption("Chapter 11 acceptance checks")
@@ -3117,18 +3176,23 @@ def render_review_page(actor: dict[str, Any]) -> None:
         risk_rows = review.get("riskView") or []
         risk_by_student = {str(row.get("studentId")): row for row in risk_rows}
         drafts = queue.get("drafts") or []
+        awaiting = int(queue.get("awaitingCount", len(drafts)))
         ui.kpi_row(
             [
                 {
                     "label": "Awaiting your decision"
                     if role == "faculty"
                     else "Awaiting mentors",
-                    "value": len(drafts),
+                    "value": awaiting,
                     "icon": ":material/front_hand:",
                 },
                 {
                     "label": "Flagged students",
-                    "value": sum(1 for row in risk_rows if row.get("flagged"))
+                    "value": sum(
+                        1
+                        for row in risk_rows
+                        if row.get("flagged") and row.get("latest", True)
+                    )
                     if role == "faculty"
                     else "—",
                     "icon": ":material/flag:",
@@ -3149,7 +3213,7 @@ def render_review_page(actor: dict[str, Any]) -> None:
         )
         tab_queue, tab_risk, tab_plans, tab_outcomes, tab_policies = st.tabs(
             [
-                f":material/front_hand: Review queue ({len(drafts)})",
+                f":material/front_hand: Review queue ({awaiting})",
                 ":material/monitoring: Risk view",
                 ":material/hub: Plans & agent runs",
                 ":material/timeline: Outcomes",
@@ -3386,6 +3450,18 @@ def render_lms(actor: dict[str, Any]) -> None:
             "📝",
         )
     submitted_ids = {row.get("assignment_id") for row in submissions}
+    late_ids = {
+        row.get("assignment_id")
+        for row in submissions
+        if labels.is_late(
+            next(
+                (a.get("due_at") for a in assignments if a.get("id") == row.get("assignment_id")),
+                None,
+            ),
+            row.get("submitted_at"),
+            row.get("late"),
+        )
+    }
     for assignment in assignments:
         passed = bool(assignment.get("deadline_passed"))
         with st.expander(
@@ -3403,7 +3479,9 @@ def render_lms(actor: dict[str, Any]) -> None:
             ]
             if is_student:
                 badges.append(
-                    ui.badge_md("Submitted", "green", ":material/check:")
+                    ui.badge_md("Submitted late", "orange", ":material/schedule:")
+                    if assignment.get("id") in late_ids
+                    else ui.badge_md("Submitted", "green", ":material/check:")
                     if assignment.get("id") in submitted_ids
                     else ui.badge_md(
                         "Not submitted", "gray", ":material/radio_button_unchecked:"
@@ -3554,11 +3632,17 @@ def render_lms(actor: dict[str, Any]) -> None:
         )
         current_submission = submissions_by_assignment.get(assignment_id)
         if current_submission:
+            was_late = labels.is_late(
+                assignment.get("due_at"),
+                current_submission.get("submitted_at"),
+                current_submission.get("late"),
+            )
             st.markdown(
                 ui.badge_md(
-                    f"Submitted {labels.nice_time(current_submission.get('submitted_at'))}",
-                    "green",
-                    ":material/check:",
+                    f"Submitted {labels.nice_time(current_submission.get('submitted_at'))}"
+                    + (" · late" if was_late else ""),
+                    "orange" if was_late else "green",
+                    ":material/schedule:" if was_late else ":material/check:",
                 )
             )
             if current_submission.get("feedback"):
@@ -3742,14 +3826,16 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
         return
     decided = [r for r in per_run if r.get("decision")]
     approved = [r for r in decided if r.get("decision") == "approved"]
-    total = len(per_run)
+    totals = metrics.get("totals") or {}
     ui.kpi_row(
         [
             {
                 "label": "Validation pass rate",
-                "value": f"{round(100 * sum(1 for r in per_run if r.get('validationPassed')) / total)}%",
+                "value": labels.percent_text(
+                    totals.get("validationPassed", 0), totals.get("evaluated", 0)
+                ),
                 "icon": ":material/verified:",
-                "help": "Share of drafts that passed every acceptance check before mentor review.",
+                "help": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)} drafts passed every acceptance check before mentor review. Cycles are listed below.",
             },
             {
                 "label": "Targeted repairs",
@@ -3758,8 +3844,9 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
             },
             {
                 "label": "Escalated to a mentor",
-                "value": sum(1 for r in per_run if r.get("escalated")),
+                "value": totals.get("escalated", 0),
                 "icon": ":material/front_hand:",
+                "help": "Same count as the Escalations card on AI activity.",
             },
             {
                 "label": "Approved as drafted",
@@ -4043,7 +4130,7 @@ def render_department_home(overview: dict[str, Any]) -> None:
                     "Register number": r.get("register_number"),
                     "Semester": r.get("semester"),
                     "Mentor": r.get("mentor_name"),
-                    "Courses": r.get("course_count"),
+                    "Courses": r.get("active_registrations"),
                 }
                 for r in overview.get("students", [])
             ]
@@ -4157,14 +4244,18 @@ def render_governance(actor: dict[str, Any]) -> None:
         eyebrow="Governance & audit",
     )
     review = load("review_overview")
-    jobs = review.get("jobs") or []
-    per_run = (review.get("metrics") or {}).get("perRun") or []
+    all_jobs = review.get("jobs") or []
+    # Jobs that have not started are waiting, not recorded runs (E2E log #11).
+    jobs = [job for job in all_jobs if job.get("status") != "queued"]
+    waiting = [job for job in all_jobs if job.get("status") == "queued"]
+    totals = (review.get("metrics") or {}).get("totals") or {}
     ui.kpi_row(
         [
             {
                 "label": "Recorded runs",
                 "value": len(jobs),
                 "icon": ":material/smart_toy:",
+                "help": f"Reviews that have started. {len(waiting)} more are waiting to start and are listed separately.",
             },
             {
                 "label": "AI model runs",
@@ -4173,15 +4264,17 @@ def render_governance(actor: dict[str, Any]) -> None:
             },
             {
                 "label": "Passed validation",
-                "value": f"{round(100 * sum(1 for r in per_run if r.get('validationPassed')) / len(per_run))}%"
-                if per_run
-                else "—",
+                "value": labels.percent_text(
+                    totals.get("validationPassed", 0), totals.get("evaluated", 0)
+                ),
                 "icon": ":material/verified:",
+                "help": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)} drafts that reached validation.",
             },
             {
                 "label": "Escalations",
-                "value": sum(1 for job in jobs if job.get("status") == "needs_human"),
+                "value": totals.get("escalated", 0),
                 "icon": ":material/front_hand:",
+                "help": "Reviews handed to a mentor because the agents could not finish them.",
             },
             {
                 "label": "Waiting for AI",
@@ -4204,6 +4297,26 @@ def render_governance(actor: dict[str, Any]) -> None:
         render_agent_graph(review)
     with tab_runs:
         ui.section("Recorded runs", icon=":material/history:")
+        if waiting:
+            paused = sum(1 for job in waiting if job.get("plan_paused"))
+            with st.expander(
+                f"Waiting to start ({len(waiting)})", icon=":material/hourglass_empty:"
+            ):
+                st.caption(
+                    "These reviews were planned and locked but have not been run, so they are not recorded runs. "
+                    f"{paused} sit in a paused plan. Nothing is lost; they start when the mentor runs the plan."
+                )
+                dataframe(
+                    [
+                        {
+                            "Review": labels.short_ref(row.get("id")),
+                            "Plan": labels.short_ref(row.get("plan_id")),
+                            "Plan state": "Paused" if row.get("plan_paused") else "Locked, not run",
+                            "Created": labels.nice_time(row.get("created_at")),
+                        }
+                        for row in waiting
+                    ]
+                )
         dataframe(
             [
                 {

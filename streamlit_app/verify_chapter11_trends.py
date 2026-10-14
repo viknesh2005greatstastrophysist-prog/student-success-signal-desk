@@ -66,10 +66,21 @@ try:
         "mode",
         "model_id",
         "drafted_at",
+        "earlier_count",
+        "earlier_drafts",
     }
     assert all(set(row) <= shown for row in queue["drafts"] + queue["legacyDrafts"])
     assert all(row["mode"] == "model" for row in queue["drafts"])
     assert all(row["mode"] != "model" for row in queue["legacyDrafts"])
+    # One definition of "awaiting": the queue, its count and the overview agree,
+    # and each student appears once (earlier drafts ride along as history).
+    assert queue["awaitingCount"] == len(queue["drafts"])
+    assert len({row["student_id"] for row in queue["drafts"]}) == len(queue["drafts"])
+    overview = c.request("overview", token=login["token"])
+    assert overview["counts"]["pending_reviews"] == queue["awaitingCount"], (
+        overview["counts"],
+        queue["awaitingCount"],
+    )
 finally:
     c.logout(login["token"])
     c.close()

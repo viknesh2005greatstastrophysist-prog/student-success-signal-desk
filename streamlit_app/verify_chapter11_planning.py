@@ -165,6 +165,13 @@ next(t for t in at.text_input if t.label == "Pause or resume reason").set_value(
 next(b for b in at.button if b.label == "Resume review").click().run()
 assert not next(b for b in at.button if b.label == "Run review").disabled
 assert not at.exception and not at.error
+# This record is never executed. Leave it paused, with an audited reason, so its
+# queued review is not mistaken for work that is stuck (E2E log #11).
+next(t for t in at.text_input if t.label == "Pause or resume reason").set_value(
+    "Verification record: this plan is never run"
+)
+next(b for b in at.button if b.label == "Pause review").click().run()
+assert not at.exception and not at.error
 next(b for b in at.button if b.label == "Sign out").click().run()
 c = Client()
 login = c.login(account["email"], account["password"], "faculty")
@@ -176,7 +183,7 @@ try:
     assert body["studentIds"] == [student], "the mentor's selection is authoritative"
     assert body["scope"]["basis"] == "selected" and "scopeConflict" not in body
     assert body["answeredQuestions"] == QUESTIONS
-    assert saved["plan"]["revision"] == 4
+    assert saved["plan"]["revision"] == 5 and saved["plan"]["paused"] is True
     assert saved["jobs"][0]["status"] == "queued"
     assert any(e["event_type"] == "plan.revised" for e in saved["events"])
 finally:
