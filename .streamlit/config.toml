@@ -1,59 +1,64 @@
-# AURA visual system. Semantic colours follow the Chapter 11 node-graph legend:
-# navy = coordinator, blue = specialist agents, amber (orange) = human gate,
-# green = governed publish. Violet/gray/red are reserved for risk and attention.
+# AURA "Signal" visual system: quiet paper, ink and one signal colour.
+# paper #F4F1EA, surface #FBFAF6, ink #0E1116, ink-2 #3A3F47, hairline #E2DDD2.
+# signal (vermilion) #FF5A1F = primary CTA and "needs you"; agent (cobalt) #2B59FF = anything the AI did.
+# Risk bands: low #2F9E6F, medium #E5A200, high #E5484D. Streamlit tone names map onto them:
+# blue = agent, orange = needs a human (signal), green = low / done, violet = medium risk,
+# red = high / failed, gray = neutral. Primary stays ink so selection states are calm; the
+# vermilion primary button is applied in ui.py (a single CTA per view).
 
 [theme]
 base = "light"
-primaryColor = "#1B2A4A"
-backgroundColor = "#F6F4EF"
-secondaryBackgroundColor = "#FBFAF7"
-textColor = "#14213D"
-linkColor = "#2F6FB0"
+primaryColor = "#0E1116"
+backgroundColor = "#F4F1EA"
+secondaryBackgroundColor = "#FBFAF6"
+textColor = "#0E1116"
+linkColor = "#2B59FF"
 linkUnderline = false
-borderColor = "#E2DED5"
+borderColor = "#E2DDD2"
 showWidgetBorder = true
 showSidebarBorder = false
-baseRadius = "10px"
-buttonRadius = "8px"
-font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
-headingFont = "Source Serif 4:https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&display=swap"
-codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
-headingFontWeights = [650, 600, 600, 600, 600, 600]
-headingFontSizes = ["2.5rem", "1.65rem", "1.25rem", "1.05rem", "0.95rem", "0.875rem"]
-metricValueFontWeight = 600
-dataframeBorderColor = "#E8E4DB"
-dataframeHeaderBackgroundColor = "#F1EEE7"
-codeBackgroundColor = "#F1EEE7"
-blueColor = "#2F6FB0"
-blueBackgroundColor = "#E7F0F9"
-blueTextColor = "#1E5592"
-greenColor = "#1F7A4D"
-greenBackgroundColor = "#E4F3EA"
-greenTextColor = "#17603C"
-orangeColor = "#B7791F"
-orangeBackgroundColor = "#FBF1DE"
-orangeTextColor = "#7A4F0A"
-redColor = "#B42318"
-redBackgroundColor = "#FCEBE9"
-redTextColor = "#981B12"
-violetColor = "#6B3FA0"
-violetBackgroundColor = "#F1EBF8"
-violetTextColor = "#56327F"
-grayColor = "#6B7280"
-grayBackgroundColor = "#EEF0F3"
-grayTextColor = "#4A5568"
-chartCategoricalColors = ["#1B2A4A", "#2F6FB0", "#B7791F", "#1F7A4D", "#6B3FA0", "#B42318", "#8A94A6"]
-chartSequentialColors = ["#E7F0F9", "#C9DCF0", "#A9C6E6", "#86AEDB", "#6496CC", "#467FBE", "#2F6FB0", "#255B93", "#1C4776", "#14335A"]
+baseRadius = "12px"
+buttonRadius = "full"
+baseFontSize = 15
+font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
+headingFont = "Instrument Serif:https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
+codeFont = "Geist Mono:https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap"
+headingFontWeights = [400, 400, 400, 600, 600, 600]
+headingFontSizes = ["3.5rem", "2.25rem", "1.75rem", "1.0625rem", "0.9375rem", "0.75rem"]
+metricValueFontWeight = 500
+dataframeBorderColor = "#E2DDD2"
+dataframeHeaderBackgroundColor = "#F4F1EA"
+codeBackgroundColor = "#EFEBE1"
+blueColor = "#2B59FF"
+blueBackgroundColor = "#E8EDFF"
+blueTextColor = "#1F3FBF"
+greenColor = "#2F9E6F"
+greenBackgroundColor = "#E2F3EA"
+greenTextColor = "#1B6B49"
+orangeColor = "#FF5A1F"
+orangeBackgroundColor = "#FFEDE4"
+orangeTextColor = "#B8360A"
+redColor = "#E5484D"
+redBackgroundColor = "#FCE6E7"
+redTextColor = "#B3262B"
+violetColor = "#E5A200"
+violetBackgroundColor = "#FBF0CF"
+violetTextColor = "#7A5600"
+grayColor = "#5B6068"
+grayBackgroundColor = "#ECE8DE"
+grayTextColor = "#3A3F47"
+chartCategoricalColors = ["#2B59FF", "#2F9E6F", "#E5A200", "#E5484D", "#0E1116", "#FF5A1F", "#8A8F98"]
+chartSequentialColors = ["#EEF1FF", "#D3DCFF", "#B3C2FF", "#90A6FF", "#6C88FF", "#486BFF", "#2B59FF", "#2146CC", "#183499", "#102366"]
 
 [theme.sidebar]
-backgroundColor = "#1B2A4A"
-secondaryBackgroundColor = "#24365C"
-textColor = "#E9EDF5"
-primaryColor = "#F2C46D"
-borderColor = "#33476E"
-linkColor = "#BFD6F2"
-codeBackgroundColor = "#24365C"
-grayTextColor = "#B8C2D6"
+backgroundColor = "#0E1116"
+secondaryBackgroundColor = "#3A3F47"
+textColor = "#F4F1EA"
+primaryColor = "#FF5A1F"
+borderColor = "#2A2F37"
+linkColor = "#9DB1FF"
+codeBackgroundColor = "#1A1F27"
+grayTextColor = "#A8ADB6"
 
 [client]
 toolbarMode = "minimal"
