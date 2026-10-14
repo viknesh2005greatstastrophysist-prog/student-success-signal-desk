@@ -33,7 +33,7 @@ class Transport:
             ]
         return {{"action": action, "data": data or {{}}, "n": len(self.calls)}}
 
-    def logout(self, token):
+    def logout(self, token, **options):
         self.calls.append("logout")
 
 

@@ -400,6 +400,16 @@ hr, [data-testid="stDivider"] hr { border: 0; border-top: 1px solid var(--sep); 
 .st-key-login_panel [data-baseweb="input"] input { min-height: 36px; padding-top: 8px; padding-bottom: 8px; }
 .st-key-login_panel [data-testid="stBaseButton-primaryFormSubmit"] { width: 100%; min-height: 52px; justify-content: center; }
 .st-key-login_panel [data-testid="stCaptionContainer"] { text-align: center; color: var(--text-3); }
+.st-key-login_panel [data-testid="stCheckbox"] label p { font-size: 15px; color: var(--text-2); }
+.st-key-login_panel [data-testid="stBaseButton-secondary"] { width: 100%; min-height: 48px; justify-content: center; border-radius: 14px; }
+.st-key-cookie_sink { display: none !important; }
+/* Test accounts: this computer only (local_accounts.py). Quiet, below the card. */
+.st-key-login_local { width: 100%; margin-top: 16px; padding: 20px 20px 16px; border: 1px solid var(--hair); border-radius: 20px; gap: 10px !important; }
+.st-key-login_local [data-testid="stCaptionContainer"] { text-align: center; color: var(--text-3); }
+.st-key-login_local [data-testid="stBaseButton-secondary"] { width: 100%; min-height: 38px; padding: 0 8px; justify-content: center; border-radius: 12px; }
+.st-key-login_local [data-testid="stBaseButton-secondary"] p { display: block; font-size: 13px; line-height: 1.2; margin: 0; white-space: nowrap; overflow: visible; text-overflow: clip; }
+.st-key-login_local [data-testid="stBaseButton-secondary"] [data-testid="stMarkdownContainer"] { margin: 0; }
+.aura-local-title { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); text-align: center; margin: 0; }
 
 /* ---- Motion: content fades in over 250ms; hover lifts 1px; nothing bounces ----------------------------- */
 @keyframes aura-fade { from { opacity: 0; } }

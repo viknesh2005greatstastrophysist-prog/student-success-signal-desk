@@ -11,6 +11,7 @@ from pathlib import Path
 import streamlit as st
 
 import ui
+import device
 from auth import login_view, sidebar_footer, sign_in_sidebar
 from common import PORTAL_ROLES
 from views.pages import pages_for
@@ -39,6 +40,7 @@ def main() -> None:
         st.session_state.pop("success_notice", None)
         st.error("Your session no longer matches this workspace. Sign in again.")
         st.stop()
+    device.flush_cookies()
     sign_in_sidebar(actor)
     success_notice = st.session_state.pop("success_notice", None)
     if success_notice:

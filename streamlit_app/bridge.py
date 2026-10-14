@@ -325,17 +325,40 @@ class Client:
             except BridgeError:
                 pass
 
-    def login(self, email: str, password: str, portal: str) -> dict:
+    def login(
+        self, email: str, password: str, portal: str, remember: bool = False
+    ) -> dict:
         source = st.context.ip_address
         if not isinstance(source, str) or not source:
             source = "server-local"
         return self.request(
             "login",
-            {"email": email, "password": password, "portal": portal, "source": source},
+            {
+                "email": email,
+                "password": password,
+                "portal": portal,
+                "source": source,
+                "remember": bool(remember),
+            },
         )
 
-    def logout(self, token: str):
-        return self.request("logout", token=token)
+    def device_resume(self, tokens: dict[str, str], auto: bool) -> dict:
+        """Which of the browser's remembered-device tokens still work; with `auto`,
+        also opens the most recently used workspace."""
+        return self.request("device_resume", {"tokens": tokens, "auto": bool(auto)})
+
+    def device_login(self, portal: str, token: str) -> dict:
+        return self.request("device_login", {"portal": portal, "token": token})
+
+    def logout(
+        self, token: str, *, forget: bool = True, device_token: str | None = None
+    ):
+        """End the session. `forget` (Sign out) also revokes the workspace's remembered
+        device tokens; `forget=False` (Switch workspace) keeps them."""
+        payload: dict = {"forget": bool(forget)}
+        if device_token:
+            payload["deviceToken"] = device_token
+        return self.request("logout", payload, token=token)
 
     def close(self):
         for worker in self.workers():
