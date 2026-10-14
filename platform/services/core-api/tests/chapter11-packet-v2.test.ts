@@ -18,6 +18,7 @@ import {
   type PacketV2,
 } from "../lib/chapter11/engine";
 import { buildAliases, courseValueKey } from "../lib/chapter11/egress";
+import { hashJson, verifyReplay } from "../lib/support-commands";
 import { chainComposer, ModelLimiter, type Endpoint } from "../lib/chapter11/provider";
 import { route, startMockOpenAI } from "./mock-openai-server";
 
@@ -227,4 +228,38 @@ test("aliases are fresh per run and the course order is salted", () => {
   const a = buildAliases(e, "00000001"), b = buildAliases(e, "ffffffff");
   assert.notEqual(a.caseAlias, b.caseAlias);
   assert.deepEqual(new Set(Object.values(a.courses)), new Set(["21CS501", "21CS502"]));
+});
+
+// Replay: a stored packet is revalidated under its own version and must still
+// fail when either the snapshot or the packet was altered after execution.
+function stored(c: GenerationContext, packet: unknown) {
+  const evidence = { ...structuredClone(c.evidence), chapterJobId: randomUUID(), risk: c.risk, policy: c.policy, domain: c.domain } as unknown as Record<string, unknown>;
+  return { evidence, recommendation: packet, input_hash: hashJson(evidence), content_hash: hashJson(packet) };
+}
+
+test("replay matches a recorded packet-v2 and a recorded v1 packet", () => {
+  const c = context();
+  const v2 = stored(c, c.baseline);
+  assert.equal((c.baseline as PacketV2).schema, "packet-v2");
+  assert.equal(verifyReplay(v2).matched, true);
+  const v1 = stored(c, formatSkill(c.risk, c.domain));
+  assert.equal(verifyReplay(v1).matched, true);
+});
+
+test("replay reports a mismatch when the v2 packet or its snapshot was tampered with", () => {
+  const c = context();
+  // Packet altered after execution: the recorded output hash no longer matches.
+  const swapped = stored(c, c.baseline);
+  const edited = structuredClone(c.baseline as PacketV2);
+  edited.rationale[0]!.text = "Attendance is 41% against the 75% minimum in the approved policy.";
+  assert.equal(verifyReplay({ ...swapped, recommendation: edited }).matched, false);
+  // Packet altered and its hash re-recorded: claim-level validation still rejects it.
+  assert.equal(verifyReplay(stored(c, edited)).matched, false);
+  // Snapshot altered after execution: the recorded input hash no longer matches.
+  const original = stored(c, c.baseline);
+  const evidence = structuredClone(original.evidence) as { academic: { values: Record<string, number> } };
+  evidence.academic.values.attendancePct = 80;
+  assert.equal(verifyReplay({ ...original, evidence: evidence as unknown as Record<string, unknown> }).matched, false);
+  // Snapshot and its hash both re-recorded, but the stored risk no longer derives from it.
+  assert.equal(verifyReplay({ ...original, evidence: evidence as unknown as Record<string, unknown>, input_hash: hashJson(evidence) }).matched, false);
 });

@@ -6,7 +6,7 @@ import { assertCommandId, findDuplicateCommand, getCurrentGeneration, writeComma
 import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
 import { requireRole, requireDemoInstitution } from "./security";
-import { validatePacket, riskAnalysis, digest, type Evidence, type Risk, type Policy, type domainNames } from "./chapter11/engine";
+import { validateAnyPacket, riskAnalysis, digest, type Evidence, type Risk, type Policy, type domainNames } from "./chapter11/engine";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
 export const supportDecisionInput = z.object({
@@ -342,6 +342,21 @@ export async function decideSupportCase(
   });
 }
 
+/**
+ * Recompute exactly what execution recorded and compare. Legacy cases are
+ * recomposed deterministically; Chapter 11 cases hash the stored snapshot and
+ * packet, then revalidate the packet under its own version (v1 exact-string
+ * rules, packet-v2 claim-level rules) and re-derive the risk analysis.
+ */
+export function verifyReplay(original: { input_hash: string; evidence: Record<string, unknown>; content_hash: string; recommendation: unknown }) {
+  const chapter = original.evidence.chapterJobId ? original.evidence as unknown as Evidence & { risk: Risk; policy: Policy; domain: typeof domainNames[number] } : null;
+  const replayed = chapter ? { recommendation: original.recommendation } : composeValidatedRecommendation(original.evidence);
+  const inputHash = hashJson(original.evidence);
+  const outputHash = hashJson(replayed.recommendation);
+  const chapterValid = !chapter || (validateAnyPacket(original.recommendation, chapter, chapter.risk, chapter.domain, { policy: chapter.policy }).valid && digest(riskAnalysis(chapter, chapter.policy)) === digest(chapter.risk));
+  return { inputHash, outputHash, matched: inputHash === original.input_hash && outputHash === original.content_hash && chapterValid };
+}
+
 export async function replayAgentRun(actor: ActorContext, runId: string, commandId: string) {
   assertCommandId(commandId);
   z.string().uuid().parse(runId);
@@ -369,13 +384,8 @@ export async function replayAgentRun(actor: ActorContext, runId: string, command
     );
     if (!result.rowCount) throw new NotFoundError("Replayable agent run not found");
     const original = result.rows[0]!;
-    const chapter = original.evidence.chapterJobId ? original.evidence as unknown as Evidence & { risk: Risk; policy: Policy; domain: typeof domainNames[number] } : null;
-    const replayed = chapter ? { recommendation: original.recommendation } : composeValidatedRecommendation(original.evidence);
-    const inputHash = hashJson(original.evidence);
-    const outputHash = hashJson(replayed.recommendation);
+    const { inputHash, outputHash, matched } = verifyReplay(original);
     const replayId = randomUUID();
-    const chapterValid = !chapter || (validatePacket(original.recommendation, chapter, chapter.risk, chapter.domain).valid && digest(riskAnalysis(chapter, chapter.policy)) === digest(chapter.risk));
-    const matched = inputHash === original.input_hash && outputHash === original.content_hash && chapterValid;
     const inserted = await client.query<{ created_at: Date }>(
       `INSERT INTO replay_receipts
        (id, generation_id, original_agent_run_id, replay_agent_run_id, requested_by_person_id, input_hash, output_hash, matched, command_id)

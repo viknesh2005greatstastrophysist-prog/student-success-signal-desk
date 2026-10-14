@@ -49,7 +49,7 @@ test("isolated Core schema includes the Chapter 11 tables and resets serially", 
     "SELECT count(*)::text AS count FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations'",
     [schema],
   );
-  assert.equal(Number(tableCount.rows[0]?.count), 51);
+  assert.equal(Number(tableCount.rows[0]?.count), 53);
 
   const completedResets = await pool.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM "${schema}".simulation_resets WHERE completed_at IS NOT NULL`,
@@ -60,7 +60,7 @@ test("isolated Core schema includes the Chapter 11 tables and resets serially", 
     "SELECT count(DISTINCT trigger_name)::text AS count FROM information_schema.triggers WHERE trigger_schema = $1 AND trigger_name LIKE '%_append_only'",
     [schema],
   );
-  assert.equal(Number(triggerCount.rows[0]?.count), 13);
+  assert.equal(Number(triggerCount.rows[0]?.count), 15);
 
   const fixtures = await pool.query<{
     generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;

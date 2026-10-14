@@ -30975,6 +30975,14 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
     return { supportCase, decision, plan, duplicate: false, receipt };
   });
 }
+function verifyReplay(original) {
+  const chapter = original.evidence.chapterJobId ? original.evidence : null;
+  const replayed = chapter ? { recommendation: original.recommendation } : composeValidatedRecommendation(original.evidence);
+  const inputHash = hashJson(original.evidence);
+  const outputHash = hashJson(replayed.recommendation);
+  const chapterValid = !chapter || validateAnyPacket(original.recommendation, chapter, chapter.risk, chapter.domain, { policy: chapter.policy }).valid && digest(riskAnalysis(chapter, chapter.policy)) === digest(chapter.risk);
+  return { inputHash, outputHash, matched: inputHash === original.input_hash && outputHash === original.content_hash && chapterValid };
+}
 async function replayAgentRun(actor, runId, commandId) {
   assertCommandId(commandId);
   external_exports.string().uuid().parse(runId);
@@ -31002,13 +31010,8 @@ async function replayAgentRun(actor, runId, commandId) {
     );
     if (!result.rowCount) throw new NotFoundError("Replayable agent run not found");
     const original = result.rows[0];
-    const chapter = original.evidence.chapterJobId ? original.evidence : null;
-    const replayed = chapter ? { recommendation: original.recommendation } : composeValidatedRecommendation(original.evidence);
-    const inputHash = hashJson(original.evidence);
-    const outputHash = hashJson(replayed.recommendation);
+    const { inputHash, outputHash, matched } = verifyReplay(original);
     const replayId = randomUUID5();
-    const chapterValid = !chapter || validatePacket(original.recommendation, chapter, chapter.risk, chapter.domain).valid && digest(riskAnalysis(chapter, chapter.policy)) === digest(chapter.risk);
-    const matched = inputHash === original.input_hash && outputHash === original.content_hash && chapterValid;
     const inserted = await client.query(
       `INSERT INTO replay_receipts
        (id, generation_id, original_agent_run_id, replay_agent_run_id, requested_by_person_id, input_hash, output_hash, matched, command_id)
