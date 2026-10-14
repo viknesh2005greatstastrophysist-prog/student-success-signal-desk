@@ -29118,7 +29118,7 @@ async function lmsCourseDetail(actor, offeringId) {
     );
     const submissions = await client.query(
       `SELECT s.id,s.assignment_id,s.student_id,p.display_name AS student_name,s.answer,s.attachment->>'name' AS attachment_name,
-        s.submitted_at::text,s.revision,s.score::text,s.feedback,s.graded_at::text
+        s.submitted_at::text,(s.submitted_at > a.due_at) AS late,s.revision,s.score::text,s.feedback,s.graded_at::text
        FROM lms_submissions s JOIN lms_assignments a ON a.id=s.assignment_id JOIN student_profiles sp ON sp.id=s.student_id JOIN people p ON p.id=sp.person_id
        WHERE s.generation_id=$1 AND a.course_offering_id=$2 AND ($3<>'student' OR (a.published AND s.student_id=$4)) ORDER BY s.submitted_at DESC`,
       [generation, offeringId, actor.role, actor.studentId ?? null]
@@ -29193,6 +29193,39 @@ async function lmsEvidence(client, generation, studentId) {
     synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
     values
   });
+}
+
+// services/core-api/lib/chapter11/awaiting.ts
+var time3 = (value) => new Date(value).getTime();
+function collapseAwaiting(rows) {
+  const byStudent = /* @__PURE__ */ new Map();
+  for (const row of rows)
+    byStudent.set(row.student_id, [...byStudent.get(row.student_id) ?? [], row]);
+  return [...byStudent.values()].map((list) => {
+    const sorted = [...list].sort(
+      (a, b) => time3(b.drafted_at) - time3(a.drafted_at) || time3(b.opened_at) - time3(a.opened_at)
+    );
+    return { current: sorted[0], earlier: sorted.slice(1) };
+  }).sort((a, b) => time3(b.current.drafted_at) - time3(a.current.drafted_at));
+}
+async function awaitingCases(client, generation, actor) {
+  const rows = await client.query(
+    `SELECT DISTINCT ON (c.id) c.id AS case_id,c.student_id,c.opened_at,r.id AS run_id,a.id AS artifact_id,a.artifact_version,a.created_at AS drafted_at
+     FROM support_cases c JOIN student_profiles s ON s.id=c.student_id
+     JOIN agent_runs r ON r.support_case_id=c.id AND r.mode='model'
+     JOIN agent_artifacts a ON a.agent_run_id=r.id
+     WHERE c.generation_id=$1 AND c.status='awaiting_faculty'
+     AND EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.support_case_id=c.id AND j.generation_id=$1)
+     AND ($2='governance' OR s.department_id=$3)
+     AND ($2<>'faculty' OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$4))
+     AND NOT EXISTS(SELECT 1 FROM support_cases later WHERE later.student_id=c.student_id AND later.generation_id=c.generation_id AND later.opened_at>c.opened_at AND later.status IN ('approved','rejected'))
+     ORDER BY c.id,r.started_at DESC,a.artifact_version DESC`,
+    [generation, actor.role, actor.departmentId ?? null, actor.personId]
+  );
+  return collapseAwaiting(rows.rows);
+}
+async function awaitingCount(client, generation, actor) {
+  return (await awaitingCases(client, generation, actor)).length;
 }
 
 // services/core-api/lib/experience-queries.ts
@@ -29292,10 +29325,13 @@ async function experienceOverview(actor) {
       `SELECT f.id,f.student_id,p.display_name AS student_name,mp.display_name AS mentor_name,f.due_on::text,f.note,f.shared,f.status,f.outcome,f.revision,(f.due_on<CURRENT_DATE AND f.status<>'completed') AS overdue FROM support_followups f JOIN student_profiles s ON s.id=f.student_id JOIN people p ON p.id=s.person_id JOIN people mp ON mp.id=f.mentor_person_id JOIN mentor_assignments ma ON ma.student_id=s.id WHERE f.generation_id=$1 AND s.department_id=$2 AND ($3='hod' OR ma.faculty_person_id=$4) ORDER BY f.due_on`,
       [gen, actor.departmentId, actor.role, actor.personId]
     )).rows : [];
-    const status = ["hod", "faculty", "governance"].includes(actor.role) ? (await client.query(
-      `SELECT count(*) FILTER(WHERE j.status='awaiting_faculty')::int AS pending,count(*) FILTER(WHERE j.status IN ('failed','blocked'))::int AS failed FROM ch11_jobs j JOIN student_profiles s ON s.id=j.student_id WHERE j.generation_id=$1 AND ($2='governance' OR s.department_id=$3) AND ($2<>'faculty' OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$4))`,
-      [gen, actor.role, actor.departmentId ?? null, actor.personId]
-    )).rows[0] : void 0;
+    const status = ["hod", "faculty", "governance"].includes(actor.role) ? {
+      pending: await awaitingCount(client, gen, actor),
+      failed: (await client.query(
+        `SELECT count(*) FILTER(WHERE j.status IN ('failed','blocked'))::int AS failed FROM ch11_jobs j JOIN student_profiles s ON s.id=j.student_id WHERE j.generation_id=$1 AND ($2='governance' OR s.department_id=$3) AND ($2<>'faculty' OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$4))`,
+        [gen, actor.role, actor.departmentId ?? null, actor.personId]
+      )).rows[0].failed
+    } : void 0;
     const windows = actor.role === "hod" ? (await client.query(
       "SELECT id,term_id,opens_at,closes_at,status,revision FROM registration_windows WHERE generation_id=$1 AND department_id=$2",
       [gen, actor.departmentId]
@@ -32544,6 +32580,7 @@ function editDistance(before, after) {
   }
   return row[b.length];
 }
+var isEscalated = (r) => r.status === "needs_human" || r.validation?.escalated === true;
 function evaluationMetrics(rows) {
   const perRun = rows.filter((r) => r.validation).map((r) => ({
     jobId: r.id,
@@ -32553,7 +32590,7 @@ function evaluationMetrics(rows) {
     fallback: r.validation.fallback === true,
     toolCalls: (r.validation.provenance?.agent?.toolCalls ?? []).filter((c) => c.status === "ok").length,
     toolRefusals: (r.validation.provenance?.agent?.toolCalls ?? []).filter((c) => c.status !== "ok").length,
-    escalated: r.status === "needs_human" || r.validation.escalated === true,
+    escalated: isEscalated(r),
     mode: r.mode ?? "not recorded",
     decision: r.decision ?? null,
     approveAsIs: r.decision === "approved" ? r.artifact_version === 1 : null,
@@ -32583,17 +32620,38 @@ function evaluationMetrics(rows) {
       averageDecisionSeconds: decided.length ? decided.reduce((n, x) => n + (x.timeToDecisionSeconds ?? 0), 0) / decided.length : null
     };
   });
-  return { perRun, cycles };
+  const totals = {
+    jobs: rows.length,
+    recorded: rows.filter((r) => r.status !== "queued").length,
+    waiting: rows.filter((r) => r.status === "queued").length,
+    evaluated: perRun.length,
+    validationPassed: perRun.filter((r) => r.validationPassed).length,
+    escalated: rows.filter(isEscalated).length,
+    escalatedEvaluated: perRun.filter((r) => r.escalated).length,
+    repairs: perRun.reduce((n, r) => n + r.repairsUsed, 0)
+  };
+  return { perRun, cycles, totals };
 }
 
 // services/core-api/lib/chapter11/dashboard.ts
+var stamp = (job) => job.created_at ? new Date(job.created_at).getTime() : 0;
 function compositeRiskView(students, jobs) {
   const visible = new Map(students.map((student) => [student.id, student]));
-  return jobs.filter((job) => visible.has(job.student_id)).map((job) => {
+  const scoped2 = jobs.filter((job) => visible.has(job.student_id));
+  const latestJob = /* @__PURE__ */ new Map();
+  for (const job of scoped2) {
+    const held = latestJob.get(job.student_id);
+    const evaluated = job.risk?.score != null;
+    const heldEvaluated = held?.risk?.score != null;
+    if (!held || evaluated && !heldEvaluated || evaluated === heldEvaluated && stamp(job) > stamp(held))
+      latestJob.set(job.student_id, job);
+  }
+  return scoped2.map((job) => {
     const student = visible.get(job.student_id);
     return {
       jobId: job.id,
       planId: job.plan_id,
+      latest: latestJob.get(job.student_id) === job,
       studentId: student.id,
       studentName: student.display_name,
       registerNumber: student.register_number,
@@ -33831,7 +33889,7 @@ async function overview(actor) {
       [generation, department, mentor]
     );
     const jobs = await client.query(
-      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' WHEN j.status='failed' AND j.error_code='AI_UNAVAILABLE' THEN 'ai_unavailable' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC",
+      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' WHEN j.status='failed' AND j.error_code='AI_UNAVAILABLE' THEN 'ai_unavailable' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.stage,j.error_code,j.support_case_id,j.updated_at,p.paused AS plan_paused,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC",
       [generation, department, mentor]
     );
     const trends = await client.query(
@@ -34792,16 +34850,40 @@ async function reviewQueue(actor) {
       WHERE p.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$2))) ORDER BY p.created_at DESC`,
       [generation, actor.personId, actor.role, actor.departmentId]
     );
-    const drafts = await client.query(
-      `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
+    const groups = await awaitingCases(client, generation, actor);
+    const DRAFT_SELECT = `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.artifact_version,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
       jsonb_build_object('academic',es.evidence->'academic'->'values','lms',es.evidence->'lms'->'values','internship',es.evidence->'internship'->'values','placement',es.evidence->'placement'->'values') AS evidence_values,
       es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy
-      FROM ch11_jobs j JOIN support_cases c ON c.id=j.support_case_id JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
-      JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id
-      WHERE j.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2))) AND c.status='awaiting_faculty'
-      AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`,
+      FROM support_cases c JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
+      JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id`;
+    const currentIds = groups.map((group) => group.current.artifact_id);
+    const activeRows = currentIds.length ? (await client.query(`${DRAFT_SELECT} WHERE a.id=ANY($1::uuid[])`, [currentIds])).rows : [];
+    const byArtifact = new Map(activeRows.map((row) => [row.artifact_id, row]));
+    const active = groups.flatMap((group) => {
+      const row = byArtifact.get(group.current.artifact_id);
+      if (!row) return [];
+      return [
+        {
+          ...row,
+          earlier_count: group.earlier.length,
+          earlier_drafts: group.earlier.map((e) => ({
+            case_id: e.case_id,
+            artifact_id: e.artifact_id,
+            artifact_version: e.artifact_version,
+            opened_at: e.opened_at,
+            drafted_at: e.drafted_at
+          }))
+        }
+      ];
+    });
+    const legacy = (await client.query(
+      `${DRAFT_SELECT} WHERE c.generation_id=$1 AND c.status='awaiting_faculty' AND r.mode<>'model'
+        AND EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.support_case_id=c.id AND j.generation_id=$1)
+        AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2)))
+        AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)
+        ORDER BY a.created_at DESC`,
       [generation, actor.personId, actor.role, actor.departmentId]
-    );
+    )).rows;
     const log = await client.query(
       `SELECT e.id,e.aggregate_id AS plan_id,e.event_type,e.payload,e.occurred_at,actor.display_name AS actor_name,p.student_id,student.display_name AS student_name FROM domain_events e JOIN support_plans p ON p.id=e.aggregate_id AND p.generation_id=e.generation_id JOIN student_profiles sp ON sp.id=p.student_id JOIN people student ON student.id=sp.person_id JOIN people actor ON actor.id=e.actor_person_id WHERE e.generation_id=$1 AND e.aggregate_type='support_plan' AND e.aggregate_id=ANY($2::uuid[]) ORDER BY e.occurred_at DESC`,
       [generation, plans.rows.map((row) => row.id)]
@@ -34810,8 +34892,6 @@ async function reviewQueue(actor) {
       `SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`,
       [generation, plans.rows.map((row) => row.id)]
     );
-    const active = drafts.rows.filter((row) => row.mode === "model");
-    const legacy = drafts.rows.filter((row) => row.mode !== "model");
     const shape = (rows) => actor.role === "faculty" ? rows : rows.map(
       (row) => ({
         id: row.id,
@@ -34822,13 +34902,16 @@ async function reviewQueue(actor) {
         status: row.status,
         mode: row.mode,
         model_id: row.model_id,
-        drafted_at: row.drafted_at
+        drafted_at: row.drafted_at,
+        earlier_count: row.earlier_count,
+        earlier_drafts: row.earlier_drafts
       })
     );
     return {
       versions: versions.rows,
       plans: plans.rows,
       drafts: shape(active),
+      awaitingCount: groups.length,
       legacyDrafts: shape(legacy),
       interventionLog: log.rows
     };
