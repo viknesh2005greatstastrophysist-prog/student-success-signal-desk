@@ -171,6 +171,7 @@ def render_profile(student_id: str, role: str) -> None:
                 ]
             )
     elif section == "Attendance":
+        st.caption(":material/fact_check: " + labels.ATTENDANCE_BASIS_NOTE)
         dataframe(
             [
                 {

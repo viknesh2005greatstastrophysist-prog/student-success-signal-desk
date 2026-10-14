@@ -1189,9 +1189,25 @@ def render_planner_trace(body: dict[str, Any]) -> None:
 
 
 def provenance_rows(
-    validation: dict[str, Any], mode: Any, model_id: Any
+    validation: dict[str, Any],
+    mode: Any,
+    model_id: Any,
+    evidence_values: Any = None,
 ) -> list[dict[str, str]]:
     """Plain-text rows describing how a draft was produced (mentor/governance only)."""
+    rows = _provenance_rows(validation, mode, model_id)
+    academic = (evidence_values or {}).get("academic") if isinstance(evidence_values, dict) else None
+    basis = academic.get("attendanceBasis") if isinstance(academic, dict) else None
+    if basis:
+        rows.append(
+            {"Step": "Attendance figures", "Detail": labels.attendance_basis_label(basis)}
+        )
+    return rows
+
+
+def _provenance_rows(
+    validation: dict[str, Any], mode: Any, model_id: Any
+) -> list[dict[str, str]]:
     prov = validation.get("provenance") if isinstance(validation, dict) else None
     if not isinstance(prov, dict):
         return [
@@ -1469,7 +1485,12 @@ def render_draft_provenance(
 ) -> None:
     with st.expander("How this draft was produced", icon=":material/route:"):
         dataframe(
-            provenance_rows(validation, selected.get("mode"), selected.get("model_id"))
+            provenance_rows(
+                validation,
+                selected.get("mode"),
+                selected.get("model_id"),
+                selected.get("evidence_values"),
+            )
         )
         render_tool_calls(((validation or {}).get("provenance") or {}).get("agent"))
         st.caption(

@@ -158,6 +158,7 @@ def overview_page() -> None:
     if courses:
         ui.section("Your courses", "Attendance and results recorded so far this term.")
         render_course_cards(courses)
+        st.caption(":material/fact_check: " + labels.ATTENDANCE_BASIS_NOTE)
     else:
         ui.empty_state(
             "No courses yet",
@@ -223,6 +224,7 @@ def course_detail(detail: dict[str, Any]) -> None:
     )
     section = sections(["Attendance", "Marks"], key="student_course_section")
     if section == "Attendance":
+        st.caption(":material/fact_check: " + labels.ATTENDANCE_BASIS_NOTE)
         dataframe(
             [
                 {

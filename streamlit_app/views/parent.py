@@ -288,6 +288,7 @@ def overview_page() -> None:
     if courses:
         ui.section("Courses", "Attendance and results recorded so far this term.")
         render_course_cards(courses)
+        st.caption(":material/fact_check: " + labels.ATTENDANCE_BASIS_NOTE)
     else:
         ui.empty_state(
             "No courses yet",

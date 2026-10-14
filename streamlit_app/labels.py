@@ -176,6 +176,21 @@ NODE_STATES = {
 }
 
 
+# Where the attendance figures come from (data generation realistic-v3): derived from the college's attendance
+# report, per course, not the raw register. The college's original cells stay unchanged under Source records.
+ATTENDANCE_BASIS_NOTE = (
+    "Attendance figures are based on the college attendance report (course-level values built from its "
+    "recorded attendance), not raw register entries."
+)
+ATTENDANCE_BASIS_VALUES = {
+    "college_attendance_report": "College attendance report (course-level values built from it, not raw register entries)"
+}
+
+
+def attendance_basis_label(code: Any) -> str:
+    return ATTENDANCE_BASIS_VALUES.get(str(code), humanize(code))
+
+
 def humanize(code: Any) -> str:
     text = str(code or "").strip()
     if not text:
