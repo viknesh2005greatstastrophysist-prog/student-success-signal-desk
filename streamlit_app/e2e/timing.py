@@ -116,7 +116,7 @@ def main() -> int:
                 page.evaluate(ARM_JS)
                 mark = len(read_log(log))
                 start = time.perf_counter()
-                page.get_by_role("button", name="Sign in", exact=True).click()
+                page.get_by_role("button", name="Continue", exact=True).click()
                 page.wait_for_selector('[data-testid="stSidebar"]', state="attached", timeout=args.timeout * 1000)
                 page.wait_for_function(DONE_JS, timeout=90000, polling=15)
                 page.evaluate("() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))")

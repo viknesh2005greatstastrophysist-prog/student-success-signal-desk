@@ -88,7 +88,7 @@ at = AppTest.from_file(str(root / "streamlit_app/app.py"), default_timeout=30).r
 at.segmented_control[0].set_value("hod")
 at.text_input[0].set_value(account["email"])
 at.text_input[1].set_value(account["password"])
-next(b for b in at.button if b.label == "Sign in").click().run()
+next(b for b in at.button if b.label == "Continue").click().run()
 assert not at.exception and not at.error
 charts = sum("vega" in node.type for node in at)
 # Charts must carry information (E2E log #16): two charts when the recent cycles are big

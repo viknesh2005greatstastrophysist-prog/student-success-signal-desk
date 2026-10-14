@@ -117,7 +117,7 @@ at = AppTest.from_file(str(root / "streamlit_app/app.py"), default_timeout=30).r
 at.segmented_control[0].set_value("faculty")
 at.text_input[0].set_value(account["email"])
 at.text_input[1].set_value(account["password"])
-next(b for b in at.button if b.label == "Sign in").click().run()
+next(b for b in at.button if b.label == "Continue").click().run()
 open_page(at, "reviews")
 at.segmented_control(key="reviews_section").set_value("Start a review").run()
 next(t for t in at.text_area if t.label == "Review request").set_value(

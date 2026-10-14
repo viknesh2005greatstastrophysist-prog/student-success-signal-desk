@@ -9,7 +9,6 @@ import ui
 from bridge import BridgeError, get_client
 from common import (
     PORTALS,
-    PORTAL_ICONS,
     PORTAL_ROLES,
     clear_read_cache,
     display_name,
@@ -18,16 +17,11 @@ from common import (
 
 
 def login_view() -> None:
-    """Split screen: ink hero on the left, the form on the right (stacked on a phone)."""
+    """A calm sign-in card on the page colour: the form is the first thing you see."""
     ui.hide_sidebar()
     with st.container(key="login_shell"):
-        ui.brand_panel()
         with st.container(key="login_panel"):
-            st.html('<p class="aura-eyebrow">Welcome back</p>')
-            st.header("Sign in to your *workspace*", anchor=False)
-            st.caption(
-                "Use your college account. You'll only see the records and tools your role allows."
-            )
+            ui.login_head()
             # The workspace control lives inside the form so changing it never reruns the
             # page: a typed email and password survive the switch (E2E #4).
             with st.form("sign_in", clear_on_submit=True, border=False):
@@ -36,7 +30,7 @@ def login_view() -> None:
                     list(PORTALS),
                     default="student",
                     required=True,
-                    format_func=lambda key: f"{PORTAL_ICONS[key]} {PORTALS[key]}",
+                    format_func=lambda key: PORTALS[key],
                     key="login_workspace",
                 )
                 email = st.text_input(
@@ -46,10 +40,10 @@ def login_view() -> None:
                     "Password", type="password", autocomplete="current-password"
                 )
                 submitted = st.form_submit_button(
-                    "Sign in", type="primary", width="stretch"
+                    "Continue", type="primary", width="stretch"
                 )
             st.caption(
-                ":material/lock: Sessions are private to your account and end when you sign out."
+                "Use your college account. You will only see what your role allows."
             )
         if submitted:
             complete_sign_in(portal, email, password)
@@ -113,9 +107,5 @@ def sign_in_sidebar(actor: dict[str, Any]) -> None:
 
 
 def sidebar_footer() -> None:
-    st.sidebar.divider()
     if st.sidebar.button("Sign out", width="stretch", icon=":material/logout:"):
         sign_out()
-    st.sidebar.caption(
-        "AURA · Student Success & Early Warning. Agents draft and flag; mentors decide."
-    )

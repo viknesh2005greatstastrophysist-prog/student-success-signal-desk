@@ -60,7 +60,7 @@ ROLES: list[dict[str, str]] = [
     {"key": "lms-mentor1", "portal": "Learning (LMS)", "env": "MENTOR1"},
 ]
 FORBIDDEN_ENV = ("STUDENT021",)  # never sign in as, or touch, student 021
-ALLOWED_BUTTONS = ("Sign in", "Sign out", "View receipt")
+ALLOWED_BUTTONS = ("Continue", "Sign in", "Sign out", "View receipt")
 RISKY_LABEL = re.compile(
     r"approve|decline|save|record|submit|lock|run |delete|send|publish|restore|attest|confirm|generate|draft it",
     re.I,
@@ -362,7 +362,7 @@ class Walk:
             page.locator("input[aria-label=Email]").fill(email)
             page.locator("input[type=password]").fill(password)
             start = time.time()
-            page.get_by_role("button", name="Sign in", exact=True).click()
+            page.get_by_role("button", name="Continue", exact=True).click()
             page.wait_for_selector('[data-testid="stSidebar"]', state="attached", timeout=self.args.timeout * 1000)  # collapsed on phones (#19)
             self.settle(page)
             return round(time.time() - start, 2)
@@ -779,7 +779,7 @@ class Walk:
             result["views"].append(self.inspect(page, "signed-out", "Sign-in page", kind="page", load_s=None, shot="login__01-sign-in", tall=True))
             options = [o.strip() for o in page.locator('[data-testid="stButtonGroup"] button').all_inner_texts()]
             result["workspaces"] = options
-            page.get_by_role("button", name="Sign in", exact=True).click()
+            page.get_by_role("button", name="Continue", exact=True).click()
             self.settle(page)
             result["views"].append(self.inspect(page, "signed-out", "Sign-in page › empty submit", kind="control", load_s=None, shot=None))
         except Exception as error:
@@ -807,7 +807,7 @@ class Walk:
             self.choose_portal(page, "Mentor")
             page.locator("input[aria-label=Email]").fill(email)
             page.locator("input[type=password]").fill(password)
-            page.get_by_role("button", name="Sign in", exact=True).click()
+            page.get_by_role("button", name="Continue", exact=True).click()
             self.settle(page, grace=1.0)
             out["alerts"] = page.evaluate("() => window.__e2e.collect().alerts")
             out["entered_workspace"] = bool(page.locator('[data-testid="stSidebar"]').count())

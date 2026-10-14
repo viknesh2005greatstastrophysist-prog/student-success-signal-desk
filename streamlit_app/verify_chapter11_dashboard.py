@@ -32,7 +32,7 @@ at = AppTest.from_file(str(root / "streamlit_app/app.py"), default_timeout=30).r
 at.segmented_control[0].set_value("faculty")
 at.text_input[0].set_value(account["email"])
 at.text_input[1].set_value(account["password"])
-next(b for b in at.button if b.label == "Sign in").click().run()
+next(b for b in at.button if b.label == "Continue").click().run()
 open_page(at, "mentees")
 at.segmented_control(key="mentees_view").set_value("Risk view").run()
 assert not at.exception, [e.message for e in at.exception]

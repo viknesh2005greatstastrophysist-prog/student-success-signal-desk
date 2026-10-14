@@ -719,7 +719,7 @@ def stage_inspect(state: dict[str, Any], live: Live, core: Core) -> None:
                 except PlaywrightError as error:
                     ui_rows.append({"register": mentee["register"], "error": live.walk.scrub(str(error))[:160]})
                     continue
-                for title in ("How this draft was produced", "Repair history", "Open issues"):
+                for title in ("How this was made", "Repair history", "Open issues"):
                     live.open_expander(page, title)
                 text = live.main_text(page)
                 drafted = re.search(r"Drafted by: ([^\n]+)", text)
@@ -823,11 +823,9 @@ def stage_decide(state: dict[str, Any], live: Live, core: Core) -> None:
             assert state["chosen"]["revalidated"], "the edited version was not revalidated as valid"
 
             # approve and publish through the human gate
-            page.locator('[data-testid="stMain"]').get_by_text("Approve and publish").first.click()
-            time.sleep(0.3)
             page.get_by_label("Decision rationale", exact=True).fill(DECISION_REASON)
             live.shot(page, "13-mentor-gate-before-decision", tall=True)
-            live.button(page, "Save decision").click()
+            live.button(page, "Approve and publish").click()
             live.wait(page, 180, 1.5)
             live.shot(page, "14-mentor-gate-after-decision", tall=True)
             queue = core.read("MENTOR1", "faculty", "review_queue")
@@ -918,7 +916,7 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
                 text = live.main_text(page)
                 results["gov_kpis_ui"] = {
                     k: (re.findall(rf"{k}\s*\n+\s*([^\n]+)", text) or [None])[0]
-                    for k in ("Recorded runs", "AI model runs", "Passed validation", "Escalations", "Waiting for AI")
+                    for k in ("Recorded runs", "Passed validation", "Escalations", "Waiting for AI")
                 }
                 live.shot(page, "20-ai-activity-overview", tall=True)
                 live.goto_tab(page, "Runs & replay")

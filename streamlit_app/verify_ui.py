@@ -62,7 +62,7 @@ for portal, id in ids.items():
     at.segmented_control[0].set_value(portal)
     at.text_input[0].set_value(account["email"])
     at.text_input[1].set_value(account["password"])
-    next(b for b in at.button if b.label == "Sign in").click().run()
+    next(b for b in at.button if b.label == "Continue").click().run()
     assert not at.exception, [e.message for e in at.exception]
     assert not at.error, [e.value for e in at.error]
     assert at.session_state["actor"]["role"] == account["role"]
