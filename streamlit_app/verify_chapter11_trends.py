@@ -90,7 +90,17 @@ at.text_input[0].set_value(account["email"])
 at.text_input[1].set_value(account["password"])
 next(b for b in at.button if b.label == "Sign in").click().run()
 assert not at.exception and not at.error
-assert sum("vega" in node.type for node in at) == 2, [node.type for node in at]
+charts = sum("vega" in node.type for node in at)
+# Charts must carry information (E2E log #16): two charts when the recent cycles are big
+# enough and differ from each other, otherwise none and an explanatory note instead.
+recent = ([r for r in data["trends"] if int(r.get("reviewed") or 0) > 0] or data["trends"])[-8:]
+series = ("reviewed", "flagged", "blocked", "awaiting_approval", "approved", "completed", "withdrawn")
+informative = (
+    len(recent) >= 3
+    and max(int(r.get("reviewed") or 0) for r in recent) >= 3
+    and any(len({int(r.get(k) or 0) for r in recent}) > 1 for k in series)
+)
+assert charts == (2 if informative else 0), (charts, informative)
 next(b for b in at.button if b.label == "Sign out").click().run()
 print(
     "Brief 2: cycle counts, band averages, aggregate-only HoD scope and two HoD charts passed."

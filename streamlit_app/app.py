@@ -20,7 +20,7 @@ st.set_page_config(
     page_title="AURA | Student Success",
     page_icon=str(Path(__file__).resolve().parent / "assets" / "aura-mark.svg"),
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 PORTALS = {
@@ -90,7 +90,7 @@ def value(row: Any, *names: str, default: Any = None) -> Any:
 
 
 def display_name(person: dict[str, Any]) -> str:
-    return str(
+    return labels.pretty_name(
         value(person, "name", "display_name", "displayName", default="Unnamed record")
     )
 
@@ -248,28 +248,27 @@ def attachment_payload(uploaded: Any) -> tuple[dict[str, str] | None, str | None
 
 
 def login_view() -> None:
+    """Split screen: ink hero on the left, the form on the right (stacked on a phone)."""
     ui.hide_sidebar()
-    brand_col, form_col = st.columns(
-        [1.15, 1], gap="large", vertical_alignment="center"
-    )
-    with brand_col:
+    with st.container(key="login_shell"):
         ui.brand_panel()
-    with form_col:
-        with ui.card("login"):
+        with st.container(key="login_panel"):
             st.html('<p class="aura-eyebrow">Welcome back</p>')
-            st.header("Sign in to your workspace", anchor=False)
+            st.header("Sign in to your *workspace*", anchor=False)
             st.caption(
                 "Use your college account. You'll only see the records and tools your role allows."
             )
-            portal = st.segmented_control(
-                "Workspace",
-                list(PORTALS),
-                default="student",
-                required=True,
-                format_func=lambda key: f"{PORTAL_ICONS[key]} {PORTALS[key]}",
-                key="login_workspace",
-            )
+            # The workspace control lives inside the form so changing it never reruns the
+            # page: a typed email and password survive the switch (E2E #4).
             with st.form("sign_in", clear_on_submit=True, border=False):
+                portal = st.segmented_control(
+                    "Workspace",
+                    list(PORTALS),
+                    default="student",
+                    required=True,
+                    format_func=lambda key: f"{PORTAL_ICONS[key]} {PORTALS[key]}",
+                    key="login_workspace",
+                )
                 email = st.text_input(
                     "Email", autocomplete="email", placeholder="name@college.edu"
                 )
@@ -346,6 +345,30 @@ def select_id(
     )
 
 
+def _sized_columns(
+    rows: list[dict[str, Any]], column_config: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Give every column a width that fits its header and longest value (no clipped cells).
+
+    Columns the caller already configured keep their configuration."""
+    config = dict(column_config or {})
+    sized: dict[str, int] = {}
+    for name in rows[0]:
+        if name in config:
+            continue
+        longest = max((len(str(row.get(name) or "")) for row in rows[:80]), default=0)
+        sized[name] = int(min(420, max(84, len(str(name)) * 8 + 44, longest * 7.8 + 28)))
+    # Shrink the widest columns until the table fits the page; text then ellipsises, never the header.
+    while sum(sized.values()) + 120 * len(config) > 900 and max(sized.values(), default=0) > 150:
+        widest = max(sized, key=sized.get)
+        sized[widest] = int(sized[widest] * 0.9)
+    total = sum(sized.values()) + 120 * len(config)
+    factor = min(1.7, 880 / total) if 0 < total < 880 else 1.0
+    for name, width in sized.items():
+        config[name] = st.column_config.Column(name, width=int(width * factor))
+    return config
+
+
 def dataframe(
     rows: list[dict[str, Any]],
     *,
@@ -356,12 +379,15 @@ def dataframe(
     if not rows:
         st.caption(f":material/inbox: {empty}")
         return
+    frame = pd.DataFrame(rows)
+    for column in frame.columns[frame.dtypes == object]:
+        frame[column] = frame[column].where(frame[column].notna(), "—")
     st.dataframe(
-        pd.DataFrame(rows),
+        frame,
         hide_index=True,
         width="stretch",
         key=key,
-        column_config=column_config,
+        column_config=_sized_columns(rows, column_config),
     )
 
 
@@ -447,7 +473,7 @@ def render_student_home(detail: dict[str, Any], actor: dict[str, Any]) -> None:
             },
             {
                 "label": "Fees outstanding",
-                "value": money(outstanding_paise),
+                "value": money(outstanding_paise).removesuffix(".00"),
                 "icon": ":material/account_balance_wallet:",
             },
         ]
@@ -460,7 +486,6 @@ def render_student_home(detail: dict[str, Any], actor: dict[str, Any]) -> None:
         ui.empty_state(
             "No courses yet",
             "Your registered courses will appear here once the term begins.",
-            "📚",
         )
     render_mentor_updates(detail.get("followups") or [])
 
@@ -531,8 +556,12 @@ def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> Non
     for index, item in enumerate(support):
         plan = item.get("plan") or {}
         with ui.card(f"support_{index}"):
+            ui.agent_chip_block(
+                item.get("model_id"),
+                note="Drafted by an AI agent. Approved by your mentor.",
+            )
             st.caption(
-                f":material/description: {ui._md_safe(plan.get('summary', 'Support plan'))}"
+                f":material/description: {ui._md_safe(labels.family_summary(plan.get('summary', 'Support plan')))}"
             )
             for action in plan.get("actions", []):
                 due = action.get("dueInDays")
@@ -634,7 +663,6 @@ def render_academic_records(detail: dict[str, Any], *, heading: bool = True) -> 
             ui.empty_state(
                 "Nothing here yet",
                 "Approved support and mentor follow-ups will appear here.",
-                "🤝",
             )
 
 
@@ -646,7 +674,7 @@ def render_source_records(actor: dict[str, Any]) -> None:
     )
     sources = load("sources")
     if not isinstance(sources, dict):
-        ui.empty_state("No source records", "None are available to this account.", "🗂️")
+        ui.empty_state("No source records", "None are available to this account.")
         return
     counts = sources.get("counts") or {}
     if counts:
@@ -688,12 +716,67 @@ def render_source_records(actor: dict[str, Any]) -> None:
         ui.empty_state(
             "No source rows in your scope",
             "Rows appear here for the students you are permitted to see.",
-            "🔒",
         )
         return
-    for student in students:
+    students = sorted(
+        students, key=lambda s: labels.pretty_name(s.get("name") or "").lower()
+    )
+
+    def initial(student: dict[str, Any]) -> str:
+        text = labels.pretty_name(student.get("name") or "#").strip()
+        return text[:1].upper() if text[:1].isalpha() else "#"
+
+    query = ""
+    letter = "All"
+    if len(students) > 1:
+        search_col, jump_col = st.columns([2, 3], vertical_alignment="bottom")
+        with search_col:
+            query = (
+                st.text_input(
+                    "Search students",
+                    placeholder="Name or register number",
+                    key="source_search",
+                )
+                .strip()
+                .lower()
+            )
+        initials = sorted({initial(s) for s in students})
+        if len(students) > 20 and not query:
+            with jump_col:
+                letter = (
+                    st.segmented_control(
+                        "Jump to letter",
+                        ["All", *initials],
+                        default=initials[0],
+                        required=True,
+                        key="source_letter",
+                    )
+                    or "All"
+                )
+    shown = [
+        s
+        for s in students
+        if (
+            not query
+            or query in str(s.get("name") or "").lower()
+            or query in str(s.get("srn") or "").lower()
+        )
+        and (letter == "All" or query or initial(s) == letter)
+    ]
+    if len(students) > 1:
+        st.caption(f"Showing {len(shown)} of {len(students)} students, sorted by name.")
+    if not shown:
+        ui.empty_state("No student matches", "Try a different name or register number.")
+        return
+    current = None
+    for student in shown:
+        if len(students) > 12 and initial(student) != current:
+            current = initial(student)
+            ui.group_heading(current, sum(1 for s in shown if initial(s) == current))
         student_label = " · ".join(
-            str(part) for part in [student.get("name"), student.get("srn")] if part
+            str(part)
+            for part in [labels.pretty_name(student.get("name")), student.get("srn")]
+            if part
         )
         with st.expander(
             student_label or "Student source records",
@@ -736,7 +819,7 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
     )
     invoices = detail.get("invoices") or []
     if not invoices:
-        ui.empty_state("No fee records", "Invoices will appear here once issued.", "🧾")
+        ui.empty_state("No fee records", "Invoices will appear here once issued.")
         return
     billed = sum(int(row.get("amount_paise") or 0) for row in invoices)
     paid = sum(int(row.get("paid_paise") or 0) for row in invoices)
@@ -877,7 +960,7 @@ def render_receipt(receipt: dict[str, Any]) -> None:
         return
     fields = [
         ("Receipt", receipt.get("receiptId")),
-        ("Student", receipt.get("studentName")),
+        ("Student", labels.pretty_name(receipt.get("studentName"))),
         ("Register number", receipt.get("registerNumber")),
         ("Term", receipt.get("term")),
         ("Invoice", receipt.get("invoiceNumber")),
@@ -926,7 +1009,6 @@ def render_parent_records(
         ui.empty_state(
             "No linked student",
             "A student record has not been linked to this account yet.",
-            "👪",
         )
         return
     if len(children) > 1:
@@ -1023,7 +1105,7 @@ def render_followups(overview: dict[str, Any]) -> None:
     dataframe(
         [
             {
-                "Student": r.get("student_name"),
+                "Student": labels.pretty_name(r.get("student_name")),
                 "Due": labels.nice_date(r.get("due_on")),
                 "When": "Overdue"
                 if r.get("overdue")
@@ -1045,7 +1127,7 @@ def render_followups(overview: dict[str, Any]) -> None:
         format_func=lambda row: (
             "Create a follow-up"
             if row is None
-            else f"{row.get('student_name', 'Student')} · due {labels.nice_date(row.get('due_on'))}"
+            else f"{labels.pretty_name(row.get('student_name', 'Student'))} · due {labels.nice_date(row.get('due_on'))}"
         ),
         key="followup_choice",
     )
@@ -1053,7 +1135,7 @@ def render_followups(overview: dict[str, Any]) -> None:
         if selected:
             chosen_student = str(selected.get("student_id", ""))
             st.text_input(
-                "Student", value=selected.get("student_name", ""), disabled=True
+                "Student", value=labels.pretty_name(selected.get("student_name", "")), disabled=True
             )
         else:
             chosen_student = (
@@ -1142,7 +1224,7 @@ def render_classroom(overview: dict[str, Any]) -> None:
     )
     if not offering_id:
         ui.empty_state(
-            "No courses in your scope", "Assigned courses will appear here.", "🏫"
+            "No courses in your scope", "Assigned courses will appear here.",
         )
         return
     classroom = load("classroom", {"offeringId": offering_id})
@@ -1186,7 +1268,7 @@ def render_classroom(overview: dict[str, Any]) -> None:
     st.subheader(f"{course.get('code', '')} · {course.get('title', '')}", anchor=False)
     if not roster:
         ui.empty_state(
-            "The roster is empty", "Registered students will appear here.", "👥"
+            "The roster is empty", "Registered students will appear here.",
         )
         return
     tab_attendance, tab_marks, tab_results = st.tabs(
@@ -1540,7 +1622,7 @@ def policy_rows(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def student_name_map(review: dict[str, Any]) -> dict[str, str]:
     return {
         str(value(row, "id", "student_id", default="")): str(
-            value(row, "display_name", "name", default="Student")
+            labels.pretty_name(value(row, "display_name", "name", default="Student"))
         )
         for row in review.get("students") or []
         if value(row, "id", "student_id")
@@ -1735,7 +1817,7 @@ def render_plan_scope(
                         if row
                         else "Not listed",
                         "Student": labels.pretty_name(
-                            value(row, "display_name", "name", default="Not listed")
+                            labels.pretty_name(value(row, "display_name", "name", default="Not listed"))
                         )
                         if row
                         else "Not in your current list",
@@ -1761,7 +1843,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
     student_labels = {
         str(
             value(row, "id", "student_id")
-        ): f"{value(row, 'register_number', 'srn', default='Student')} · {value(row, 'display_name', 'name', default='')}"
+        ): f"{value(row, 'register_number', 'srn', default='Student')} · {labels.pretty_name(value(row, 'display_name', 'name', default=''))}"
         for row in students
         if value(row, "id", "student_id")
     }
@@ -1847,7 +1929,6 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         ui.empty_state(
             "No review plans yet",
             "Create a plan above. The coordinator will ask for anything it needs before the plan can be locked.",
-            "🧭",
         )
         return
     plan_options = [row for row in plans if row.get("id")]
@@ -1863,9 +1944,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         "Plan",
         ids,
         index=min(default_index, len(ids) - 1),
-        format_func=lambda key: (
-            f"{plan_by_id[key]['body']['request'][:70]} · {labels.status_label(plan_by_id[key]['status'])} · {labels.short_ref(key)}"
-        ),
+        format_func=lambda key: plan_label(plan_by_id[key]),
         key=f"review_plan_{selector_revision}",
     )
     selected_plan = plan_by_id[selected_id]
@@ -1910,6 +1989,11 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             f"**{SCOPE_BASIS.get((body.get('scope') or {}).get('basis'), '—')}**"
         )
         if questions:
+            ui.agent_chip_block(
+                body.get("modelId") or body.get("model_id"),
+                label="planner agent",
+                note="asked these before the plan can be locked",
+            )
             st.warning(
                 "Complete these details before locking the plan: "
                 + " ".join(questions),
@@ -2224,10 +2308,7 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
         "Scores combine the four signals using your approved policy. A flag only opens a review path; it is never a label.",
     )
     rows = review.get("riskView") or []
-    plan_options = {
-        p["id"]: (p.get("body") or {}).get("request", "Review plan")
-        for p in review.get("plans", [])
-    }
+    plan_options = {p["id"]: plan_label(p) for p in review.get("plans", [])}
     filter_col, toggle_col = st.columns([3, 1], vertical_alignment="bottom")
     with filter_col:
         plan_filter = st.selectbox(
@@ -2277,7 +2358,7 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
     dataframe(
         [
             {
-                "Student": row["studentName"],
+                "Student": labels.pretty_name(row["studentName"]),
                 "Register number": row["registerNumber"],
                 "Score": row["score"],
                 "Band": labels.risk_label(row["band"]),
@@ -2298,9 +2379,16 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
     flagged = [row for row in scoped if row.get("flagged")]
     if flagged:
         st.markdown("##### Why each student was flagged")
+        if len(flagged) > 8 and not st.toggle(
+            f"Show all {len(flagged)} flagged students", key="risk_show_all_flagged"
+        ):
+            st.caption(
+                f"Showing the first 8 of {len(flagged)} flagged students. Switch the toggle on to list everyone."
+            )
+            flagged = flagged[:8]
     for row in flagged:
         with st.expander(
-            f"{row['studentName']} · {labels.risk_label(row['band'])} · score {row['score']}",
+            f"{labels.pretty_name(row['studentName'])} · {labels.risk_label(row['band'])} · score {row['score']}",
             icon=":material/flag:",
         ):
             st.markdown(ui.risk_md(row.get("band"), row.get("score")))
@@ -2314,7 +2402,7 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
                         "Value": signal["value"],
                         "Threshold": signal["threshold"],
                         "Points": signal["points"],
-                        "Reason": signal["explanation"],
+                        "Reason": labels.readable_claim(signal["explanation"]),
                     }
                     for signal in row["signals"]
                 ]
@@ -2332,7 +2420,6 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         ui.empty_state(
             "No approved plans yet",
             "Plans appear here after a mentor approves a draft.",
-            "📋",
         )
         return
     # Every figure below counts the same approved plans by their current status;
@@ -2370,7 +2457,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     )
     log_rows = [
         {
-            "Student": row.get("display_name"),
+            "Student": labels.pretty_name(row.get("display_name")),
             "Approved actions": "; ".join(
                 action.get("label", "")
                 for action in (row.get("plan") or {}).get("actions", [])
@@ -2388,7 +2475,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     ]
     log_rows.extend(
         {
-            "Student": event.get("student_name"),
+            "Student": labels.pretty_name(event.get("student_name")),
             "Approved actions": "",
             "Row": "Earlier change",
             "Status": labels.status_label((event.get("payload") or {}).get("status")),
@@ -2428,7 +2515,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             "Intervention",
             plans,
             format_func=lambda row: (
-                f"{row.get('display_name', 'Student')} · {labels.status_label(row.get('status', 'planned'))}"
+                f"{labels.pretty_name(row.get('display_name', 'Student'))} · {labels.status_label(row.get('status', 'planned'))} · {labels.short_ref(row.get('id'))}"
             ),
             key="intervention_plan",
         )
@@ -2658,7 +2745,7 @@ def tool_call_rows(agent: Any) -> list[dict[str, Any]]:
         {
             "#": call.get("seq"),
             "Turn": call.get("turn"),
-            "Tool": str(call.get("tool", "")),
+            "Tool": labels.tool_label(call.get("tool")),
             "Arguments": _tool_arguments(call.get("args")),
             "Outcome": "Ran"
             if call.get("status") == "ok"
@@ -2737,6 +2824,38 @@ def render_draft_provenance(selected: dict[str, Any], validation: dict[str, Any]
         )
 
 
+def draft_option_label(
+    row: dict[str, Any], risk_by_student: dict[str, dict[str, Any]]
+) -> str:
+    """One line that tells drafts apart: student, register number, risk, version, time (#15)."""
+    risk = risk_by_student.get(str(row.get("student_id"))) or {}
+    parts = [
+        labels.pretty_name(row.get("display_name", "Student")),
+        str(row.get("register_number") or ""),
+        f"{labels.risk_label(risk['band'])} {risk.get('score', '')}".strip()
+        if risk.get("band")
+        else "",
+        f"version {labels.version_number(row.get('artifact_version'))}",
+        labels.nice_time(row.get("drafted_at")),
+    ]
+    return " · ".join(part for part in parts if part)
+
+
+def plan_label(plan: dict[str, Any]) -> str:
+    """One line that tells review plans apart: request, state, date and reference (#15)."""
+    body = plan.get("body") or {}
+    request = " ".join(str(body.get("request") or "Review plan").split())
+    short = request if len(request) <= 56 else request[:55].rstrip() + "…"
+    raw = value(plan, "created_at", "createdAt", "updated_at", "updatedAt", default=None)
+    parts = [
+        short,
+        labels.status_label(plan.get("status")) if plan.get("status") else "",
+        labels.nice_time(raw) if raw else "",
+        labels.short_ref(plan.get("id")),
+    ]
+    return " · ".join(part for part in parts if part)
+
+
 def render_draft_reviews(
     queue: dict[str, Any],
     actor: dict[str, Any],
@@ -2745,7 +2864,7 @@ def render_draft_reviews(
     drafts = queue.get("drafts") or []
     is_mentor = actor.get("role") == "faculty"
     ui.section(
-        "Support reviews",
+        "Drafts at the gate" if is_mentor else "Drafts waiting on mentors",
         "Drafts the agents prepared for flagged students. Nothing reaches a student or family until you approve it."
         if is_mentor
         else "Drafts waiting on each student's assigned mentor. Nothing reaches a student or family until that mentor approves it.",
@@ -2756,7 +2875,6 @@ def render_draft_reviews(
             "When a review run drafts support for a flagged student, it appears here for your decision."
             if is_mentor
             else "When a review run drafts support for a flagged student, it appears here until the mentor decides.",
-            "✅",
         )
         if queue.get("legacyDrafts"):
             st.caption(
@@ -2800,13 +2918,16 @@ def render_draft_reviews(
                 st.markdown(" ".join(badges))
                 if risk.get("signals"):
                     ui.html_block(ui.signal_chips(risk["signals"][:3]))
-                st.caption(
-                    f":material/smart_toy: {labels.mode_label(row.get('mode'))} draft · version {row.get('artifact_version', '?')}"
+                ui.html_block(
+                    '<div class="aura-meta">'
+                    + ui.agent_chip(row.get("model_id"))
+                    + f"<span>version {ui.esc(labels.version_number(row.get('artifact_version')))}</span>"
                     + (
-                        f" · {row['earlier_count']} earlier"
+                        f"<span>{ui.esc(row['earlier_count'])} earlier</span>"
                         if row.get("earlier_count")
                         else ""
                     )
+                    + "</div>"
                 )
     if len(drafts) > 9:
         st.caption(
@@ -2815,9 +2936,7 @@ def render_draft_reviews(
     selected = st.selectbox(
         "Draft",
         drafts,
-        format_func=lambda row: (
-            f"{labels.pretty_name(row.get('display_name', 'Student'))} · version {row.get('artifact_version', '?')} · {labels.nice_time(row.get('drafted_at'))}"
-        ),
+        format_func=lambda row: draft_option_label(row, risk_by_student),
         key="support_draft",
     )
     if selected.get("earlier_drafts"):
@@ -2831,7 +2950,7 @@ def render_draft_reviews(
             dataframe(
                 [
                     {
-                        "Draft version": e.get("artifact_version"),
+                        "Draft version": labels.version_number(e.get("artifact_version")),
                         "Drafted": labels.nice_time(e.get("drafted_at")),
                         "Review cycle opened": labels.nice_time(e.get("opened_at")),
                         "Case": labels.short_ref(e.get("case_id")),
@@ -2842,14 +2961,19 @@ def render_draft_reviews(
     packet = selected.get("recommendation") or {}
     validation = selected.get("validation") or {}
     ui.gate_banner(
-        "You are the final authority. Approving publishes this exact version to the student and their family; "
-        "editing saves a new version that is validated again."
+        "Approving publishes this exact version to the student and their family; "
+        "editing saves a new version that is validated again.",
+        title="You are the final authority",
     )
     draft_col, check_col = st.columns([3, 2], gap="medium")
     with draft_col, ui.card(f"draft_{selected['id']}"):
         st.html('<p class="aura-eyebrow">Draft recommendation</p>')
         st.markdown(
             f"#### {ui._md_safe(labels.pretty_name(selected.get('display_name', 'Student')))}"
+        )
+        ui.agent_chip_block(
+            selected.get("model_id"),
+            note=f"drafted {labels.nice_time(selected.get('drafted_at'))} · version {labels.version_number(selected.get('artifact_version'))}",
         )
         ui.plain_text(packet.get("summary") or "No summary recorded.")
         is_v2 = packet.get("schema") == "packet-v2"
@@ -2982,9 +3106,10 @@ def render_draft_reviews(
     if actor.get("role") != "faculty":
         st.info("This view is read-only for your role.", icon=":material/visibility:")
         return
-    edit_col, decide_col = st.columns(2, gap="medium")
-    with edit_col, ui.card(f"edit_{selected['id']}"):
-        st.markdown("##### Edit the draft")
+    with st.expander("Edit the draft", icon=":material/edit_document:"):
+        st.caption(
+            "Saving creates a new version that is validated again. The decision below always applies to the version shown."
+        )
         with st.form(
             f"edit_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
         ):
@@ -3063,11 +3188,14 @@ def render_draft_reviews(
                     },
                     "A new draft version was saved.",
                 )
-    with decide_col, st.container(border=True, key="gate_decision"):
-        st.html(
-            '<p class="aura-eyebrow" style="color:#7A4F0A">✋ Mentor decision · human gate</p>'
+    with st.container(border=True, key="gate_decision"):
+        ui.decision_head(
+            f"{labels.version_number(selected.get('artifact_version'))} · {labels.nice_time(selected.get('drafted_at'))}",
+            selected.get("content_hash"),
         )
-        st.markdown("##### Approve or decline this version")
+        st.caption(
+            "Approving publishes this exact version to the student and their family. Not approving keeps it unpublished."
+        )
         with st.form(
             f"decide_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
         ):
@@ -3185,6 +3313,7 @@ def render_review_page(actor: dict[str, Any]) -> None:
                     else "Awaiting mentors",
                     "value": awaiting,
                     "icon": ":material/front_hand:",
+                    "signal": True,
                 },
                 {
                     "label": "Flagged students",
@@ -3279,7 +3408,6 @@ def render_lms(actor: dict[str, Any]) -> None:
         ui.empty_state(
             "No courses yet",
             "Courses appear here once you are enrolled or assigned.",
-            "📚",
         )
         return
     detail = load("lms_course", {"courseId": offering_id})
@@ -3316,7 +3444,7 @@ def render_lms(actor: dict[str, Any]) -> None:
     ui.section("Lessons", icon=":material/auto_stories:")
     if not lessons:
         ui.empty_state(
-            "No lessons yet", "Lessons appear here when they are published.", "📖"
+            "No lessons yet", "Lessons appear here when they are published.",
         )
     for lesson in lessons:
         with st.expander(
@@ -3447,7 +3575,6 @@ def render_lms(actor: dict[str, Any]) -> None:
         ui.empty_state(
             "No assignments yet",
             "Assignments appear here when they are published.",
-            "📝",
         )
     submitted_ids = {row.get("assignment_id") for row in submissions}
     late_ids = {
@@ -3709,7 +3836,7 @@ def render_lms(actor: dict[str, Any]) -> None:
             "Submission",
             submissions,
             format_func=lambda row: (
-                f"{row.get('student_name', 'Student')} · {assignment_by_id.get(row.get('assignment_id'), {}).get('title', 'Assignment')}"
+                f"{labels.pretty_name(row.get('student_name', 'Student'))} · {assignment_by_id.get(row.get('assignment_id'), {}).get('title', 'Assignment')}"
             ),
             key=f"feedback_submission_{offering_id}",
         )
@@ -3759,7 +3886,7 @@ def render_lms(actor: dict[str, Any]) -> None:
                         "id": str(row.get("id", "")),
                         "kind": kind,
                         "name": str(row["attachment_name"]),
-                        "label": f"{label} · {row.get('title') or row.get('student_name') or 'Course file'}",
+                        "label": f"{label} · {row.get('title') or labels.pretty_name(row.get('student_name')) or 'Course file'}",
                     }
                 )
     if course_files:
@@ -3809,6 +3936,7 @@ def rate(raw: Any) -> float | None:
 
 
 def render_evaluation_metrics(review: dict[str, Any]) -> None:
+    cycle_map = cycle_labels(review)
     ui.section(
         "How the agents performed",
         "Calculated from recorded checkpoints, immutable drafts and mentor decisions. Undecided cases are excluded from decision metrics.",
@@ -3821,7 +3949,6 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
         ui.empty_state(
             "No evaluated runs yet",
             "Metrics appear after the first review run is validated.",
-            "📈",
         )
         return
     decided = [r for r in per_run if r.get("decision")]
@@ -3861,7 +3988,7 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
     dataframe(
         [
             {
-                "Cycle": labels.short_ref(row.get("cycleId")),
+                "Cycle": f"{cycle_map.get(str(row.get('cycleId')), 'C?')} · {labels.short_ref(row.get('cycleId'))}",
                 "Runs": row.get("evaluatedRuns"),
                 "Pass rate": rate(row.get("validationPassRate")),
                 "Repairs": row.get("repairsUsed"),
@@ -3890,7 +4017,7 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
             [
                 {
                     "Run": labels.short_ref(row.get("jobId")),
-                    "Cycle": labels.short_ref(row.get("cycleId")),
+                    "Cycle": f"{cycle_map.get(str(row.get('cycleId')), 'C?')} · {labels.short_ref(row.get('cycleId'))}",
                     "Passed checks": "Yes" if row.get("validationPassed") else "No",
                     "Repairs": row.get("repairsUsed"),
                     "Rule-based fallback (retired)": "Yes" if row.get("fallback") else "No",
@@ -3907,39 +4034,35 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
 
 
 TREND_SERIES = {
-    "reviewed": ("Reviewed", "#1B2A4A"),
-    "flagged": ("Flagged", "#6B3FA0"),
-    "blocked": ("Blocked", "#B42318"),
-    "awaiting_approval": ("Awaiting mentor", "#B7791F"),
-    "approved": ("Approved", "#1F7A4D"),
-    "completed": ("Completed", "#2F6FB0"),
-    "withdrawn": ("Withdrawn", "#8A94A6"),
+    "reviewed": ("Reviewed", "#0E1116"),
+    "flagged": ("Flagged", "#E5A200"),
+    "blocked": ("Blocked", "#E5484D"),
+    "awaiting_approval": ("Awaiting mentor", "#FF5A1F"),
+    "approved": ("Approved", "#2F9E6F"),
+    "completed": ("Completed", "#1B6B49"),
+    "withdrawn": ("Withdrawn", "#A8A396"),
 }
 BAND_SERIES = {
-    "low": ("Low", "#8A94A6"),
-    "medium": ("Medium", "#6B3FA0"),
-    "high": ("High", "#B42318"),
+    "low": ("Low", "#2F9E6F"),
+    "medium": ("Medium", "#E5A200"),
+    "high": ("High", "#E5484D"),
 }
 
 
-def trend_axis_config(chart: alt.Chart) -> alt.Chart:
-    return (
-        chart.configure_axis(
-            labelFont="IBM Plex Sans",
-            titleFont="IBM Plex Sans",
-            labelColor="#4A5568",
-            titleColor="#4A5568",
-            gridColor="#ECE8E0",
-            domainColor="#D9D4C9",
-            tickColor="#D9D4C9",
-        )
-        .configure_legend(
-            labelFont="IBM Plex Sans",
-            titleFont="IBM Plex Sans",
-            orient="bottom",
-            labelColor="#14213D",
-        )
-        .configure_view(strokeWidth=0)
+def cycle_labels(review: dict[str, Any]) -> dict[str, str]:
+    """C1, C2 ... over every cycle, oldest first. Charts and tables share these names (#24)."""
+    return {
+        str(row.get("cycle_id")): f"C{index}"
+        for index, row in enumerate(review.get("trends") or [], start=1)
+    }
+
+
+def trend_has_signal(rows: list[dict[str, Any]]) -> bool:
+    """A chart is only worth drawing when cycles are big enough and differ from each other."""
+    if len(rows) < 3 or max(int(r.get("reviewed") or 0) for r in rows) < 3:
+        return False
+    return any(
+        len({int(r.get(key) or 0) for r in rows}) > 1 for key in TREND_SERIES
     )
 
 
@@ -3954,7 +4077,6 @@ def render_review_trends(review: dict[str, Any]) -> None:
         ui.empty_state(
             "No evaluated review cycles yet",
             "Trends appear after mentors run their first review.",
-            "📊",
         )
         return
     evaluated = [r for r in rows if int(r.get("reviewed") or 0) > 0]
@@ -3966,7 +4088,30 @@ def render_review_trends(review: dict[str, Any]) -> None:
     ):
         rows = rows[-recent:]
         st.caption(f"Showing the {recent} most recent cycles with evaluated students.")
-    order = [f"C{index}" for index in range(1, len(rows) + 1)]
+    cycle_map = cycle_labels(review)
+    order = [cycle_map.get(str(r.get("cycle_id")), f"C{i}") for i, r in enumerate(rows, 1)]
+    if not trend_has_signal(rows):
+        biggest = max(int(r.get("reviewed") or 0) for r in rows)
+        ui.insight(
+            "Too small to chart yet",
+            f"The {len(rows)} most recent cycles each evaluated at most {biggest} "
+            f"student{'s' if biggest != 1 else ''}, and their counts do not change from one cycle to the next, "
+            "so a trend line would show nothing. Charts appear once cycles cover at least three students and differ.",
+        )
+        dataframe(
+            [
+                {
+                    "Cycle": order[index],
+                    "Date": labels.nice_date(r.get("day")),
+                    "Reviewed": int(r.get("reviewed") or 0),
+                    "Flagged": int(r.get("flagged") or 0),
+                    "Awaiting mentor": int(r.get("awaiting_approval") or 0),
+                    "Approved": int(r.get("approved") or 0),
+                }
+                for index, r in enumerate(rows)
+            ]
+        )
+        return
     counts = pd.DataFrame(
         [
             {
@@ -3994,7 +4139,7 @@ def render_review_trends(review: dict[str, Any]) -> None:
     )
     left, right = st.columns([3, 2], gap="medium")
     with left, ui.card("trend_outcomes"):
-        st.markdown("**Outcomes per cycle**")
+        st.markdown("##### Outcomes per cycle")
         bars = (
             alt.Chart(counts)
             .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
@@ -4015,11 +4160,11 @@ def render_review_trends(review: dict[str, Any]) -> None:
                 ),
                 tooltip=["Review cycle", "Measure", "Count"],
             )
-            .properties(height=300)
+            .properties(height=260)
         )
-        st.altair_chart(trend_axis_config(bars), width="stretch")
+        st.altair_chart(ui.style_chart(bars), width="stretch")
     with right, ui.card("trend_bands"):
-        st.markdown("**Average risk score by band**")
+        st.markdown("##### Average risk score by band")
         if averages.empty:
             averages = pd.DataFrame(
                 [
@@ -4055,9 +4200,9 @@ def render_review_trends(review: dict[str, Any]) -> None:
                     alt.Tooltip("Average score:Q", format=".1f"),
                 ],
             )
-            .properties(height=300)
+            .properties(height=260)
         )
-        st.altair_chart(trend_axis_config(lines), width="stretch")
+        st.altair_chart(ui.style_chart(lines), width="stretch")
         st.caption(
             "Gaps mean no evaluated students in that band for the cycle."
             + (
@@ -4157,7 +4302,9 @@ def render_agent_graph(review: dict[str, Any]) -> None:
         )
         selected_job = next(job for job in jobs if str(job["id"]) == job_id)
         trace = selected_job.get("node_trace")
-    ui.pipeline_stepper(trace)
+    ui.pipeline_stepper(
+        trace, empty_text="" if not jobs else "Not reached"
+    )
     if jobs:
         validation = selected_job.get("validation") or {}
         with st.expander(
@@ -4212,13 +4359,13 @@ def render_agent_graph(review: dict[str, Any]) -> None:
 
             nodes = {edge["from"] for edge in edges} | {edge["to"] for edge in edges}
             colours = {
-                "coordinator": "#1B2A4A",
-                "agent": "#2F6FB0",
-                "gate": "#B7791F",
-                "publish": "#1F7A4D",
+                "coordinator": "#0E1116",
+                "agent": "#2B59FF",
+                "gate": "#FF5A1F",
+                "publish": "#2F9E6F",
             }
             declarations = " ".join(
-                f'{node_id(n)} [label="{node_text(n)}", color="{colours.get(labels.AGENT_NODES.get(str(n), ("", "agent"))[1], "#2F6FB0")}"];'
+                f'{node_id(n)} [label="{node_text(n)}", color="{colours.get(labels.AGENT_NODES.get(str(n), ("", "agent"))[1], "#2B59FF")}"];'
                 for n in sorted(nodes)
             )
             links = " ".join(
@@ -4228,7 +4375,7 @@ def render_agent_graph(review: dict[str, Any]) -> None:
             st.graphviz_chart(
                 "digraph AURA { rankdir=LR; bgcolor=transparent; "
                 'node [shape=box, style="rounded,filled", fillcolor=white, fontname="Helvetica", fontsize=11, penwidth=2]; '
-                'edge [fontname="Helvetica", fontsize=9, color="#8A94A6", fontcolor="#4A5568"]; '
+                'edge [fontname="Helvetica", fontsize=9, color="#A8A396", fontcolor="#3A3F47"]; '
                 + declarations
                 + " "
                 + links
@@ -4347,7 +4494,7 @@ def render_governance(actor: dict[str, Any]) -> None:
                     replayable,
                     lambda row: str(row.get("run_id", "")),
                     lambda row: (
-                        f"{labels.status_label(row.get('status', 'Run'))} · {labels.nice_time(row.get('updated_at'))}"
+                        f"{labels.status_label(row.get('status', 'Run'))} · {labels.nice_time(row.get('updated_at'))} · run {labels.short_ref(row.get('run_id'))}"
                     ),
                     key="governance_replay_run",
                 )
@@ -4457,6 +4604,7 @@ def render_mentor_home(overview: dict[str, Any], actor: dict[str, Any]) -> None:
                 "label": "Reviews awaiting you",
                 "value": pending,
                 "icon": ":material/front_hand:",
+                "signal": True,
             },
             {
                 "label": "Overdue follow-ups",
@@ -4476,7 +4624,7 @@ def render_mentor_home(overview: dict[str, Any], actor: dict[str, Any]) -> None:
     dataframe(
         [
             {
-                "Student": r.get("student_name"),
+                "Student": labels.pretty_name(r.get("student_name")),
                 "Due": labels.nice_date(r.get("due_on")),
                 "When": "Overdue"
                 if r.get("overdue")

@@ -64,7 +64,7 @@ STATUS = {
 RISK_BANDS = {
     "high": ("High risk", "red", ":material/priority_high:"),
     "medium": ("Medium risk", "violet", ":material/trending_up:"),
-    "low": ("Low risk", "gray", ":material/trending_flat:"),
+    "low": ("Low risk", "green", ":material/trending_flat:"),
     "not evaluated": ("Not evaluated", "gray", ":material/remove:"),
 }
 
@@ -187,6 +187,41 @@ def status_icon(code: Any) -> str:
     return STATUS.get(str(code or ""), ("", "gray", ":material/circle:"))[2]
 
 
+SUMMARY_KEYWORDS = {
+    "attendance low": "attendance",
+    "mark low": "marks",
+    "marks low": "marks",
+    "lms inactive": "activity on the learning platform",
+    "assignment overdue": "overdue assignments",
+    "internship milestone": "an internship milestone",
+    "placement activity": "placement activities",
+}
+
+
+def family_summary(text: Any) -> str:
+    """Family-facing form of 'Mentor review requested: attendance low, mark low, ...' (#28).
+
+    Display only; the stored summary is never changed."""
+    raw = str(text or "").strip()
+    prefix = "Mentor review requested:"
+    if not raw.startswith(prefix):
+        return raw
+    items = [part.strip().rstrip(".") for part in raw[len(prefix) :].split(",") if part.strip()]
+    if not items:
+        return "Your mentor has asked to check in with you."
+    names = [SUMMARY_KEYWORDS.get(item.lower(), item.lower()) for item in items]
+    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"Your mentor would like to check in about {joined}."
+
+
+def version_number(raw: Any) -> Any:
+    """Stored artifact versions start at 0; people count from 1 (E2E L6)."""
+    try:
+        return int(raw) + 1
+    except (TypeError, ValueError):
+        return "?"
+
+
 def risk_label(band: Any) -> str:
     return RISK_BANDS.get(str(band or "not evaluated"), (humanize(band), "", ""))[0]
 
@@ -201,7 +236,7 @@ def source_label(code: Any) -> str:
 
 def issue_label(code: Any) -> str:
     if not code:
-        return "None"
+        return "No issue"
     return ISSUES.get(str(code), humanize(code))
 
 
@@ -338,6 +373,11 @@ def readable_claim(statement: Any) -> str:
         if text.startswith(field + " "):
             return label + text[len(field) :]
     return text
+
+
+def tool_label(raw: Any) -> str:
+    """'list_policies' -> 'List policies' (display only)."""
+    return humanize(raw) if raw else "Not recorded"
 
 
 def pretty_name(raw: Any) -> str:
