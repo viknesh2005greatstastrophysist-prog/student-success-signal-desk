@@ -27485,7 +27485,7 @@ var PATTERNS = [
   ["phone", /(?<![\d.])\+?\d(?:[ -]?\d){9,13}(?![\d.])/]
 ];
 var escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-var NAME_STOPWORDS = /* @__PURE__ */ new Set(["and", "the", "for", "with", "van", "von", "der", "del", "bin"]);
+var NAME_STOPWORDS = /* @__PURE__ */ new Set(["and", "the", "for", "with", "van", "von", "der", "del", "bin", "family", "account"]);
 function rosterPattern(roster) {
   const tokens2 = /* @__PURE__ */ new Set();
   for (const name of roster?.names ?? []) {
@@ -28581,11 +28581,26 @@ var policySchema = external_exports.object({
   placementWeight: external_exports.number().int().min(0).max(100).default(15),
   overdueMinimum: external_exports.number().int().min(1).max(100).default(1),
   internshipMinimum: external_exports.number().int().min(1).max(100).default(1),
-  placementMinimum: external_exports.number().int().min(1).max(100).default(1)
+  placementMinimum: external_exports.number().int().min(1).max(100).default(1),
+  /** How a triggered signal earns points. `fixed` (the default, and what every
+   * policy approved before data refresh 2 uses) gives the whole weight as soon as
+   * the faculty-set threshold is crossed. `graded` scales the points with how far
+   * the value is beyond that threshold (see `gradedPoints`). The thresholds and
+   * weights stay faculty-set either way, and a version records which it uses. */
+  severity: external_exports.enum(["fixed", "graded"]).optional()
 }).strict().refine(
   (p) => p.highScore > p.mediumScore,
   "High threshold must exceed medium threshold"
 );
+var GRADED_FLOOR = 0.25;
+var GRADED_SPAN_BELOW = 0.5;
+var GRADED_SPAN_ABOVE = 2;
+function gradedPoints(weight, value, threshold, below) {
+  const distance = below ? (threshold - value) / Math.max(threshold, 1) : (value - threshold) / Math.max(threshold, 1);
+  const span = below ? GRADED_SPAN_BELOW : GRADED_SPAN_ABOVE;
+  const share = Math.min(1, Math.max(0, distance) / span);
+  return Math.round(weight * (GRADED_FLOOR + (1 - GRADED_FLOOR) * share));
+}
 var demoPolicy = {
   version: "CH11-DEMO-1",
   attendanceMinimum: 75,
@@ -28790,7 +28805,7 @@ function riskAnalysis(evidence, policy) {
         path: `evidence.${source}.values.${key}`,
         value,
         threshold,
-        points,
+        points: policy.severity === "graded" ? gradedPoints(points, value, threshold, below) : points,
         explanation: `${key} is ${value}; policy threshold is ${below ? "below" : "at least"} ${threshold}.`
       });
   };
