@@ -88,6 +88,8 @@ h5, h6 { letter-spacing: .01em; }
 /* Page header */
 .aura-eyebrow { font-size: .74rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
   color: var(--aura-blue); margin: 0 0 -6px; }
+.aura-plain { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 .5rem; }
+.aura-plain-muted { color: var(--aura-ink-soft); font-size: .875rem; }
 .aura-subtitle { color: var(--aura-ink-soft); font-size: 1.02rem; max-width: 760px; margin: -6px 0 6px; }
 
 /* Gate banner */
@@ -185,6 +187,18 @@ def _md_safe(text: Any) -> str:
         .replace("]", ")")
         .replace("\n", " ")
     )
+
+
+def code_span(text: Any) -> str:
+    """Wrap text in a Markdown code span so underscores and brackets (file names) show literally."""
+    flat = " ".join(str(text if text is not None else "").split())
+    return f"`{flat.replace('`', chr(39))}`"
+
+
+def plain_text(text: Any, *, muted: bool = False) -> None:
+    """Show author-written text literally: no Markdown, links, badges or shortcodes."""
+    tone = " aura-plain-muted" if muted else ""
+    st.html(f'<p class="aura-plain{tone}">{esc(text)}</p>')
 
 
 def inject_styles() -> None:

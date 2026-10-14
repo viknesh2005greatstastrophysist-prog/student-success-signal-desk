@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -123,12 +124,63 @@ def request(action: str, data: dict[str, Any] | None = None) -> Any:
     return get_client().request(action, data=data or {}, token=token)
 
 
+READ_CACHE_KEY = "worker_read_cache"
+READ_CACHE_SECONDS = 30
+# Read-only worker actions that load() may serve from the per-session cache.
+# Anything that changes data goes through save_action(), which clears the cache.
+CACHEABLE_READS = frozenset(
+    {
+        "overview",
+        "student",
+        "classroom",
+        "sources",
+        "receipt",
+        "lms_overview",
+        "lms_course",
+        "review_overview",
+        "review_queue",
+        "plan_export",
+    }
+)
+
+
+def clear_read_cache() -> None:
+    st.session_state.pop(READ_CACHE_KEY, None)
+
+
+def cached_read(action: str, data: dict[str, Any] | None = None) -> Any:
+    """Serve a worker read from a short per-session cache.
+
+    The cache lives in st.session_state, not st.cache_data: a process-wide cache
+    would keep the signed-in user's data (and token-scoped results) in server
+    memory shared by every session. Entries are JSON text, so each hit returns a
+    fresh copy that callers can mutate freely.
+    """
+    if action not in CACHEABLE_READS:
+        return request(action, data)
+    key = (action, json.dumps(data or {}, sort_keys=True, default=str))
+    now = time.monotonic()
+    entry = st.session_state.get(READ_CACHE_KEY, {}).get(key)
+    if entry and now - entry[0] < READ_CACHE_SECONDS:
+        return json.loads(entry[1])
+    result = request(action, data)
+    live = {
+        k: v
+        for k, v in st.session_state.get(READ_CACHE_KEY, {}).items()
+        if now - v[0] < READ_CACHE_SECONDS
+    }
+    live[key] = (now, json.dumps(result))
+    st.session_state[READ_CACHE_KEY] = live
+    return result
+
+
 def load(action: str, data: dict[str, Any] | None = None) -> Any:
     try:
         with st.spinner("Loading your workspace…"):
-            return request(action, data)
+            return cached_read(action, data)
     except BridgeError as error:
         if error.status == 401:
+            clear_read_cache()
             st.session_state.pop("token", None)
             st.session_state.pop("actor", None)
             st.session_state.pop("success_notice", None)
@@ -141,7 +193,11 @@ def load(action: str, data: dict[str, Any] | None = None) -> Any:
 def save_action(action: str, data: dict[str, Any], success: str) -> Any | None:
     try:
         with st.spinner("Saving your changes…"):
-            result = request(action, data)
+            try:
+                result = request(action, data)
+            finally:
+                # Never show pre-write data, even if the write failed part-way.
+                clear_read_cache()
         if action == "replay":
             st.success(success)
             return result
@@ -253,6 +309,7 @@ def complete_sign_in(portal: str | None, email: str, password: str) -> None:
         st.error("This account cannot enter the selected workspace.")
         return
     # Keep only the opaque session token and the authenticated actor in session state.
+    clear_read_cache()
     st.session_state.pop("success_notice", None)
     st.session_state["token"] = result["token"]
     st.session_state["actor"] = {**actor, "portal": portal}
@@ -266,6 +323,7 @@ def sign_out() -> None:
             get_client().logout(token)
         except BridgeError:
             pass
+    clear_read_cache()
     st.session_state.clear()
     st.rerun()
 
@@ -454,7 +512,7 @@ def render_mentor_updates(followups: list[dict[str, Any]]) -> None:
                 )
             with badge:
                 st.markdown(ui.status_md(row.get("status")))
-            st.write(row.get("note") or "")
+            ui.plain_text(row.get("note"))
 
 
 def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> None:
@@ -645,7 +703,9 @@ def render_source_records(actor: dict[str, Any]) -> None:
                     f"· {ui._md_safe(report.get('semester', 'Reporting period unknown'))} "
                     f"· {ui._md_safe(report.get('section', 'Section not recorded'))}"
                 )
-                st.caption(f"Original file: {source.get('filename', 'not recorded')}")
+                st.caption(
+                    f"Original file: {ui.code_span(source.get('filename') or 'not recorded')}"
+                )
                 dataframe(
                     [
                         {
@@ -2030,7 +2090,7 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
         ):
             st.markdown(ui.risk_md(row.get("band"), row.get("score")))
             ui.html_block(ui.signal_chips(row["signals"]))
-            st.caption(f":material/front_hand: {row['reviewPath']}")
+            ui.plain_text(row["reviewPath"], muted=True)
             dataframe(
                 [
                     {
@@ -2505,7 +2565,7 @@ def render_draft_reviews(
         st.markdown(
             f"#### {ui._md_safe(labels.pretty_name(selected.get('display_name', 'Student')))}"
         )
-        st.write(packet.get("summary", "No summary recorded."))
+        ui.plain_text(packet.get("summary") or "No summary recorded.")
         is_v2 = packet.get("schema") == "packet-v2"
         evidence_values = selected.get("evidence_values") or {}
         cited_signals = selected.get("signals") or []
@@ -2915,7 +2975,7 @@ def render_lms(actor: dict[str, Any]) -> None:
             else ":material/visibility_off:",
         ):
             if lesson.get("body"):
-                st.write(lesson["body"])
+                ui.plain_text(lesson["body"])
             if lesson.get("material_url"):
                 st.link_button(
                     "Open course material",
@@ -2923,7 +2983,9 @@ def render_lms(actor: dict[str, Any]) -> None:
                     icon=":material/open_in_new:",
                 )
             if lesson.get("attachment_name"):
-                st.caption(f":material/attach_file: {lesson['attachment_name']}")
+                st.caption(
+                    f":material/attach_file: {ui.code_span(lesson['attachment_name'])}"
+                )
             if is_student and st.button(
                 "Mark lesson as opened",
                 key=f"open_lesson_{lesson['id']}",
@@ -3061,12 +3123,14 @@ def render_lms(actor: dict[str, Any]) -> None:
                     )
                 )
             st.markdown(" ".join(badges))
-            st.write(assignment.get("instructions", ""))
+            ui.plain_text(assignment.get("instructions"))
             st.caption(
                 f":material/grade: Maximum score: {assignment.get('maximum_score', 'Not recorded')}"
             )
             if assignment.get("attachment_name"):
-                st.caption(f":material/attach_file: {assignment['attachment_name']}")
+                st.caption(
+                    f":material/attach_file: {ui.code_span(assignment['attachment_name'])}"
+                )
     if not is_student:
         with st.expander("Add or update an assignment", icon=":material/post_add:"):
             assignment_choices: list[dict[str, Any] | None] = [None, *assignments]
@@ -3215,7 +3279,7 @@ def render_lms(actor: dict[str, Any]) -> None:
                     st.html('<p class="aura-eyebrow">Feedback from your teacher</p>')
                     if current_submission.get("score") is not None:
                         st.markdown(f"**Score: {current_submission.get('score')}**")
-                    st.write(current_submission["feedback"])
+                    ui.plain_text(current_submission["feedback"])
         with st.form(f"student_submission_{assignment_id}"):
             answer = st.text_area(
                 "Your response",
@@ -3356,6 +3420,7 @@ def render_lms(actor: dict[str, Any]) -> None:
                 )
             except BridgeError as error:
                 if error.status == 401:
+                    clear_read_cache()
                     st.session_state.pop("token", None)
                     st.session_state.pop("actor", None)
                     st.warning("Your session has ended. Sign in again to continue.")
