@@ -24,9 +24,14 @@ Usage (repo root; start your own server first, never on 8502):
     .venv/bin/python streamlit_app/e2e/live_run.py --stage views          # student, parent, HoD, AI activity, export
     .venv/bin/python streamlit_app/e2e/live_run.py --stage all
 
-Round 3 (docs/E2E_TEST_LOG.md, "Pass 3") adds scenarios, each with its own state directory:
-    --scenario attendance    two students whose attendance points outweigh the rest (Attendance specialist)
-    --scenario wellbeing     two students, plan focus "Wellbeing referral" (Wellbeing-referral specialist)
+Round 3 (docs/E2E_TEST_LOG.md, "Pass 3 / final") runs against the reworked app (per-role pages: Today, Mentees,
+Reviews with the sections "Drafts at the gate", "Start a review" and "Policies") and picks its students from the
+live risk view instead of a fixed list, because the data was regenerated. Each scenario has its own state directory:
+    --scenario mix        plan focus Academic; one student whose attendance points outweigh the rest (routed to the
+                          Attendance specialist) and one whose academic points do (Academic specialist)
+    --scenario attendance one student whose attendance points outweigh the rest, plan focus Attendance
+    --scenario wellbeing  one student, plan focus "Wellbeing referral" (Wellbeing-referral specialist)
+    --stage today         Today: the "Next decision" card opens the matching draft at the gate
 Start the server with CH11_FAULT_INJECT=draft:1,judge:1 to make the first review fail the validator once (the
 Regenerator runs live on real diagnoses) and the first judge look score low once (the judge-triggered repair
 runs live). Both are off unless that variable is set, and both are recorded as "injected for testing" in the
@@ -72,32 +77,35 @@ MENTEES = [
 ]
 SCENARIOS: dict[str, dict[str, Any]] = {
     "pass2": {"out": "live2"},
+    "mix": {
+        "out": "live3-mix",
+        "auto": ["attendance", "academic"],
+        "request": "Prepare support plans for these students; use the current cycle's figures and the approved policy.",
+        "answer": (
+            "Only the students I selected. The current review cycle is the window: use this cycle's attendance, "
+            "marks, LMS and internship figures. Use the faculty-approved mentor policy. Focus on academic follow-up."
+        ),
+        "focus": "Academic",
+    },
     "attendance": {
         "out": "live3-attendance",
-        "request": "Prepare attendance support plans for these students; use the current cycle's figures and the approved policy.",
+        "auto": ["attendance"],
+        "request": "Prepare an attendance support plan for this student; use the current cycle's figures and the approved policy.",
         "answer": (
-            "Only the students I selected. The current review cycle is the window: use this cycle's attendance and "
+            "Only the student I selected. The current review cycle is the window: use this cycle's attendance and "
             "placement-activity figures. Use the faculty-approved mentor policy. Focus on attendance follow-up."
         ),
         "focus": "Attendance",
-        # medium-risk mentees of mentor1 whose only signals are ATTENDANCE_LOW (20 points) and PLACEMENT_ACTIVITY (15)
-        "mentees": [
-            {"register": "01FE24BCI073", "name": "Sunayana Kamat"},
-            {"register": "01FE24BCI036", "name": "Bhavana Hulagammanavara"},
-        ],
     },
     "wellbeing": {
         "out": "live3-wellbeing",
-        "request": "Prepare optional wellbeing referral conversations for these students; use the current cycle's figures and the approved policy.",
+        "auto": ["wellbeing"],
+        "request": "Prepare an optional wellbeing referral conversation for this student; use the current cycle's figures and the approved policy.",
         "answer": (
-            "Only the students I selected. The current review cycle is the window: use this cycle's indicators only. "
+            "Only the student I selected. The current review cycle is the window: use this cycle's indicators only. "
             "Use the faculty-approved mentor policy. Focus on an optional wellbeing referral conversation, nothing more."
         ),
         "focus": "Wellbeing referral",
-        "mentees": [
-            {"register": "01FE24BCI007", "name": "Tanmayee Kalal"},
-            {"register": "01FE23BCI076", "name": "Tanuja Ratan"},
-        ],
     },
 }
 FOCUS = "Academic"
@@ -239,13 +247,16 @@ class Live:
     def shot(self, page: Page, name: str, tall: bool = False) -> str:
         return self.walk.screenshot(page, name, tall=tall)
 
-    # navigation
+    # navigation (the reworked app: sidebar links, then a segmented control for sections)
     def goto_page(self, page: Page, label: str) -> None:
-        page.locator('[data-testid="stSidebar"] [data-testid="stRadioOption"]').filter(has_text=label).first.click()
+        link = page.locator('[data-testid="stSidebar"] [data-testid="stSidebarNavLink"]').filter(has_text=label).first
+        link.click()
         self.wait(page, 90, 0.6)
 
-    def goto_tab(self, page: Page, label: str) -> None:
-        page.get_by_role("tab", name=re.compile(label)).first.click()
+    def goto_section(self, page: Page, label: str) -> None:
+        """Choose a section of the page in its segmented control (a label may carry a count)."""
+        buttons = page.locator('[data-testid="stMain"] [role="radiogroup"] button[role="radio"]').filter(has_text=re.compile(re.escape(label)))
+        buttons.first.click()
         self.wait(page, 90, 0.5)
 
     def open_expander(self, page: Page, title: str) -> bool:
@@ -259,17 +270,41 @@ class Live:
         return True
 
     # widgets
+    def choose_in_open_list(self, page: Page, option_text: str) -> None:
+        """Click an option of the open drop-down by its text, scrolling a long list (no typing: the pickers
+        cannot be typed into)."""
+        listbox = page.locator('[role="listbox"]').first
+        option = listbox.locator('[role="option"]').filter(has_text=option_text)
+        for _ in range(60):
+            if option.count():
+                option.first.click()
+                return
+            listbox.hover()
+            page.mouse.wheel(0, 260)
+            time.sleep(0.15)
+        raise PlaywrightError(f"option {option_text!r} not found in the open list")
+
     def pick_select(self, page: Page, label: str, option_text: str) -> None:
         box = (
             page.locator('[data-testid="stSelectbox"]')
             .filter(has=page.locator('[data-testid="stWidgetLabel"]', has_text=re.compile(rf"^\s*{re.escape(label)}\s*$")))
             .first
         )
-        combo = box.locator('input[role="combobox"]')
-        combo.click()
-        page.keyboard.type(option_text[:24], delay=15)
-        page.locator('[role="listbox"] [role="option"]').filter(has_text=option_text[:24]).first.click()
+        box.click()  # the box itself opens the list; a click on its read-only input does not
+        self.choose_in_open_list(page, option_text)
         self.wait(page, 90, 0.5)
+
+    def pick_draft(self, page: Page, register: str) -> None:
+        """Choose a draft at the gate: with many drafts the picker has a search box; the register number narrows it."""
+        search = page.get_by_label("Search draft", exact=True)
+        if search.count():
+            search.fill(register)
+            search.press("Enter")
+            self.wait(page, 90, 0.8)
+        # the narrowed picker shows that one draft; make sure it is the one chosen
+        value = self.select_value(page, "Draft")
+        if register not in value:
+            self.pick_select(page, "Draft", register)
 
     def select_value(self, page: Page, label: str) -> str:
         box = (
@@ -279,7 +314,9 @@ class Live:
         )
         if box.count() == 0:
             return ""
-        return (box.locator("input[role=combobox]").input_value() or box.inner_text()).strip()
+        field = box.locator('input[role="combobox"]').first
+        shown = (field.input_value() or field.get_attribute("placeholder") or "").strip() if field.count() else ""
+        return shown or " ".join(box.inner_text().split())
 
     def button(self, page: Page, name: str, exact: bool = True):  # noqa: ANN201
         # buttons with a Material icon carry the icon's ligature text in their accessible name
@@ -329,6 +366,58 @@ def login_keys_for(core_names: dict[str, str]) -> dict[str, str]:
     return result
 
 
+def choose_students(core: Core, kinds: list[str]) -> list[dict[str, str]]:
+    """Pick students from mentor1's live risk view for the scenario (kinds: attendance, academic, wellbeing).
+
+    attendance: attendance points outweigh every other signal (the coordinator routes the student to the Attendance
+    specialist); academic: the other signals outweigh attendance (Academic specialist); wellbeing: any flagged student
+    (the plan focus decides; one with a draft already waiting, so the evaluation is current). Otherwise students with a
+    draft already waiting are avoided. Student 021 is never chosen."""
+    review = core.read("MENTOR1", "faculty", "review_overview")
+    queue = core.read("MENTOR1", "faculty", "review_queue")
+    waiting = {str(d.get("student_id")) for d in queue.get("drafts") or []}
+    roster = {str(r.get("id") or r.get("student_id")): r for r in review.get("students") or []}
+    scored = []
+    for risk in review.get("riskView") or []:
+        sid = str(risk.get("studentId"))
+        row = roster.get(sid)
+        if not row or not risk.get("latest", True) or row.get("register_number") == PROTECTED_REGISTER:
+            continue
+        signals = [s for s in risk.get("signals") or [] if isinstance(s, dict)]
+        attendance = sum(s.get("points") or 0 for s in signals if s.get("code") == "ATTENDANCE_LOW")
+        other = sum(s.get("points") or 0 for s in signals if s.get("code") != "ATTENDANCE_LOW")
+        scored.append(
+            {
+                "register": row.get("register_number"),
+                "name": row.get("display_name") or row.get("name"),
+                "sid": sid,
+                "score": risk.get("score") or 0,
+                "attendance": attendance,
+                "other": other,
+                "waiting": sid in waiting,
+            }
+        )
+    scored.sort(key=lambda r: (r["waiting"], -r["score"]))
+    chosen: list[dict[str, str]] = []
+    for kind in kinds:
+        pool = [
+            r
+            for r in scored
+            if r["register"] not in {c["register"] for c in chosen}
+            and (
+                (kind == "attendance" and r["attendance"] > r["other"] and r["attendance"] > 0)
+                or (kind == "academic" and r["other"] > r["attendance"])
+                # a student the review flagged recently (a draft is waiting): older risk rows can be stale, and a
+                # student who is no longer flagged ends the run as "Not flagged" before any specialist runs
+                or (kind == "wellbeing" and r["score"] > 0 and r["waiting"])
+            )
+        ]
+        assert pool, f"no mentee fits the {kind} scenario"
+        pick = pool[0]
+        chosen.append({"register": pick["register"], "name": pick["name"], "kind": kind, "score": pick["score"], "attendance_points": pick["attendance"], "other_points": pick["other"]})
+    return chosen
+
+
 # --------------------------------------------------------------------------- stage: baseline
 def stage_baseline(state: dict[str, Any], core: Core) -> None:
     assert PROTECTED_REGISTER not in mentee_labels()
@@ -370,10 +459,9 @@ def fill_create_form(live: Live, page: Page, state: dict[str, Any]) -> None:
     multi = page.locator('[data-testid="stMultiSelect"]').filter(has_text="Students in scope").first
     for mentee in MENTEES:
         multi.locator("input").first.click()
-        page.keyboard.type(mentee["register"], delay=15)
-        page.locator('[role="listbox"] [role="option"]').filter(has_text=mentee["register"]).first.click()
+        live.choose_in_open_list(page, mentee["register"])
         time.sleep(0.4)
-    chips = multi.locator(".react-aria-ComboBox [data-tag]").count()
+    chips = multi.locator(".react-aria-ComboBox [data-tag], [data-baseweb=\"tag\"]").count()
     note(state, f"selected {chips} students in the form")
     assert chips == len(MENTEES), f"expected {len(MENTEES)} selected students, saw {chips}"
     page.keyboard.press("Escape")
@@ -387,8 +475,8 @@ def stage_plan(state: dict[str, Any], live: Live, core: Core, dry: bool, run_tim
         ctx, page = live.open(browser)
         try:
             live.sign_in(page, live.spec("mentor1", "Mentor", "MENTOR1"))
-            live.goto_page(page, "Support reviews")
-            live.goto_tab(page, "Plans & agent runs")
+            live.goto_page(page, "Reviews")
+            live.goto_section(page, "Start a review")
             live.shot(page, "01-mentor-plans-tab")
 
             # 1. create the plan with exactly three explicitly selected mentees
@@ -439,13 +527,16 @@ def stage_plan(state: dict[str, Any], live: Live, core: Core, dry: bool, run_tim
                     time.sleep(cooldown)
                 live.open_expander(page, "Answer questions or revise this plan")
                 page.get_by_label("Revision feedback", exact=True).fill(ANSWER)
-                if live.select_value(page, "Revised focus").startswith("Choose"):
+                if "Choose" in live.select_value(page, "Revised focus"):
                     live.pick_select(page, "Revised focus", FOCUS)
-                if live.select_value(page, "Revised policy").startswith("Choose"):
+                if "Choose" in live.select_value(page, "Revised policy"):
                     box = page.locator('[data-testid="stSelectbox"]').filter(has_text="Revised policy").first
-                    box.locator('input[role="combobox"]').click()
-                    page.locator('[role="listbox"] [role="option"]').nth(1).click()
-                    time.sleep(0.4)
+                    box.click()
+                    options = page.locator('[role="listbox"] [role="option"]')
+                    latest = options.filter(has_text="V2")  # the policy the risk view is scored with
+                    (latest.first if latest.count() else options.nth(1)).click()
+                    time.sleep(0.6)
+                    assert "Choose" not in live.select_value(page, "Revised policy"), "the policy was not selected; not saving (a save is a model call)"
                 live.button(page, "Save revised plan").click()
                 live.wait(page, 240, 1.5)
                 created_at = time.time()
@@ -477,8 +568,8 @@ def stage_plan(state: dict[str, Any], live: Live, core: Core, dry: bool, run_tim
                 if rows:
                     break
                 time.sleep(1.0)
-            shown = sorted((r["Register number"], r["Student"]) for r in rows)
-            expected = sorted((m["register"], m["name"]) for m in MENTEES)
+            shown = sorted((r["Register number"], r["Student"].casefold()) for r in rows)
+            expected = sorted((m["register"], str(m["name"]).casefold()) for m in MENTEES)
             plan_info["scope_shown"] = shown
             summary = page.locator('[data-testid="stMain"]').get_by_text(re.compile(r"Students in scope \(\d+\)")).first.inner_text()
             plan_info["scope_summary"] = summary.strip()
@@ -543,8 +634,8 @@ def stage_retry(state: dict[str, Any], live: Live, core: Core, run_timeout: int)
         ctx, page = live.open(browser)
         try:
             live.sign_in(page, live.spec("mentor1", "Mentor", "MENTOR1"))
-            live.goto_page(page, "Support reviews")
-            live.goto_tab(page, "Plans & agent runs")
+            live.goto_page(page, "Reviews")
+            live.goto_section(page, "Start a review")
             live.open_expander(page, "Why no model answered")
             live.shot(page, "08a-mentor-ai-unavailable", tall=True)
             for attempt in range(1, 9):
@@ -706,16 +797,16 @@ def stage_inspect(state: dict[str, Any], live: Live, core: Core) -> None:
         ctx, page = live.open(browser)
         try:
             live.sign_in(page, live.spec("mentor1", "Mentor", "MENTOR1"))
-            live.goto_page(page, "Support reviews")
-            live.goto_tab(page, "Plans & agent runs")
+            live.goto_page(page, "Reviews")
+            live.goto_section(page, "Start a review")
             live.open_expander(page, "How the planner read this request")
             state["plan"]["planner_trace_ui"] = live.table(page, "Step", "Detail")
             live.shot(page, "08-mentor-planner-trace", tall=True)
-            live.goto_tab(page, "Review queue")
+            live.goto_section(page, "Drafts at the gate")
             ui_rows = []
             for index, mentee in enumerate(MENTEES):
                 try:
-                    live.pick_select(page, "Draft", mentee["register"])
+                    live.pick_draft(page, mentee["register"])
                 except PlaywrightError as error:
                     ui_rows.append({"register": mentee["register"], "error": live.walk.scrub(str(error))[:160]})
                     continue
@@ -760,7 +851,7 @@ def stage_decide(state: dict[str, Any], live: Live, core: Core) -> None:
     state["chosen"] = {"student": chosen["student"], "register": chosen["register"], "case": chosen["case"], "version_before": chosen["version"]}
     note(state, f"chosen draft: {chosen['student']} {chosen['register']} case {str(chosen['case'])[:8]} version {chosen['version']}")
     original_label = chosen["actions"][0]
-    new_label = original_label.rstrip(".") + " (reworded by mentor)"
+    new_label = "reworded by mentor"
     state["chosen"]["edit"] = {"from": original_label, "to": new_label}
 
     with sync_playwright() as p:
@@ -768,27 +859,15 @@ def stage_decide(state: dict[str, Any], live: Live, core: Core) -> None:
         ctx, page = live.open(browser)
         try:
             live.sign_in(page, live.spec("mentor1", "Mentor", "MENTOR1"))
-            live.goto_page(page, "Support reviews")
-            live.goto_tab(page, "Review queue")
-            live.pick_select(page, "Draft", chosen["register"])
+            live.goto_page(page, "Reviews")
+            live.goto_section(page, "Drafts at the gate")
+            live.pick_draft(page, chosen["register"])
             live.open_expander(page, "Edit the draft")
             live.shot(page, "10-mentor-edit-draft-before", tall=True)
-            # reword one action: select the first cell of the Action column in the data editor
-            grid = page.locator('[data-testid="stDataFrame"]').filter(has_text="Action").first
-            if grid.count() == 0:
-                grid = page.locator('[data-testid="stDataFrame"]').first
-            grid.scroll_into_view_if_needed()
-            box = grid.bounding_box()
-            assert box, "no data editor box"
-            page.mouse.click(box["x"] + 90, box["y"] + 35 + 17)
-            time.sleep(0.4)
-            page.keyboard.press("Enter")
-            time.sleep(0.3)
-            page.keyboard.press("ControlOrMeta+A")
-            page.keyboard.type(new_label, delay=8)
-            page.keyboard.press("Enter")
-            time.sleep(0.6)
-            edit_mode = "action cell in the data editor"
+            # reword the recommendation summary (the action grid is a canvas editor that headless Chromium cannot type into)
+            edit_mode = "recommendation summary"
+            summary_box = page.get_by_label("Recommendation summary", exact=True)
+            summary_box.fill((summary_box.input_value() or "").rstrip(".") + " (reworded by mentor).")
             page.get_by_label("Reason for this edit", exact=True).fill(EDIT_REASON)
             live.shot(page, "11-mentor-edit-draft-typed", tall=True)
             live.button(page, "Save new draft version").click()
@@ -797,20 +876,6 @@ def stage_decide(state: dict[str, Any], live: Live, core: Core) -> None:
             after = next((d for d in queue["drafts"] if d.get("register_number") == chosen["register"]), None)
             assert after, "draft vanished after edit"
             facts = draft_facts(after)
-            labels_now = facts["actions"]
-            if new_label not in labels_now:
-                # fall back to rewording the recommendation summary (the action grid ignored the edit)
-                finding(state, "P3", "Edit the draft", "the action cell did not take the typed text in headless Chromium; reworded the summary instead")
-                edit_mode = "recommendation summary (action cell edit did not register)"
-                live.open_expander(page, "Edit the draft")
-                summary_box = page.get_by_label("Recommendation summary", exact=True)
-                summary_box.fill((summary_box.input_value() or "").rstrip(".") + " (reworded by mentor).")
-                page.get_by_label("Reason for this edit", exact=True).fill(EDIT_REASON)
-                live.button(page, "Save new draft version").click()
-                live.wait(page, 180, 1.5)
-                queue = core.read("MENTOR1", "faculty", "review_queue")
-                after = next(d for d in queue["drafts"] if d.get("register_number") == chosen["register"])
-                facts = draft_facts(after)
             state["chosen"]["edit_mode"] = edit_mode
             state["chosen"]["after_edit"] = facts
             state["chosen"]["revalidated"] = bool(
@@ -838,6 +903,44 @@ def stage_decide(state: dict[str, Any], live: Live, core: Core) -> None:
             save_state(state)
 
 
+# --------------------------------------------------------------------------- stage: today
+def stage_today(state: dict[str, Any], live: Live, core: Core) -> None:
+    """Today: the "Next decision" card names a student and opens that student's draft at the gate."""
+    result: dict[str, Any] = {}
+    queue = core.read("MENTOR1", "faculty", "review_queue")
+    result["awaiting_in_core"] = queue.get("awaitingCount")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ctx, page = live.open(browser)
+        try:
+            live.sign_in(page, live.spec("mentor1", "Mentor", "MENTOR1"))
+            text = live.main_text(page)
+            result["lands_on_today"] = "Today" in text and "Next decision" in text
+            live.shot(page, "30-mentor-today", tall=True)
+            card = page.locator('[class*="st-key-card_next"]').first
+            lines = [ln.strip() for ln in card.inner_text().splitlines() if ln.strip()] if card.count() else []
+            name = lines[lines.index("Next decision") + 1] if "Next decision" in lines else ""
+            result["next_decision_name"] = name
+            before_url = page.url
+            live.button(page, "Review").first.click()
+            live.wait(page, 90, 1.0)
+            result["url_after"] = page.url.rsplit("/", 1)[-1]
+            gate = live.main_text(page)
+            result["gate_shown"] = "Approve this plan?" in gate
+            result["gate_names_student"] = bool(name) and name.split()[0].lower() in gate.lower()
+            result["navigated"] = page.url != before_url
+            live.shot(page, "31-mentor-today-opens-gate", tall=True)
+            result["errors"] = live.errors_on_page(page)
+        finally:
+            ctx.close()
+            browser.close()
+    state["today"] = result
+    note(state, "today: " + json.dumps(result, default=str)[:500])
+    if not (result.get("gate_shown") and result.get("navigated")):
+        finding(state, "P2", "Today", "the Next decision card did not open a draft at the gate")
+    save_state(state)
+
+
 # --------------------------------------------------------------------------- stage: views
 def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
     chosen = state["chosen"]
@@ -855,7 +958,7 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
         return {
             "has_heading": heading in text,
             "has_edited_action": label in text,
-            "has_chip_note": "Drafted by an AI agent. Approved by your mentor." in text,
+            "has_chip_note": "Drafted by AI" in text and "checked by your mentor" in text,
             "agent_chip": " ".join(page.locator(".aura-agent").first.inner_text().split()) if page.locator(".aura-agent").count() else None,
             "snippet": text[text.find(heading) : text.find(heading) + 420] if heading in text else text[:200],
         }
@@ -869,11 +972,9 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
                 live.sign_in(page, live.spec("student", "Student", student_key))
                 results["student_home"] = plan_card(page, "Your support plan")
                 live.shot(page, "15-student-overview", tall=True)
-                if not results["student_home"]["has_heading"]:
-                    live.goto_page(page, "Academic records")
-                    live.goto_tab(page, "Support")
-                    results["student_records"] = plan_card(page, "Your support plan")
-                    live.shot(page, "15b-student-support-tab", tall=True)
+                live.goto_page(page, "My support plan")
+                results["student_records"] = plan_card(page, "Your support plan")
+                live.shot(page, "15b-student-support-plan", tall=True)
                 results["student_errors"] = live.errors_on_page(page)
             finally:
                 ctx.close()
@@ -884,10 +985,9 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
                 results["parent_home"] = plan_card(page, "Approved support plan")
                 results["parent_home"]["shows_child_name"] = str(chosen["student"]).split()[0].lower() in live.main_text(page).lower()
                 live.shot(page, "16-parent-overview", tall=True)
-                if not results["parent_home"]["has_heading"]:
-                    live.goto_page(page, "Child records")
-                    results["parent_records"] = plan_card(page, "Approved support plan")
-                    live.shot(page, "16b-parent-child-records", tall=True)
+                live.goto_page(page, "Support plan and mentor updates")
+                results["parent_records"] = plan_card(page, "Approved support plan")
+                live.shot(page, "16b-parent-support-plan", tall=True)
                 results["parent_errors"] = live.errors_on_page(page)
             finally:
                 ctx.close()
@@ -897,15 +997,9 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
                 live.sign_in(page, live.spec("hod", "Department head", "HOD"))
                 results["hod_overview_text"] = re.findall(r"Reviews awaiting work\s*\n+\s*(\d+)", live.main_text(page))
                 live.shot(page, "17-hod-overview", tall=True)
-                live.goto_page(page, "Support reviews")
-                results["hod_support_kpis"] = {
-                    k: (re.findall(rf"{k}\s*\n+\s*([^\n]+)", live.main_text(page)) or [None])[0]
-                    for k in ("Awaiting mentors", "Approved plans")
-                }
-                live.shot(page, "18-hod-support-reviews", tall=True)
-                live.goto_tab(page, "Plans & agent runs")
-                results["hod_plan_visible"] = state["plan"]["id"][:8] in live.main_text(page) or REQUEST[:30] in live.main_text(page)
-                live.shot(page, "19-hod-plans", tall=True)
+                for name in ("Students", "Mentors", "Policies"):
+                    live.goto_page(page, name)
+                    live.shot(page, f"18-hod-{name.lower()}", tall=True)
                 results["hod_errors"] = live.errors_on_page(page)
             finally:
                 ctx.close()
@@ -918,24 +1012,12 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
                     k: (re.findall(rf"{k}\s*\n+\s*([^\n]+)", text) or [None])[0]
                     for k in ("Recorded runs", "Passed validation", "Escalations", "Waiting for AI")
                 }
-                live.shot(page, "20-ai-activity-overview", tall=True)
-                live.goto_tab(page, "Runs & replay")
-                results["gov_runs_ui"] = live.table(page, "Run", "Status", "Stage")
-                runs_text = live.main_text(page)
-                results["gov_runs_judge"] = {
-                    "judge_node_in_strip": "Judge" in runs_text,
-                    "judge_rows": live.table(page, "Step", "Detail")[:30],
-                }
-                live.shot(page, "21-ai-activity-runs", tall=True)
-                live.goto_tab(page, "Plans")
-                results["gov_plan_visible"] = state["plan"]["id"][:8] in live.main_text(page) or REQUEST[:30] in live.main_text(page)
-                # evidence export from the AI activity workspace
-                export_btn = page.get_by_role("button", name="Prepare evidence export")
-                if export_btn.count():
-                    export_btn.first.click()
-                    live.wait(page, 120, 1.0)
-                    results["export_gov"] = {"download_button": page.get_by_role("button", name="Download review evidence").count() > 0}
-                live.shot(page, "22-ai-activity-plans-export", tall=True)
+                results["gov_plan_visible"] = state["plan"]["id"][:8] in text or REQUEST[:30] in text
+                live.shot(page, "20-ai-activity-runs", tall=True)
+                for name, shot in (("Agent graph", "21-ai-activity-graph"), ("Evaluation", "22-ai-activity-evaluation"), ("Audit and replay", "23-ai-activity-audit")):
+                    live.goto_page(page, name)
+                    results[f"gov_{shot[3:]}_judge"] = "judge" in live.main_text(page).lower()
+                    live.shot(page, shot, tall=True)
                 results["gov_errors"] = live.errors_on_page(page)
             finally:
                 ctx.close()
@@ -943,14 +1025,14 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
             ctx, page = live.open(browser)
             try:
                 live.sign_in(page, live.spec("mentor1", "Mentor", "MENTOR1"))
-                live.goto_page(page, "Support reviews")
-                live.goto_tab(page, "Plans & agent runs")
-                button = page.get_by_role("button", name="Prepare evidence export")
+                live.goto_page(page, "Reviews")
+                live.goto_section(page, "Start a review")
+                button = page.get_by_role("button", name=re.compile("Prepare evidence export"))
                 results["export_button_present"] = button.count() > 0
                 if button.count():
                     button.first.click()
                     live.wait(page, 120, 1.0)
-                    download = page.get_by_role("button", name="Download review evidence").first
+                    download = page.get_by_role("button", name=re.compile("Download review evidence")).first
                     results["download_button_present"] = download.count() > 0
                     live.shot(page, "23-mentor-evidence-export", tall=True)
                     with page.expect_download(timeout=60000) as info:
@@ -979,7 +1061,7 @@ def stage_views(state: dict[str, Any], live: Live, core: Core) -> None:
 # --------------------------------------------------------------------------- main
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stage", choices=["baseline", "plan", "inspect", "decide", "views", "retry", "all"], default="all")
+    parser.add_argument("--stage", choices=["baseline", "plan", "inspect", "decide", "views", "retry", "today", "all"], default="all")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="pass2")
     parser.add_argument("--base-url", default="http://127.0.0.1:8503")
     parser.add_argument("--resume", action="store_true", help="plan stage: continue the plan already in state.json instead of creating one")
@@ -992,6 +1074,15 @@ def main() -> int:
     state = load_state()
     live = Live(args.base_url)
     core = Core(live.env)
+    global MENTEES
+    auto = SCENARIOS[args.scenario].get("auto")
+    if auto:
+        if "mentees" not in state:
+            state["mentees"] = choose_students(core, auto)
+            save_state(state)
+        MENTEES = state["mentees"]
+        assert PROTECTED_REGISTER not in mentee_labels(), "student 021 is never used"
+        note(state, "students: " + ", ".join(f"{m['register']} ({m['kind']}: attendance {m['attendance_points']}, other {m['other_points']})" for m in MENTEES))
     stages = ["baseline", "plan", "retry", "inspect", "decide", "views"] if args.stage == "all" else [args.stage]
     try:
         for stage in stages:
@@ -1008,6 +1099,8 @@ def main() -> int:
                 stage_decide(state, live, core)
             elif stage == "views":
                 stage_views(state, live, core)
+            elif stage == "today":
+                stage_today(state, live, core)
     finally:
         core.close()
         save_state(state)
