@@ -283,6 +283,9 @@ LEGACY = {
 QUEUE = {"drafts": [DRAFT], "legacyDrafts": [LEGACY], "plans": []}
 
 
+DECISION_LABELS = {"Approve and publish", "Edit", "Decline", "Save new draft version"}
+
+
 def queue(actor: dict, data: dict) -> AppTest:
     return render(
         f"q = json.loads({json.dumps(json.dumps(data))}); a = json.loads({json.dumps(json.dumps(actor))})\n"
@@ -296,16 +299,16 @@ legacy_box = next(
 )
 assert legacy_box.proto.expanded is False, "legacy drafts start collapsed"
 decision_forms = [
-    b.label for b in at.button if b.label in {"Save decision", "Save new draft version"}
+    b.label for b in at.button if b.label in DECISION_LABELS
 ]
-assert decision_forms == ["Save new draft version", "Save decision"], decision_forms
+assert decision_forms == ["Approve and publish", "Edit", "Decline", "Save new draft version"], decision_forms
 text = text_of(at)
 assert (
     "Mentor review requested: attendance low." in text
     and "Rule-based summary kept on record." in text
 )
 assert "Undecided, read-only" in text and "Rule-based (retired)" in text
-assert len([b for b in at.button if b.label == "Save decision"]) == 1, (
+assert len([b for b in at.button if b.label == "Approve and publish"]) == 1, (
     "only the AI-written draft can be decided"
 )
 at = queue(FACULTY, {"drafts": [], "legacyDrafts": [LEGACY], "plans": []})
@@ -315,7 +318,7 @@ assert (
     in text_of(at)
 )
 assert not [
-    b for b in at.button if b.label in {"Save decision", "Save new draft version"}
+    b for b in at.button if b.label in DECISION_LABELS
 ], "a legacy draft has no decision controls"
 at = queue(HOD, QUEUE)
 text = text_of(at)
@@ -328,7 +331,7 @@ assert (
     in text
 )
 assert not [
-    b for b in at.button if b.label in {"Save decision", "Save new draft version"}
+    b for b in at.button if b.label in DECISION_LABELS
 ]
 assert "Legacy drafts (1)" in labels_of(at)
 assert "Rule-based summary kept on record." not in text_of(at), (

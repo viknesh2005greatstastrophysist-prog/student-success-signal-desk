@@ -106,7 +106,7 @@ at = AppTest.from_string(script(0), default_timeout=30).run()
 assert not at.exception, [e.message for e in at.exception]
 # st.expander with an icon is reported as a status container by AppTest.
 labels_seen = [e.label for e in at.status] + [e.label for e in at.expander]
-assert "How this draft was produced" in labels_seen, labels_seen
+assert "How this was made" in labels_seen, labels_seen
 markup = html_text(at)
 assert "Why this draft" in " ".join(m.value for m in at.markdown)
 assert "&lt;script&gt;" in markup and "<script>alert" not in markup

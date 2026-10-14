@@ -166,13 +166,35 @@ def render_policies(review: dict[str, Any], actor: dict[str, Any]) -> None:
         "Every review applies one of these faculty-approved policies. Reviews cannot run without one.",
         icon=":material/policy:",
     )
-    dataframe(
-        [
-            {k: v for k, v in row.items() if k not in {"id", "owner"}}
-            for row in policies
-        ],
-        empty="No policy has been approved yet.",
-    )
+    full_rows = [
+        {k: v for k, v in row.items() if k not in {"id", "owner"}} for row in policies
+    ]
+    if not full_rows:
+        dataframe([], empty="No policy has been approved yet.")
+    else:
+        groups: dict[tuple, dict[str, Any]] = {}
+        for row in full_rows:
+            key = (
+                row.get("Policy version"),
+                row.get("Reason"),
+                row.get("Attendance threshold (%)"),
+                row.get("Mark threshold (%)"),
+                row.get("Learning inactivity (days)"),
+            )
+            groups.setdefault(key, {"row": row, "n": 0})["n"] += 1
+        ui.inset_list(
+            [
+                {
+                    "title": g["row"].get("Policy version"),
+                    "sub": f"{g['row'].get('Reason') or ''}"
+                    + (f" Approved {g['n']} times." if g["n"] > 1 else ""),
+                    "end": f"Attendance {g['row'].get('Attendance threshold (%)')}% · Marks {g['row'].get('Mark threshold (%)')}% · Inactive {g['row'].get('Learning inactivity (days)')} days",
+                }
+                for g in groups.values()
+            ]
+        )
+        with st.expander("Full scoring detail", icon=":material/table_rows:"):
+            dataframe(full_rows)
     if actor.get("role") == "faculty":
         with ui.card("policy_form"):
             render_policy_form()
@@ -653,7 +675,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             with st.form(
                 f"pause_form_{selected_id}_{selected_plan['revision']}", border=False
             ):
-                reason_col, button_col = st.columns([3, 1], vertical_alignment="bottom")
+                reason_col, button_col = st.columns([2, 1], vertical_alignment="bottom")
                 with reason_col:
                     reason = st.text_input("Pause or resume reason")
                 with button_col:
@@ -962,7 +984,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     # Every figure below counts the same approved plans by their current status;
     # the log lists the same plans first, then the changes that led to that status.
     outcome = labels.outcome_counts(plans)
-    ui.kpi_row(
+    ui.kpi_row_nonzero(
         [
             {
                 "label": "Approved plans",
@@ -1483,7 +1505,30 @@ def render_diagnoses(validation: Any) -> None:
 def render_draft_provenance(
     selected: dict[str, Any], validation: dict[str, Any]
 ) -> None:
-    with st.expander("How this draft was produced", icon=":material/route:"):
+    with st.expander("How this was made", icon=":material/route:"):
+        checks = validation.get("checks") or {}
+        checks = checks if isinstance(checks, dict) else {}
+        ui.judge_chip_block(validation.get("judge"))
+        st.markdown("**Checks that ran on this version**")
+        for name in CHECK_LABELS:
+            st.markdown(check_line(name, checks.get(name)))
+        st.caption(
+            f"Drafted by: {labels.mode_label(selected.get('mode'))}"
+            + (f" · {selected.get('model_id')}" if selected.get("model_id") else "")
+        )
+        if validation.get("fallback"):
+            st.caption(
+                ":material/swap_horiz: A rule-based fallback produced this draft (a path that has been retired)."
+            )
+        if validation.get("providerError"):
+            st.caption(
+                f":material/cloud_off: Model issue: {labels.issue_label(validation.get('providerError'))}"
+            )
+        repairs = validation.get("repairs", [])
+        if repairs:
+            st.caption(
+                f":material/build: {len(repairs)} targeted repair attempt(s) before review."
+            )
         dataframe(
             provenance_rows(
                 validation,
@@ -1495,7 +1540,8 @@ def render_draft_provenance(
         render_tool_calls(((validation or {}).get("provenance") or {}).get("agent"))
         st.caption(
             "Remote models receive anonymised numbers only (case alias, values, thresholds, course aliases); "
-            "aliases are restored on the server after validation."
+            "aliases are restored on the server after validation. "
+            "Reports describe the checks that existed when this version was recorded."
         )
 
 
@@ -1582,42 +1628,15 @@ def render_draft_reviews(
             ":material/lock: One row per student, showing the latest AI draft. Draft contents, risk scores and evidence are visible only to the student's assigned mentor."
         )
         return
-    per_row = 3
-    for start in range(0, min(len(drafts), 9), per_row):
-        cols = st.columns(per_row)
-        for col, row in zip(cols, drafts[start : start + per_row]):
-            risk = risk_by_student.get(str(row.get("student_id"))) or {}
-            with col, ui.card(f"queue_{row.get('id')}"):
-                st.markdown(
-                    f"**{ui._md_safe(labels.pretty_name(row.get('display_name', 'Student')))}**"
-                )
-                badges = [ui.status_md(row.get("status"))]
-                if risk.get("band"):
-                    badges.append(ui.risk_md(risk.get("band"), risk.get("score")))
-                st.markdown(" ".join(badges))
-                if risk.get("signals"):
-                    ui.html_block(ui.signal_chips(risk["signals"][:3]))
-                ui.html_block(
-                    '<div class="aura-meta">'
-                    + ui.agent_chip(row.get("model_id"))
-                    + f"<span>version {ui.esc(labels.version_number(row.get('artifact_version')))}</span>"
-                    + (
-                        f"<span>{ui.esc(row['earlier_count'])} earlier</span>"
-                        if row.get("earlier_count")
-                        else ""
-                    )
-                    + "</div>"
-                )
-    if len(drafts) > 9:
-        st.caption(
-            f":material/more_horiz: {len(drafts) - 9} more drafts are in the selector below."
+    if len(drafts) > 1:
+        selected = pick(
+            "Draft",
+            drafts,
+            format_func=lambda row: draft_option_label(row, risk_by_student),
+            key="support_draft",
         )
-    selected = pick(
-        "Draft",
-        drafts,
-        format_func=lambda row: draft_option_label(row, risk_by_student),
-        key="support_draft",
-    )
+    else:
+        selected = drafts[0]
     if selected.get("earlier_drafts"):
         with st.expander(
             f"Earlier drafts for this student ({len(selected['earlier_drafts'])})",
@@ -1641,29 +1660,60 @@ def render_draft_reviews(
             )
     packet = selected.get("recommendation") or {}
     validation = selected.get("validation") or {}
-    ui.gate_banner(
-        "Approving publishes this exact version to the student and their family; "
-        "editing saves a new version that is validated again.",
-        title="You are the final authority",
-    )
-    draft_col, check_col = st.columns([3, 2], gap="medium")
-    with draft_col, ui.card(f"draft_{selected['id']}"):
-        st.html('<p class="aura-eyebrow">Draft recommendation</p>')
-        st.markdown(
-            f"#### {ui._md_safe(labels.pretty_name(selected.get('display_name', 'Student')))}"
+    is_v2 = packet.get("schema") == "packet-v2"
+    evidence_values = selected.get("evidence_values") or {}
+    cited_signals = selected.get("signals") or []
+    cited_policy = selected.get("policy") or {}
+    student_name = labels.pretty_name(selected.get("display_name", "Student"))
+    edit_key = f"edit_open_{selected['id']}_{selected.get('artifact_id')}"
+    with st.container(border=True, key="gate_decision"):
+        ui.sheet_header(
+            "Approve this plan?",
+            " · ".join(
+                part
+                for part in (student_name, str(selected.get("register_number") or ""))
+                if part
+            ),
         )
-        ui.agent_chip_block(
-            selected.get("model_id"),
-            note=f"drafted {labels.nice_time(selected.get('drafted_at'))} · version {labels.version_number(selected.get('artifact_version'))}",
+        ui.sheet_paragraph(packet.get("summary") or "No summary recorded.")
+        headline, tone, _icon = labels.validation_headline(validation)
+        ui.html_block(
+            '<div class="aura-meta">'
+            + ui.status_html(headline, tone)
+            + "</div>"
         )
-        ui.judge_chip_block(validation.get("judge"))
-        ui.plain_text(packet.get("summary") or "No summary recorded.")
-        is_v2 = packet.get("schema") == "packet-v2"
-        evidence_values = selected.get("evidence_values") or {}
-        cited_signals = selected.get("signals") or []
-        cited_policy = selected.get("policy") or {}
+        ui.provenance_caption()
+        if validation.get("mentorEdited"):
+            st.caption(
+                ":material/edit: This version includes edits by the mentor account."
+            )
+        actions = packet.get("actions") or []
+        if actions:
+            ui.sheet_heading("What happens next")
+            ui.inset_list(
+                [
+                    {
+                        "title": row.get("label"),
+                        "sub": " · ".join(
+                            part
+                            for part in (
+                                ACTION_OWNER_LABELS.get(
+                                    row.get("owner"), labels.humanize(row.get("owner"))
+                                ),
+                                f"within {row.get('dueInDays')} days"
+                                if row.get("dueInDays") is not None
+                                else "",
+                            )
+                            if part
+                        ),
+                    }
+                    for row in actions
+                    if isinstance(row, dict)
+                ],
+                flat=True,
+            )
         if is_v2 and packet.get("rationale"):
-            st.markdown("**Why this draft**")
+            st.markdown("#### Why this draft")
             ui.html_block(
                 "".join(
                     f'<p class="aura-claim">{ui.esc(sentence.get("text"))}</p>'
@@ -1677,85 +1727,32 @@ def render_draft_reviews(
                     if isinstance(sentence, dict)
                 )
             )
-        if validation.get("mentorEdited"):
-            st.caption(
-                ":material/edit: This version includes edits by the mentor account."
-            )
-        actions = packet.get("actions") or []
-        if actions:
-            st.markdown("**Proposed actions**")
-            dataframe(
-                [
-                    {
-                        "Action": row.get("label"),
-                        "Owner": ACTION_OWNER_LABELS.get(
-                            row.get("owner"), labels.humanize(row.get("owner"))
-                        ),
-                        "Due in days": row.get("dueInDays"),
-                    }
-                    for row in actions
-                ],
-                column_config={
-                    "Action": st.column_config.TextColumn("Action", width="large"),
-                    "Owner": st.column_config.TextColumn("Owner", width="small"),
-                    "Due in days": st.column_config.NumberColumn(
-                        "Due in days", width="small"
-                    ),
-                },
-            )
-            if is_v2:
+        if is_v2 and actions:
+            with st.expander("Talking points for each step", icon=":material/forum:"):
+                parts = []
                 for row in actions:
-                    with st.expander(
-                        ui._md_safe(row.get("label") or "Action"),
-                        icon=":material/forum:",
-                    ):
-                        points = "".join(
-                            f"<li>{ui.esc(point)}</li>"
-                            for point in row.get("talkingPoints") or []
+                    points = "".join(
+                        f"<li>{ui.esc(point)}</li>"
+                        for point in row.get("talkingPoints") or []
+                    )
+                    parts.append(
+                        f'<p class="aura-sheet-h">{ui.esc(row.get("label") or "Action")}</p>'
+                        f'<p class="aura-claim">{ui.esc(row.get("personalisation"))}</p>'
+                        + (f"<ul>{points}</ul>" if points else "")
+                        + ui.claim_chips(
+                            row.get("citations"),
+                            evidence_values,
+                            cited_signals,
+                            cited_policy,
                         )
-                        ui.html_block(
-                            f'<p class="aura-claim">{ui.esc(row.get("personalisation"))}</p>'
-                            + (
-                                f'<p class="aura-eyebrow">Talking points</p><ul>{points}</ul>'
-                                if points
-                                else ""
-                            )
-                            + ui.claim_chips(
-                                row.get("citations"),
-                                evidence_values,
-                                cited_signals,
-                                cited_policy,
-                            )
-                        )
-        if packet.get("citations"):
-            st.markdown("**Evidence cited**")
+                    )
+                ui.html_block("".join(parts))
+        if packet.get("citations") and not (is_v2 and packet.get("rationale")):
+            st.markdown("#### Evidence cited")
             ui.citation_chips(packet.get("citations", []))
-    with check_col, ui.card(f"validation_{selected['id']}"):
-        st.html('<p class="aura-eyebrow">Validation report</p>')
-        headline, tone, icon = labels.validation_headline(validation)
-        st.markdown(ui.badge_md(headline, tone, icon))
-        checks = validation.get("checks") or {}
-        checks = checks if isinstance(checks, dict) else {}
-        st.caption("Chapter 11 acceptance checks")
-        for name in CHECK_LABELS:
-            st.markdown(check_line(name, checks.get(name)))
-        st.caption(
-            f"Drafted by: {labels.mode_label(selected.get('mode'))}"
-            + (f" · {selected.get('model_id')}" if selected.get("model_id") else "")
-        )
-        if validation.get("fallback"):
-            st.caption(
-                ":material/swap_horiz: A rule-based fallback produced this draft (a path that has been retired)."
-            )
-        if validation.get("providerError"):
-            st.caption(
-                f":material/cloud_off: Model issue: {labels.issue_label(validation.get('providerError'))}"
-            )
+        render_draft_provenance(selected, validation)
         repairs = validation.get("repairs", [])
         if repairs:
-            st.caption(
-                f":material/build: {len(repairs)} targeted repair attempt(s) before review."
-            )
             with st.expander("Repair history", icon=":material/build:"):
                 rows, fallback = repair_diagnosis_rows(validation)
                 dataframe(
@@ -1775,129 +1772,37 @@ def render_draft_reviews(
                     if open_fallback
                     else "The latest diagnosis of what is still wrong and the fix that was requested."
                 )
-        st.caption(
-            "Reports describe the checks that existed when this version was recorded."
-        )
-        render_draft_provenance(selected, validation)
-    ui.tech_details(
-        [
-            ("Case reference", selected.get("id")),
-            ("Draft version reference", selected.get("artifact_id")),
-            ("Content hash", selected.get("content_hash")),
-            ("Case revision", selected.get("revision")),
-        ]
-    )
-    if actor.get("role") != "faculty":
-        st.info("This view is read-only for your role.", icon=":material/visibility:")
-        return
-    with st.expander("Edit the draft", icon=":material/edit_document:"):
-        st.caption(
-            "Saving creates a new version that is validated again. The decision below always applies to the version shown."
-        )
-        with st.form(
-            f"edit_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
-        ):
-            summary = st.text_area(
-                "Recommendation summary",
-                value=str(packet.get("summary", "")),
-                max_chars=600,
-            )
-            action_rows = [
-                {
-                    "Action": row.get("label", ""),
-                    "Owner": ACTION_OWNER_LABELS.get(
-                        row.get("owner"), "Assigned faculty"
-                    ),
-                    "Due in days": int(row.get("dueInDays", 7)),
-                }
-                for row in actions
-            ]
-            edited_actions = st.data_editor(
-                pd.DataFrame(action_rows),
-                column_config={
-                    "Action": st.column_config.TextColumn("Action", max_chars=180),
-                    "Owner": st.column_config.SelectboxColumn(
-                        "Owner",
-                        options=list(ACTION_OWNER_LABELS.values()),
-                        required=True,
-                    ),
-                    "Due in days": st.column_config.NumberColumn(
-                        "Due in days", min_value=1, max_value=14, step=1
-                    ),
-                },
-                hide_index=True,
-                num_rows="fixed",
-                width="stretch",
-                key=f"draft_actions_{selected['id']}_{selected.get('artifact_id')}",
-            )
-            edit_rationale = st.text_area("Reason for this edit", max_chars=600)
-            edit_submitted = st.form_submit_button(
-                "Save new draft version", icon=":material/edit_document:"
-            )
-        if edit_submitted:
-            edited = edited_actions.to_dict(orient="records")
-            original_codes = [row.get("code") for row in actions]
-            for index, row in enumerate(edited):
-                # packet-v2 keeps each action's personalisation, talking
-                # points and citations; the edit is revalidated server-side.
-                for key, value in (actions[index] or {}).items():
-                    if key not in {"code", "label", "owner", "dueInDays"}:
-                        row[key] = value
-                row["code"] = original_codes[index]
-                row["label"] = str(row.pop("Action", "")).strip()
-                row["owner"] = {
-                    label: code for code, label in ACTION_OWNER_LABELS.items()
-                }.get(str(row.get("Owner", "Assigned faculty")), "assigned_faculty")
-                row["dueInDays"] = int(row.get("Due in days", 7))
-                row.pop("Owner", None)
-                row.pop("Due in days", None)
-            updated_packet = {
-                **packet,
-                "summary": summary.strip(),
-                "actions": edited,
-                "citations": packet.get("citations", []),
-                "prohibited": packet.get("prohibited", []),
-            }
-            if len(edit_rationale.strip()) < 12:
-                st.error("Enter an edit reason of at least twelve characters.")
-            else:
-                save_action(
-                    "draft_edit",
-                    {
-                        "caseId": selected["id"],
-                        "expectedRevision": int(selected["revision"]),
-                        "artifactId": selected["artifact_id"],
-                        "packet": updated_packet,
-                        "rationale": edit_rationale.strip(),
-                    },
-                    "A new draft version was saved.",
-                )
-    with st.container(border=True, key="gate_decision"):
-        ui.decision_head(
-            f"{labels.version_number(selected.get('artifact_version'))} · {labels.nice_time(selected.get('drafted_at'))}",
-            selected.get("content_hash"),
-        )
-        st.caption(
-            "Approving publishes this exact version to the student and their family. Not approving keeps it unpublished."
-        )
+        if actor.get("role") != "faculty":
+            st.info("This view is read-only for your role.", icon=":material/visibility:")
+            return
         with st.form(
             f"decide_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
         ):
-            decision = st.radio(
-                "Decision",
-                ["approved", "rejected"],
-                format_func=lambda item: (
-                    ":material/verified: Approve and publish"
-                    if item == "approved"
-                    else ":material/cancel: Do not approve"
-                ),
-                horizontal=True,
+            rationale = st.text_area(
+                "Decision rationale",
+                max_chars=600,
+                placeholder="A short reason, kept with the decision",
             )
-            rationale = st.text_area("Decision rationale", max_chars=600)
-            decided = st.form_submit_button(
-                "Save decision", type="primary", icon=":material/gavel:"
+            approve_col, edit_col, decline_col = st.columns(
+                [1.7, 0.9, 1], vertical_alignment="center"
             )
-        if decided:
+            with approve_col:
+                approved = st.form_submit_button(
+                    "Approve and publish", type="primary", width="stretch"
+                )
+            with edit_col:
+                edit_clicked = st.form_submit_button("Edit", width="stretch")
+            with decline_col:
+                declined = st.form_submit_button(
+                    "Decline",
+                    type="tertiary",
+                    width="stretch",
+                    key=f"danger_decline_{selected['id']}",
+                )
+        decision_head(selected)
+        if edit_clicked:
+            st.session_state[edit_key] = True
+        if approved or declined:
             if len(rationale.strip()) < 8:
                 st.error("Enter a decision rationale of at least eight characters.")
             else:
@@ -1908,11 +1813,116 @@ def render_draft_reviews(
                         "expectedRevision": int(selected["revision"]),
                         "artifactId": selected["artifact_id"],
                         "contentHash": selected["content_hash"],
-                        "decision": decision,
+                        "decision": "approved" if approved else "rejected",
                         "rationale": rationale.strip(),
                     },
                     "Decision saved against the displayed draft version.",
                 )
+        with st.expander(
+            "Edit the draft",
+            icon=":material/edit_document:",
+            expanded=bool(st.session_state.get(edit_key)),
+        ):
+            st.caption(
+                "Saving creates a new version that is validated again. The decision above always applies to the version shown."
+            )
+            with st.form(
+                f"edit_draft_{selected['id']}_{selected.get('artifact_id')}",
+                border=False,
+            ):
+                summary = st.text_area(
+                    "Recommendation summary",
+                    value=str(packet.get("summary", "")),
+                    max_chars=600,
+                )
+                action_rows = [
+                    {
+                        "Action": row.get("label", ""),
+                        "Owner": ACTION_OWNER_LABELS.get(
+                            row.get("owner"), "Assigned faculty"
+                        ),
+                        "Due in days": int(row.get("dueInDays", 7)),
+                    }
+                    for row in actions
+                ]
+                edited_actions = st.data_editor(
+                    pd.DataFrame(action_rows),
+                    column_config={
+                        "Action": st.column_config.TextColumn("Action", max_chars=180),
+                        "Owner": st.column_config.SelectboxColumn(
+                            "Owner",
+                            options=list(ACTION_OWNER_LABELS.values()),
+                            required=True,
+                        ),
+                        "Due in days": st.column_config.NumberColumn(
+                            "Due in days", min_value=1, max_value=14, step=1
+                        ),
+                    },
+                    hide_index=True,
+                    num_rows="fixed",
+                    width="stretch",
+                    key=f"draft_actions_{selected['id']}_{selected.get('artifact_id')}",
+                )
+                edit_rationale = st.text_area("Reason for this edit", max_chars=600)
+                edit_submitted = st.form_submit_button(
+                    "Save new draft version", icon=":material/edit_document:"
+                )
+            if edit_submitted:
+                edited = edited_actions.to_dict(orient="records")
+                original_codes = [row.get("code") for row in actions]
+                for index, row in enumerate(edited):
+                    # packet-v2 keeps each action's personalisation, talking
+                    # points and citations; the edit is revalidated server-side.
+                    for key, value in (actions[index] or {}).items():
+                        if key not in {"code", "label", "owner", "dueInDays"}:
+                            row[key] = value
+                    row["code"] = original_codes[index]
+                    row["label"] = str(row.pop("Action", "")).strip()
+                    row["owner"] = {
+                        label: code for code, label in ACTION_OWNER_LABELS.items()
+                    }.get(
+                        str(row.get("Owner", "Assigned faculty")), "assigned_faculty"
+                    )
+                    row["dueInDays"] = int(row.get("Due in days", 7))
+                    row.pop("Owner", None)
+                    row.pop("Due in days", None)
+                updated_packet = {
+                    **packet,
+                    "summary": summary.strip(),
+                    "actions": edited,
+                    "citations": packet.get("citations", []),
+                    "prohibited": packet.get("prohibited", []),
+                }
+                if len(edit_rationale.strip()) < 12:
+                    st.error("Enter an edit reason of at least twelve characters.")
+                else:
+                    save_action(
+                        "draft_edit",
+                        {
+                            "caseId": selected["id"],
+                            "expectedRevision": int(selected["revision"]),
+                            "artifactId": selected["artifact_id"],
+                            "packet": updated_packet,
+                            "rationale": edit_rationale.strip(),
+                        },
+                        "A new draft version was saved.",
+                    )
+        ui.tech_details(
+            [
+                ("Case reference", selected.get("id")),
+                ("Draft version reference", selected.get("artifact_id")),
+                ("Content hash", selected.get("content_hash")),
+                ("Case revision", selected.get("revision")),
+            ]
+        )
+
+
+def decision_head(selected: dict[str, Any]) -> None:
+    """Exact version and content hash of the draft being decided, in small tertiary text."""
+    ui.decision_head(
+        f"{labels.version_number(selected.get('artifact_version'))} · {labels.nice_time(selected.get('drafted_at'))}",
+        selected.get("content_hash"),
+    )
 
 
 def render_legacy_drafts(queue: dict[str, Any], actor: dict[str, Any]) -> None:

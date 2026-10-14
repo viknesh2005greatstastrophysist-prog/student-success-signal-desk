@@ -1,5 +1,5 @@
 """Offline AppTest check (Brief 12): the tool-using agents are visible. The AI Activity
-trace, the mentor's "How this draft was produced" panel and the plan view show tool calls
+trace, the mentor's "How this was made" panel and the plan view show tool calls
 (name, aliased arguments, result size), turns, provider/model and any fallback reason; every
 dynamic value is escaped; planner questions stay in one st.warning. Fictional data, no database."""
 

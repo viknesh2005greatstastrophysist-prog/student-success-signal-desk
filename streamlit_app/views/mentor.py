@@ -40,29 +40,9 @@ def render_followups(overview: dict[str, Any], *, heading: bool = True) -> None:
         ui.page_header(
             "Mentor follow-ups",
             "Schedule or update a check-in. Every change records a reason.",
-            eyebrow="Mentoring",
         )
     followups = overview.get("followups") or []
     students = overview.get("students") or []
-    ui.kpi_row(
-        [
-            {
-                "label": "Open check-ins",
-                "value": sum(1 for r in followups if r.get("status") != "completed"),
-                "icon": ":material/event_note:",
-            },
-            {
-                "label": "Overdue",
-                "value": sum(1 for r in followups if r.get("overdue")),
-                "icon": ":material/alarm:",
-            },
-            {
-                "label": "Completed",
-                "value": sum(1 for r in followups if r.get("status") == "completed"),
-                "icon": ":material/task_alt:",
-            },
-        ]
-    )
     ui.section("All follow-ups", icon=":material/list_alt:")
     dataframe(
         [
@@ -174,7 +154,6 @@ def render_classroom(overview: dict[str, Any]) -> None:
     ui.page_header(
         "Classroom",
         "Take attendance, record assessment marks and check published results.",
-        eyebrow="Teaching",
     )
     classroom_body(overview)
 
@@ -203,39 +182,6 @@ def classroom_body(overview: dict[str, Any]) -> None:
     roster = classroom.get("roster") or []
     sessions = classroom.get("sessions") or []
     assessments = classroom.get("assessments") or []
-    is_mentor = (overview.get("actor") or {}).get("role") == "faculty"
-    mentees = {str(r.get("id")) for r in overview.get("students") or []}
-    ui.kpi_row(
-        [
-            {
-                "label": "Course roster",
-                "value": len(roster),
-                "icon": ":material/groups:",
-                "help": "Everyone registered in this course, because attendance and marks are recorded per course.",
-            },
-            *(
-                [
-                    {
-                        "label": "Your mentees in it",
-                        "value": sum(1 for r in roster if str(r.get("id")) in mentees),
-                        "icon": ":material/school:",
-                    }
-                ]
-                if is_mentor
-                else []
-            ),
-            {
-                "label": "Sessions recorded",
-                "value": len(sessions),
-                "icon": ":material/event_available:",
-            },
-            {
-                "label": "Assessments",
-                "value": len(assessments),
-                "icon": ":material/grading:",
-            },
-        ]
-    )
     st.subheader(f"{course.get('code', '')} · {course.get('title', '')}", anchor=False)
     if not roster:
         ui.empty_state(
@@ -478,76 +424,79 @@ def _waiting_rows(
     ), risk
 
 
+def _open_review(draft: dict[str, Any]) -> None:
+    """Go to Reviews with this draft already chosen."""
+    from views.pages import pages_for
+
+    st.session_state["support_draft"] = draft
+    target = next((p for p in pages_for("faculty") if p.url_path == "reviews"), None)
+    if target is not None:
+        st.switch_page(target)
+
+
+def _draft_reason(draft: dict[str, Any], risk: dict[str, Any]) -> str:
+    """What this draft is about, in plain words: the signals that flagged the student,
+    else the plan summary."""
+    names = [
+        labels.signal_label(sig.get("code")).lower()
+        for sig in (risk.get("signals") or [])[:3]
+        if isinstance(sig, dict)
+    ]
+    if names:
+        return "Flagged for " + ", ".join(names) + "."
+    return " ".join(str((draft.get("recommendation") or {}).get("summary") or "").split())
+
+
+def _risk_status(risk: dict[str, Any] | None) -> tuple[str, str] | None:
+    band = (risk or {}).get("band")
+    if not band:
+        return None
+    label, tone, _ = labels.RISK_BANDS.get(str(band), (labels.humanize(band), "gray", ""))
+    return label, tone
+
+
 def today_page() -> None:
-    """What needs the mentor today: decisions at the gate, then check-ins."""
+    """What needs the mentor today: the next decision, the rest, then check-ins."""
     actor = st.session_state.get("actor") or {}
     overview, queue, review = load_many(
         [("overview", None), ("review_queue", None), ("review_overview", None)]
     )
     ui.page_header(
-        f"Today, {display_name(actor).split()[0] if display_name(actor) else 'mentor'}",
-        "Decisions waiting for you, then your check-ins and overdue follow-ups.",
-        eyebrow="Mentor workspace",
-    )
-    followups = overview.get("followups") or []
-    awaiting = int(queue.get("awaitingCount", len(queue.get("drafts") or [])))
-    ui.kpi_row(
-        [
-            {
-                "label": "Decisions waiting",
-                "value": awaiting,
-                "icon": ":material/front_hand:",
-                "signal": True,
-            },
-            {
-                "label": "Assigned students",
-                "value": len(overview.get("students") or []),
-                "icon": ":material/groups:",
-            },
-            {
-                "label": "Check-ins ahead",
-                "value": sum(
-                    1
-                    for r in followups
-                    if r.get("status") != "completed" and not r.get("overdue")
-                ),
-                "icon": ":material/event_note:",
-            },
-            {
-                "label": "Overdue follow-ups",
-                "value": sum(1 for r in followups if r.get("overdue")),
-                "icon": ":material/alarm:",
-            },
-        ]
+        "Today",
+        f"{ui.greeting()}, {ui.first_name(display_name(actor), 'mentor')}. "
+        f"{today_local().strftime('%A %-d %B')}.",
     )
     waiting, risk = _waiting_rows(queue, review)
-    if awaiting:
-        ui.gate_banner(
-            f"{awaiting} support draft{'s are' if awaiting != 1 else ' is'} waiting at the mentor gate. "
-            "Open Reviews to approve, edit or decline them.",
-            title="Needs you today",
-        )
-        ui.section("Decisions waiting", "Highest risk first, then the longest waiting.")
-        dataframe(
-            [
+    if waiting:
+        first = waiting[0]
+        first_risk = risk.get(str(first.get("student_id")), {})
+        if ui.feature_card(
+            "next",
+            kicker="Next decision",
+            title=labels.pretty_name(first.get("display_name")),
+            text=_draft_reason(first, first_risk),
+            status=_risk_status(first_risk),
+            meta=[f"Drafted {labels.nice_time(first.get('drafted_at'))}"],
+            action="Review",
+        ):
+            _open_review(first)
+        rest = waiting[1:7]
+        if rest:
+            ui.section("Also waiting")
+            rows = [
                 {
-                    "Student": labels.pretty_name(d.get("display_name")),
-                    "Register number": d.get("register_number"),
-                    "Risk": (
-                        f"{labels.risk_label(risk[str(d.get('student_id'))].get('band'))} · "
-                        f"{risk[str(d.get('student_id'))].get('score')}"
-                        if str(d.get("student_id")) in risk
-                        else "Not scored"
-                    ),
-                    "Drafted": labels.nice_time(d.get("drafted_at")),
+                    "title": labels.pretty_name(d.get("display_name")),
+                    "sub": _draft_reason(d, risk.get(str(d.get("student_id")), {})),
+                    "status": _risk_status(risk.get(str(d.get("student_id")))),
+                    "action": f"Review {labels.pretty_name(d.get('display_name'))}",
                 }
-                for d in waiting[:8]
+                for d in rest
             ]
-        )
-        if len(waiting) > 8:
-            st.caption(
-                f"Showing the first 8 of {len(waiting)}. The rest are in Reviews."
-            )
+            tapped = ui.row_list("waiting", rows)
+            if tapped is not None:
+                _open_review(rest[tapped])
+            if len(waiting) > 7:
+                st.caption(f"{len(waiting) - 7} more are in Reviews.")
     else:
         ui.empty_state(
             "Nothing waiting", "No support drafts need your decision right now."
@@ -557,29 +506,38 @@ def today_page() -> None:
 
 @st.fragment
 def today_followups(overview: dict[str, Any]) -> None:
+    ui.section("Check-ins")
     section = sections(
-        ["Upcoming check-ins", "Overdue", "Schedule or update"], key="today_section"
+        ["Upcoming", "Overdue", "Schedule or update"], key="today_section"
     )
     followups = overview.get("followups") or []
     if section == "Schedule or update":
         render_followups(overview, heading=False)
         return
     overdue_only = section == "Overdue"
-    dataframe(
+    shown = [
+        r
+        for r in followups
+        if bool(r.get("overdue")) == overdue_only and r.get("status") != "completed"
+    ]
+    if not shown:
+        ui.empty_state(
+            "No overdue follow-ups" if overdue_only else "No check-ins scheduled",
+            "" if overdue_only else "Choose Schedule or update to add one.",
+        )
+        return
+    ui.inset_list(
         [
             {
-                "Student": labels.pretty_name(r.get("student_name")),
-                "Due": labels.nice_date(r.get("due_on")),
-                "When": "Overdue"
+                "title": labels.pretty_name(r.get("student_name")),
+                "sub": r.get("note"),
+                "status": ("Overdue", "red") if r.get("overdue") else None,
+                "end": None
                 if r.get("overdue")
                 else labels.due_phrase(r.get("due_on")),
-                "Note": r.get("note"),
-                "Status": labels.status_label(r.get("status")),
             }
-            for r in followups
-            if bool(r.get("overdue")) == overdue_only and r.get("status") != "completed"
-        ],
-        empty="No overdue follow-ups." if overdue_only else "No check-ins scheduled.",
+            for r in shown
+        ]
     )
 
 
@@ -588,7 +546,6 @@ def mentees_page() -> None:
     ui.page_header(
         "Mentees",
         "Open a student for attendance, marks, signals, plans and the source records behind them.",
-        eyebrow="Mentor workspace",
     )
     mentees_body()
 
@@ -621,48 +578,24 @@ def reviews_page() -> None:
     ui.page_header(
         "Reviews",
         "AI agents gather evidence, score risk and draft support. You decide what reaches a student.",
-        eyebrow="Mentor workspace",
     )
     queue, review = load_many([("review_queue", None), ("review_overview", None)])
-    risk_rows = review.get("riskView") or []
-    drafts = queue.get("drafts") or []
-    awaiting = int(queue.get("awaitingCount", len(drafts)))
-    ui.kpi_row(
-        [
-            {
-                "label": "Awaiting your decision",
-                "value": awaiting,
-                "icon": ":material/front_hand:",
-                "signal": True,
-            },
-            {
-                "label": "Flagged students",
-                "value": sum(
-                    1 for r in risk_rows if r.get("flagged") and r.get("latest", True)
-                ),
-                "icon": ":material/flag:",
-            },
-            {
-                "label": "Approved plans",
-                "value": len(queue.get("plans") or []),
-                "icon": ":material/verified:",
-            },
-            {
-                "label": "AI model",
-                "value": "Connected"
-                if review.get("modelConfigured")
-                else "Not connected",
-                "icon": ":material/smart_toy:",
-            },
-        ]
-    )
+    if not review.get("modelConfigured"):
+        ui.insight(
+            "The AI model is not connected",
+            "Drafts cannot be produced until it is. Existing drafts and decisions are not affected.",
+        )
     reviews_body(actor)
 
 
 @st.fragment
 def reviews_body(actor: dict[str, Any]) -> None:
     queue, review = load_many([("review_queue", None), ("review_overview", None)])
-    risk_by_student = {str(r.get("studentId")): r for r in review.get("riskView") or []}
+    risk_by_student = {
+        str(r.get("studentId")): r
+        for r in review.get("riskView") or []
+        if r.get("latest", True)
+    }
     awaiting = int(queue.get("awaitingCount", len(queue.get("drafts") or [])))
     section = sections(
         [f"Drafts at the gate ({awaiting})", "Start a review", "Policies"],
