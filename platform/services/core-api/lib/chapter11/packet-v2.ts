@@ -4,6 +4,7 @@ import {
   COURSE_ALIAS,
   COURSE_VALUE_KEY,
   ROUNDING_TOLERANCE,
+  TOOL_VALUE_KEY,
   metricOf,
   resolveCitation,
   scanForIdentifiers,
@@ -78,10 +79,14 @@ const ATTENDANCE_PATH = "evidence.academic.values.attendancePct";
 
 export function courseCodesIn(evidence: Evidence): string[] {
   const codes = new Set<string>();
-  for (const source of ["academic", "lms", "internship", "placement"] as const)
-    for (const key of Object.keys(evidence?.[source]?.values ?? {})) {
+  for (const source of ["academic", "lms", "internship", "placement", "tools"] as const)
+    for (const key of Object.keys(
+      (evidence as unknown as Record<string, { values?: Record<string, unknown> }>)?.[source]?.values ?? {},
+    )) {
       const m = key.match(COURSE_VALUE_KEY);
       if (m) codes.add(m[2]!);
+      const t = key.match(TOOL_VALUE_KEY);
+      if (t && t[2] === "course") codes.add(t[3]!);
     }
   return [...codes].sort((a, b) => b.length - a.length);
 }

@@ -668,7 +668,11 @@ export function acceptanceChecks(
     privacy_scope_enforced:
       sourceNames.every(
         (name) => evidence[name].studentId === evidence.academic.studentId,
-      ) && !report.failures.some((f) => f.code === "OUTPUT_PII"),
+      ) &&
+      (!(evidence as { tools?: { studentId?: string } }).tools ||
+        (evidence as { tools?: { studentId?: string } }).tools!.studentId ===
+          evidence.academic.studentId) &&
+      !report.failures.some((f) => f.code === "OUTPUT_PII"),
   };
   const failures = [...report.failures];
   if (checks.thresholds_faculty_set === false)
@@ -700,6 +704,38 @@ export type GenerationContext = {
   roster?: GuardRoster;
   /** per-run aliases shared by every model call for this case */
   aliases?: AliasMap;
+  /** what the tool-using investigator did before drafting (Brief 12) */
+  agent?: AgentRunSummary;
+};
+/** Visible trace of one agent loop: tool calls (aliased), turns, provider and
+ * the labelled fallback. Results are never stored here, only hash and size. */
+export type AgentRunSummary = {
+  role: "investigator" | "planner";
+  /** "tools" ran the loop; "standard-evidence" is today's behaviour, labelled */
+  mode: "tools" | "standard-evidence";
+  turns: number;
+  modelCalls: number;
+  budget: { maxTurns: number; maxToolCalls: number };
+  toolCalls: Array<{
+    seq: number;
+    turn: number;
+    tool: string;
+    args: unknown;
+    status: "ok" | "refused" | "error";
+    code?: string;
+    resultHash?: string;
+    resultBytes?: number;
+  }>;
+  provider: string | null;
+  model: string | null;
+  tokens: number | null;
+  latencyMs: number;
+  fallbackReason: string | null;
+  skippedReason?: string;
+  /** values appended to the evidence snapshot under evidence.tools */
+  evidenceValues: number;
+  fallbacks: Array<{ provider: string; model: string; reason: string }>;
+  egress: EgressAudit[];
 };
 /** Filled by a provider for each call so the run trace can show who served it. */
 export type CallMeta = {
@@ -735,6 +771,11 @@ function providerFailure(error: unknown): string {
   )
     return error.message;
   return "MODEL_UNAVAILABLE";
+}
+function withoutEgress(agent: AgentRunSummary) {
+  return Object.fromEntries(
+    Object.entries(agent).filter(([key]) => key !== "egress"),
+  ) as Omit<AgentRunSummary, "egress">;
 }
 function summariseCalls(metas: CallMeta[]) {
   const served = [...metas].reverse().find((m) => m.provider);
@@ -896,6 +937,8 @@ export async function compose(
       packetSchema: v2 ? "packet-v2" : "packet-v1",
       provenance: {
         ...calls,
+        egress: [...calls.egress, ...(input.agent?.egress ?? [])],
+        agent: input.agent ? withoutEgress(input.agent) : null,
         specialist: v2
           ? (context.baseline as PacketV2).specialist
           : context.domain,

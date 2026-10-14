@@ -25,6 +25,7 @@ export type MetricInput = {
     fallback?: boolean;
     escalated?: boolean;
     modelAttempts?: unknown[];
+    provenance?: { agent?: { toolCalls?: Array<{ status: string }> } | null };
   } | null;
   mode?: string | null;
   status: string;
@@ -44,6 +45,8 @@ export function evaluationMetrics(rows: MetricInput[]) {
       validationPassed: r.validation!.valid === true,
       repairsUsed: r.validation!.repairs?.length ?? 0,
       fallback: r.validation!.fallback === true,
+      toolCalls: (r.validation!.provenance?.agent?.toolCalls ?? []).filter((c) => c.status === "ok").length,
+      toolRefusals: (r.validation!.provenance?.agent?.toolCalls ?? []).filter((c) => c.status !== "ok").length,
       escalated: r.status === "needs_human" || r.validation!.escalated === true,
       mode: r.mode ?? "not recorded",
       decision: r.decision ?? null,
@@ -73,6 +76,8 @@ export function evaluationMetrics(rows: MetricInput[]) {
       repairsUsed: r.reduce((n, x) => n + x.repairsUsed, 0),
       fallbackRate: r.filter((x) => x.fallback).length / r.length,
       escalationRate: r.filter((x) => x.escalated).length / r.length,
+      toolCalls: r.reduce((n, x) => n + x.toolCalls, 0),
+      toolRefusals: r.reduce((n, x) => n + x.toolRefusals, 0),
       modelRuns: r.filter((x) => x.mode === "model").length,
       ruleRuns: r.filter((x) => x.mode === "deterministic").length,
       decidedRuns: decided.length,

@@ -39,7 +39,15 @@ import {
   type Reference,
   type PolicyGuard,
 } from "./engine";
-import { configuredComposer } from "./provider";
+import { configuredComposer, modelEndpoints, type ChainOptions, type Endpoint } from "./provider";
+import {
+  primedComposer,
+  runInvestigation,
+  toolAuditRows,
+  type ToolEvidence,
+} from "./investigator";
+import { createInvestigationBackend } from "./investigation-backend";
+import type { AgentRunSummary, GenerationContext } from "./engine";
 import { courseValueKey, type EgressAudit, type GuardRoster } from "./egress";
 import { readApprovedCollegeSource } from "../college-normalized";
 import { loadAuthenticatedCollegeSources } from "../college-vault";
@@ -100,6 +108,8 @@ type Checkpoint = {
   policy?: Policy;
   policyGuard?: PolicyGuard;
   nodeTrace?: NodeTrace;
+  /** numbers appended by the investigator's tools (Brief 12) */
+  toolEvidence?: ToolEvidence;
 };
 
 async function audit(
@@ -805,6 +815,19 @@ async function recordEgress(
       );
   });
 }
+/** One durable audit row per investigator tool call, executed or refused. */
+async function recordAgentAudit(
+  actor: ActorContext,
+  job: Job,
+  summary: AgentRunSummary,
+) {
+  const rows = toolAuditRows(summary);
+  if (!rows.length) return;
+  await withCoreTransaction(async (client) => {
+    for (const row of rows)
+      await audit(client, job.generation_id, actor, job.id, row.event, row.input, row.output);
+  });
+}
 async function saveCheckpoint(
   actor: ActorContext,
   job: Job,
@@ -900,6 +923,7 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
     const reason = cp.risk.signals.map((s) => s.explanation).join(" ");
     const evidence = {
       ...cp.evidence,
+      ...(cp.toolEvidence ? { tools: cp.toolEvidence } : {}),
       assignedFacultyPersonId: job.faculty_person_id,
       planId: plan.id,
       planHash: plan.plan_hash,
@@ -1008,6 +1032,8 @@ export async function executePlan(
     composer?: Composer;
     stopAfterStage?: string;
     collectorConcurrency?: 1 | 4;
+    /** test hook: endpoints and limiter for the tool-using investigator */
+    investigation?: { endpoints?: Endpoint[]; chain?: ChainOptions };
   } = {},
 ) {
   requireRole(actor, "faculty", "hod", "governance");
@@ -1180,24 +1206,63 @@ export async function executePlan(
                   initial.plan.body.mode === "model"
                     ? (options.composer ?? configuredComposer())
                     : undefined;
-                const composed = await compose(
-                  {
-                    evidence: job.checkpoint.evidence!,
-                    risk: job.checkpoint.risk!,
-                    domain: initial.plan.body.domain!,
-                    references: job.checkpoint.retrieval!,
-                    policyGuard: initial.policyGuard,
-                    policy: initial.policy,
-                    roster: initial.roster,
-                    baseline: formatSkillV2(
-                      job.checkpoint.risk!,
-                      initial.plan.body.domain!,
-                      job.checkpoint.evidence!,
-                    ),
-                  },
-                  provider,
-                  runNode,
-                );
+                const baseContext: GenerationContext = {
+                  evidence: job.checkpoint.evidence!,
+                  risk: job.checkpoint.risk!,
+                  domain: initial.plan.body.domain!,
+                  references: job.checkpoint.retrieval!,
+                  policyGuard: initial.policyGuard,
+                  policy: initial.policy,
+                  roster: initial.roster,
+                  baseline: formatSkillV2(
+                    job.checkpoint.risk!,
+                    initial.plan.body.domain!,
+                    job.checkpoint.evidence!,
+                  ),
+                };
+                let context = baseContext;
+                let composer = provider;
+                const investigate =
+                  !!provider &&
+                  (!!options.investigation || !options.composer) &&
+                  process.env.CH11_INVESTIGATOR !== "off";
+                if (investigate) {
+                  const outcome = await runNode("InvestigatorAgent", async () => {
+                    const endpoints =
+                      options.investigation?.endpoints ?? modelEndpoints("draft");
+                    const authorize = () =>
+                      withCoreTransaction((client) =>
+                        authorizeConnector(client, actor, job.student_id),
+                      );
+                    return runInvestigation({
+                      context: baseContext,
+                      endpoints,
+                      studentId: job.student_id,
+                      capturedAt: job.checkpoint.capturedAt!,
+                      options: options.investigation?.chain,
+                      backend: createInvestigationBackend({
+                        studentId: job.student_id,
+                        generation: job.generation_id,
+                        capturedAt: job.checkpoint.capturedAt!,
+                        evidence: job.checkpoint.evidence!,
+                        domain: initial.plan.body.domain!,
+                        departmentId: initial.plan.department_id,
+                        signalText: job.checkpoint
+                          .risk!.signals.map((s) => s.explanation)
+                          .join(" "),
+                        authorize,
+                        prior: () => readSource(actor, job.student_id, "priorInterventions"),
+                      }),
+                    });
+                  });
+                  await recordAgentAudit(actor, job, outcome.summary);
+                  context = outcome.context;
+                  const tools = (outcome.context.evidence as { tools?: ToolEvidence }).tools;
+                  if (tools) job.checkpoint.toolEvidence = tools;
+                  if (outcome.primed !== undefined && provider)
+                    composer = primedComposer(provider, outcome);
+                }
+                const composed = await compose(context, composer, runNode);
                 if (initial.plan.body.mode === "model" && !provider) {
                   composed.validation.providerError = "MODEL_NOT_CONFIGURED";
                   composed.validation.fallback = true;

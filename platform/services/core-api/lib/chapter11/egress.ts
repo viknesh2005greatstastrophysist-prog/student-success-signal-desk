@@ -25,9 +25,17 @@ export const METRIC_KEYS = [
 const SOURCE_ORDER = ["academic", "lms", "internship", "placement"] as const;
 /** Per-course metrics live under `<metric>@<course code>` value keys. */
 export const COURSE_VALUE_KEY = /^([A-Za-z]+)@([A-Za-z0-9_-]{1,40})$/;
+export const sanitizeCourseCode = (courseCode: string) =>
+  courseCode.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40);
 export function courseValueKey(metric: string, courseCode: string) {
-  return `${metric}@${courseCode.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40)}`;
+  return `${metric}@${sanitizeCourseCode(courseCode)}`;
 }
+/** Evidence appended by investigator tools lives under `evidence.tools.values`.
+ * Keys are a bare metric, or `<metric>@<dimension>:<label>` where the dimension
+ * is a course, a week of term, a number of weeks ago or an assessment component. */
+export const TOOL_SOURCE = "tools" as const;
+export const TOOL_VALUE_KEY =
+  /^([A-Za-z]+)@(course|week|weeksago|component):([A-Za-z0-9_-]{1,40})$/;
 export const COURSE_ALIAS = /\bcourse-(\d{1,3})\b/gi;
 export const EVIDENCE_ALIAS = /^ev-\d{1,3}$/;
 /** Declared numeric tolerance when model text rounds a cited value. */
@@ -51,8 +59,23 @@ export function metricOf(path: string): {
   key: string;
   metric: string;
   course?: string;
+  dimKind?: string;
+  dim?: string;
 } {
   const [, source = "", , key = ""] = path.split(".");
+  if (source === TOOL_SOURCE) {
+    const tool = key.match(TOOL_VALUE_KEY);
+    return tool
+      ? {
+          source,
+          key,
+          metric: tool[1]!,
+          dimKind: tool[2]!,
+          dim: tool[3]!,
+          ...(tool[2] === "course" ? { course: tool[3]! } : {}),
+        }
+      : { source, key, metric: key };
+  }
   const match = key.match(COURSE_VALUE_KEY);
   return match
     ? { source, key, metric: match[1]!, course: match[2]! }
@@ -114,6 +137,30 @@ export type EgressOptions = {
   history?: boolean;
 };
 
+/** Thresholds and weights are numbers only; they never carry identity. */
+export function policyPayload(policy: Policy) {
+  return {
+    thresholds: {
+      attendanceMinimum: policy.attendanceMinimum,
+      markMinimum: policy.markMinimum,
+      inactivityMaximum: policy.inactivityMaximum,
+      overdueMinimum: policy.overdueMinimum,
+      internshipMinimum: policy.internshipMinimum,
+      placementMinimum: policy.placementMinimum,
+      mediumScore: policy.mediumScore,
+      highScore: policy.highScore,
+    },
+    weights: {
+      attendance: policy.attendanceWeight,
+      mark: policy.markWeight,
+      inactivity: policy.inactivityWeight,
+      overdue: policy.overdueWeight,
+      internship: policy.internshipWeight,
+      placement: policy.placementWeight,
+    },
+  };
+}
+
 /** The allowlisted drafting payload. Only fields built here may leave. */
 export function serializeDraftRequest(
   context: GenerationContext,
@@ -138,6 +185,9 @@ export function serializeDraftRequest(
         metric: m.metric,
         value: round1(Number(record.values[m.key])),
         ...(m.course ? { course: codeToCourse[m.course] ?? "course-?" } : {}),
+        ...(m.dimKind === "week" ? { week: Number(m.dim) } : {}),
+        ...(m.dimKind === "weeksago" ? { weeksAgo: Number(m.dim) } : {}),
+        ...(m.dimKind === "component" ? { component: m.dim } : {}),
         observed: relativeDays(record.observedAt, now),
       };
     },
@@ -159,30 +209,7 @@ export function serializeDraftRequest(
     risk: { score: context.risk.score, band: context.risk.band },
     signals,
     evidence,
-    ...(policy
-      ? {
-          policy: {
-            thresholds: {
-              attendanceMinimum: policy.attendanceMinimum,
-              markMinimum: policy.markMinimum,
-              inactivityMaximum: policy.inactivityMaximum,
-              overdueMinimum: policy.overdueMinimum,
-              internshipMinimum: policy.internshipMinimum,
-              placementMinimum: policy.placementMinimum,
-              mediumScore: policy.mediumScore,
-              highScore: policy.highScore,
-            },
-            weights: {
-              attendance: policy.attendanceWeight,
-              mark: policy.markWeight,
-              inactivity: policy.inactivityWeight,
-              overdue: policy.overdueWeight,
-              internship: policy.internshipWeight,
-              placement: policy.placementWeight,
-            },
-          },
-        }
-      : {}),
+    ...(policy ? { policy: policyPayload(policy) } : {}),
     catalogue: options.catalogue.map((c) => ({ code: c.code, label: c.label })),
     guidance: (history ? context.references : [])
       .map((r) => options.library?.[r.id])
@@ -197,6 +224,23 @@ export function serializeDraftRequest(
     failing: (options.failing ?? []).map((f) => `${f.field}:${f.code}`),
   };
   return { payload, fields: fieldList(payload) };
+}
+
+/** Brief for the tool-using investigator: signals and the standard evidence
+ * rows only. The catalogue, guidance and policy follow in the final call. */
+export function serializeInvestigatorBrief(
+  context: GenerationContext,
+  options: EgressOptions,
+) {
+  const { payload } = serializeDraftRequest(context, options);
+  const brief = {
+    case: payload.case,
+    specialist: payload.specialist,
+    risk: payload.risk,
+    signals: payload.signals,
+    evidence: payload.evidence,
+  };
+  return { payload: brief, fields: fieldList(brief) };
 }
 
 /** Flattened key paths (array positions collapsed) for the audit row. */
@@ -306,6 +350,48 @@ export function scanForIdentifiers(
       return "email";
   if (rosterPattern(roster)?.test(text)) return "roster_name";
   return undefined;
+}
+
+export class ToolResultRejected extends Error {
+  override name = "ToolResultRejected";
+  constructor(readonly reason: string) {
+    super("TOOL_RESULT_NOT_ALLOWLISTED");
+  }
+}
+const TOOL_KEY = /^[A-Za-z][A-Za-z0-9]{0,30}$/;
+/** Aliases, catalogue codes, component slugs and enum words only. */
+const TOOL_WORD =
+  /^(?:course-\d{1,3}|ev-\d{1,3}|case-[0-9a-f]{4}|stu-\d{1,3}|policy-\d{1,2}|[a-z][a-z0-9-]{0,30})$/;
+/**
+ * Tool results are untrusted data bound for a remote model. Only finite
+ * numbers, booleans, short alias-or-enum words and plain keys survive; any
+ * other string (a name, a date, free text) rejects the whole result. The
+ * roster guard in sealOutbound is the second layer.
+ */
+export function allowlistToolResult<T>(value: T, depth = 0): T {
+  if (depth > 5) throw new ToolResultRejected("depth");
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new ToolResultRejected("number");
+    return value;
+  }
+  if (typeof value === "string") {
+    if (!TOOL_WORD.test(value)) throw new ToolResultRejected("string");
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 60) throw new ToolResultRejected("array");
+    for (const item of value) allowlistToolResult(item, depth + 1);
+    return value;
+  }
+  if (typeof value === "object") {
+    for (const [key, item] of Object.entries(value as object)) {
+      if (!TOOL_KEY.test(key)) throw new ToolResultRejected("key");
+      allowlistToolResult(item, depth + 1);
+    }
+    return value;
+  }
+  throw new ToolResultRejected("type");
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");

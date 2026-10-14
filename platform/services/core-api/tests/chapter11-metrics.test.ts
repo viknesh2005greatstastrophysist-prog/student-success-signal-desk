@@ -34,4 +34,15 @@ test("Evaluation distinguishes pending, repaired, escalated and edited decisions
   assert.ok(m.cycles[0]!.averageMentorEditDistance! > 0);
   assert.equal(m.perRun[0]!.timeToDecisionSeconds, null);
   assert.equal(editDistance({ x: 1 }, { x: 1 }), 0);
+  const withTools = evaluationMetrics([
+    {
+      ...common,
+      id: "agent",
+      validation: { valid: true, provenance: { agent: { toolCalls: [{ status: "ok" }, { status: "ok" }, { status: "refused" }] } } },
+    },
+  ]);
+  assert.deepEqual(
+    [withTools.cycles[0]!.toolCalls, withTools.cycles[0]!.toolRefusals],
+    [2, 1],
+  );
 });

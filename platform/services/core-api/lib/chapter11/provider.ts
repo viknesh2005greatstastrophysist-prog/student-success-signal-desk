@@ -16,6 +16,7 @@ import {
   fieldList,
   sealOutbound,
   serializeDraftRequest,
+  type GuardRoster,
 } from "./egress";
 import {
   assembleDraft,
@@ -341,8 +342,17 @@ export type ChatRequest = {
   body: Record<string, unknown>;
   /** audit field list of the allowlisted payload */
   fields: string[];
+  /** report tool calls even when the request offered no `tools` (the agent
+   * loop uses this to catch a model that asks for a turn it was not given) */
+  detectToolCalls?: boolean;
 };
-export type ChatResult = { content: string; usage?: CallMeta["usage"] };
+export type ToolCall = { id: string; name: string; arguments: string };
+export type ChatResult = {
+  content: string;
+  usage?: CallMeta["usage"];
+  /** present only when the request offered `tools` and the model called some */
+  toolCalls?: ToolCall[];
+};
 export class ModelCallError extends Error {
   constructor(
     code: string,
@@ -355,7 +365,7 @@ export class ModelCallError extends Error {
 async function postChat(
   endpoint: Endpoint,
   request: ChatRequest,
-  context: GenerationContext,
+  context: Pick<GenerationContext, "roster">,
   meta: CallMeta,
   limiter: ModelLimiter,
   options: { maxWaitMs: number; timeoutMs: number },
@@ -424,7 +434,15 @@ async function postChat(
   }
   if (!response.ok) throw new Error(`MODEL_HTTP_${response.status}`);
   const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        tool_calls?: Array<{
+          id?: unknown;
+          function?: { name?: unknown; arguments?: unknown };
+        }>;
+      };
+    }>;
     usage?: {
       prompt_tokens?: number;
       completion_tokens?: number;
@@ -432,11 +450,31 @@ async function postChat(
     };
   };
   limiter.settle(key, reservation, payload.usage?.total_tokens);
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content || content.length > 20000)
+  const message = payload.choices?.[0]?.message;
+  const content = message?.content ?? "";
+  const toolCalls: ToolCall[] =
+    "tools" in request.body || request.detectToolCalls
+      ? (message?.tool_calls ?? []).slice(0, 16).flatMap((call, i) =>
+          typeof call?.function?.name === "string" &&
+          call.function.name.length <= 64
+            ? [
+                {
+                  id: typeof call.id === "string" ? call.id.slice(0, 80) : `call_${i + 1}`,
+                  name: call.function.name,
+                  arguments:
+                    typeof call.function.arguments === "string"
+                      ? call.function.arguments.slice(0, 2000)
+                      : "{}",
+                },
+              ]
+            : [],
+        )
+      : [];
+  if (content.length > 20000 || (!content && !toolCalls.length))
     throw new Error("MODEL_INVALID_RESPONSE");
   return {
     content,
+    ...(toolCalls.length ? { toolCalls } : {}),
     usage: payload.usage
       ? {
           prompt: payload.usage.prompt_tokens,
@@ -447,7 +485,7 @@ async function postChat(
   };
 }
 
-function failureReason(error: unknown): string {
+export function failureReason(error: unknown): string {
   if (error instanceof ModelCallError) return `${error.message}: ${error.detail}`;
   if (error instanceof EgressBlocked)
     return `EGRESS_BLOCKED: ${error.category}`;
@@ -571,19 +609,76 @@ const legacyDecode: ResultDecoder = (endpoint, content, context) => {
   return endpoint.remote ? restoreEvidenceCitations(candidate, context) : candidate;
 };
 
+export type ChainOptions = {
+  limiter?: ModelLimiter;
+  maxWaitMs?: number;
+  timeoutMs?: number;
+};
+
+/**
+ * One model request across the provider chain: endpoints are tried in order and
+ * every failure is labelled in `meta.fallbacks`. Remote bodies are sealed by the
+ * egress guard inside `postChat`; a guard refusal ends the chain because every
+ * remote provider would refuse the same payload. `accept` runs inside the
+ * attempt so a rejected response falls through to the next endpoint.
+ */
+export async function callChain<T = ChatResult>(
+  endpoints: Endpoint[],
+  build: (endpoint: Endpoint) => ChatRequest,
+  roster: GuardRoster | undefined,
+  meta: CallMeta,
+  options: ChainOptions = {},
+  accept?: (endpoint: Endpoint, result: ChatResult) => T,
+): Promise<{ endpoint: Endpoint; result: ChatResult; value: T }> {
+  const limiter = options.limiter ?? sharedLimiter;
+  let last: unknown = new Error("MODEL_UNAVAILABLE");
+  for (const endpoint of endpoints) {
+    const started = performance.now();
+    try {
+      const result = await postChat(
+        endpoint,
+        build(endpoint),
+        { roster },
+        meta,
+        limiter,
+        {
+          maxWaitMs:
+            options.maxWaitMs ?? num(process.env.CH11_LIMITER_MAX_WAIT_MS, 15000),
+          timeoutMs:
+            options.timeoutMs ?? num(process.env.CH11_MODEL_TIMEOUT_MS, 45000),
+        },
+      );
+      const value = accept
+        ? accept(endpoint, result)
+        : (result as unknown as T);
+      meta.provider = endpoint.kind;
+      meta.model = endpoint.model;
+      meta.usage = result.usage;
+      meta.latencyMs = Math.round(performance.now() - started);
+      return { endpoint, result, value };
+    } catch (error) {
+      last = error;
+      meta.fallbacks.push({
+        provider: endpoint.kind,
+        model: endpoint.model,
+        reason: failureReason(error),
+      });
+      if (error instanceof EgressBlocked) break;
+    }
+  }
+  if (last instanceof ModelCallError) throw new Error(last.message);
+  throw last;
+}
+
 /** Try each endpoint in order; every fallback is labelled in `meta`. */
 export function chainComposer(
   endpoints: Endpoint[],
-  options: {
-    limiter?: ModelLimiter;
-    maxWaitMs?: number;
-    timeoutMs?: number;
+  options: ChainOptions & {
     build?: RequestBuilder;
     decode?: ResultDecoder;
   } = {},
 ): Composer | undefined {
   if (!endpoints.length) return undefined;
-  const limiter = options.limiter ?? sharedLimiter;
   const build: RequestBuilder =
     options.build ??
     ((endpoint, context, failing, prior) =>
@@ -599,41 +694,15 @@ export function chainComposer(
   return {
     modelId: endpoints.map((e) => `${e.kind}:${e.model}`).join(" -> "),
     async generate(context, failing, prior, meta = newCallMeta()) {
-      let last: unknown = new Error("MODEL_UNAVAILABLE");
-      for (const endpoint of endpoints) {
-        const started = performance.now();
-        try {
-          const result = await postChat(
-            endpoint,
-            build(endpoint, context, failing, prior),
-            context,
-            meta,
-            limiter,
-            {
-              maxWaitMs: options.maxWaitMs ?? num(process.env.CH11_LIMITER_MAX_WAIT_MS, 15000),
-              timeoutMs:
-                options.timeoutMs ?? num(process.env.CH11_MODEL_TIMEOUT_MS, 45000),
-            },
-          );
-          meta.provider = endpoint.kind;
-          meta.model = endpoint.model;
-          meta.usage = result.usage;
-          meta.latencyMs = Math.round(performance.now() - started);
-          return decode(endpoint, result.content, context);
-        } catch (error) {
-          last = error;
-          meta.fallbacks.push({
-            provider: endpoint.kind,
-            model: endpoint.model,
-            reason: failureReason(error),
-          });
-          // The same allowlisted payload would be refused by every remote
-          // provider, so a guard refusal ends the chain.
-          if (error instanceof EgressBlocked) break;
-        }
-      }
-      if (last instanceof ModelCallError) throw new Error(last.message);
-      throw last;
+      const { value } = await callChain(
+        endpoints,
+        (endpoint) => build(endpoint, context, failing, prior),
+        context.roster,
+        meta,
+        options,
+        (endpoint, result) => decode(endpoint, result.content, context),
+      );
+      return value;
     },
   };
 }

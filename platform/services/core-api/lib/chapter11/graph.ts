@@ -23,12 +23,14 @@ export const reviewGraph = {
     ["HumanGate"],
   ],
   nodes: [
+    "PlannerAgent",
     "Coordinator",
     ...collectorNodes,
     "EvidenceValidator",
     "RiskAnalysisAgent",
     "HistoryRetriever",
     "RecommendationAgent",
+    "InvestigatorAgent",
     ...specialistNodes,
     "PacketValidator",
     "Regenerator",
@@ -36,6 +38,12 @@ export const reviewGraph = {
     "DashboardPublisher",
   ],
   edges: [
+    {
+      from: "PlannerAgent",
+      to: "Coordinator",
+      condition:
+        "mentor reviews the drafted plan and locks it (the planner can never lock, execute or widen scope)",
+    },
     ...collectorNodes.map((to) => ({
       from: "Coordinator",
       to,
@@ -65,6 +73,17 @@ export const reviewGraph = {
       from: "RecommendationAgent",
       to: "PacketValidator",
       condition: "candidate",
+    },
+    {
+      from: "RecommendationAgent",
+      to: "InvestigatorAgent",
+      condition:
+        "model mode and a pack with tools: at most 2 tool turns and 4 read-only calls (Brief 12)",
+    },
+    {
+      from: "InvestigatorAgent",
+      to: "PacketValidator",
+      condition: "tool results appended to the evidence snapshot; final draft is the first candidate",
     },
     ...specialistNodes.map((to) => ({
       from: "RecommendationAgent",
@@ -106,6 +125,8 @@ export type NodeId =
   | "RiskAnalysisAgent"
   | "HistoryRetriever"
   | "RecommendationAgent"
+  | "InvestigatorAgent"
+  | "PlannerAgent"
   | (typeof specialistNodes)[number]
   | "PacketValidator"
   | "Regenerator"

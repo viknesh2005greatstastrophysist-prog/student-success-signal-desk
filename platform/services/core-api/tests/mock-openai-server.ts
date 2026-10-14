@@ -80,3 +80,102 @@ export const route = (...replies: MockRoute["replies"]): MockRoute => ({
   replies,
   requests: [],
 });
+
+/* ---- tool-calling helpers (Brief 12) ---- */
+export const toolCallReply = (
+  calls: Array<{ name: string; args: unknown; id?: string }>,
+): MockReply => ({
+  body: {
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: calls.map((c, i) => ({
+            id: c.id ?? `call_9f3a2b1${i}`,
+            type: "function",
+            function: { name: c.name, arguments: JSON.stringify(c.args) },
+          })),
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+    usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 },
+  },
+});
+export const toolsUnsupported: MockReply = {
+  status: 400,
+  body: { error: { message: "tools are not supported by this model", type: "invalid_request_error" } },
+};
+type Body = {
+  tools?: unknown;
+  response_format?: { json_schema?: { name?: string } };
+  messages?: Array<{ role: string; content: string | null }>;
+};
+export const hasTools = (body: unknown) => Array.isArray((body as Body)?.tools);
+export const schemaName = (body: unknown) =>
+  (body as Body)?.response_format?.json_schema?.name;
+/** The user payload of a request, parsed (the first user message). */
+export const userPayload = (body: unknown): DraftPayload =>
+  JSON.parse(
+    (body as Body).messages!.find((m) => m.role === "user")!.content as string,
+  );
+
+type DraftRow = { ref: string; source: string; metric: string; value: number; course?: string };
+type DraftSignal = { code: string; evidence: string; value: number; threshold: number };
+/** The parts of an egress draft payload the scripted models read. */
+export type DraftPayload = {
+  case: string;
+  evidence: DraftRow[];
+  signals: DraftSignal[];
+  catalogue: Array<{ code: string }>;
+};
+/** A valid, grounded packet-v2 draft built only from the request's own payload:
+ * one sentence per signal and one per tool row, every number cited. */
+export function groundedDraft(payload: DraftPayload, preferToolRows = true) {
+  const evidence = payload.evidence;
+  type Sig = DraftSignal;
+  const sentence = (s: Sig) =>
+    `The ${s.code.toLowerCase().replaceAll("_", " ")} indicator is ${s.value} against the ${s.threshold} threshold.`;
+  const signals = payload.signals;
+  // at most four sentences for signals: any remainder shares the last one
+  const head = signals.length > 4 ? signals.slice(0, 3) : signals;
+  const rest = signals.length > 4 ? signals.slice(3) : [];
+  const rationale = head.map((s) => ({ text: sentence(s), citations: [s.evidence] }));
+  if (rest.length)
+    rationale.push({
+      text: rest.map(sentence).join(" ").slice(0, 320),
+      citations: rest.map((s) => s.evidence),
+    });
+  const toolRows = preferToolRows ? evidence.filter((e) => e.source === "tools") : [];
+  const row = toolRows[0] ?? evidence.find((e) => !rationale.some((r) => r.citations.includes(e.ref)));
+  const related = row
+    ? toolRows.filter((t) => t.metric === row.metric && t.course === row.course)
+    : [];
+  if (row)
+    rationale.push({
+      text: `A closer look shows ${row.metric} at ${row.value}${row.course ? ` in ${row.course}` : ""}.`,
+      citations: [row.ref],
+    });
+  const codes = payload.catalogue.map((c) => c.code);
+  const cite = [...new Set([...rationale.flatMap((r) => r.citations), ...related.map((r) => r.ref)])].slice(0, 6);
+  return {
+    rationale: rationale.slice(0, 5),
+    actions: codes.slice(0, 2).map((code, i) => ({
+      code,
+      personalisation: `Talk through the ${row ? row.value : "flagged"} figure together and agree one concrete next step.`,
+      talkingPoints: ["What would make the next fortnight easier to manage?"],
+      dueInDays: 7 + i,
+      citations: row ? [row.ref] : cite,
+    })),
+    _tools: toolRows.map((t) => t.ref),
+  };
+}
+export const draftReply = (payload: DraftPayload, usage = 300): MockReply => {
+  const { _tools, ...draft } = groundedDraft(payload);
+  void _tools;
+  return {
+    content: JSON.stringify(draft),
+    usage: { prompt_tokens: usage, completion_tokens: 100, total_tokens: usage + 100 },
+  };
+};
