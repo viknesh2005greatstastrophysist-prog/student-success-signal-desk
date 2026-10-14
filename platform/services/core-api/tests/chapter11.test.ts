@@ -158,20 +158,23 @@ test("Lab 4: tag and embedding retrieval enforce department and student scope", 
   assert.deepEqual(embed("same text"), embed("same text"));
   assert.ok(Math.abs(Math.hypot(...embed("same text")) - 1) < 0.00001);
 });
-test("Lab 8: parallel students preserve ordered coverage and quality with lower controlled-I/O latency", async () => {
+test("Lab 8: parallel students preserve ordered coverage and quality within the concurrency bound", async () => {
   const ids = Array.from({ length: 8 }, (_, i) => i);
+  let inFlight = 0,
+    maxInFlight = 0;
   const worker = async (id: number) => {
-    await new Promise((r) => setTimeout(r, 20));
+    maxInFlight = Math.max(maxInFlight, ++inFlight);
+    await new Promise((r) => setImmediate(r));
+    inFlight--;
     return { id, score: riskAnalysis(fixture(), demoPolicy).score };
   };
-  const start = performance.now();
   const sequential = await parallelMap(ids, 1, worker);
-  const sequentialMs = performance.now() - start;
-  const parallelStart = performance.now();
+  assert.equal(maxInFlight, 1);
+  maxInFlight = 0;
   const parallel = await parallelMap(ids, 4, worker);
-  const parallelMs = performance.now() - parallelStart;
+  assert.equal(maxInFlight, 4);
+  assert.equal(inFlight, 0);
   assert.deepEqual(parallel, sequential);
-  assert.ok(parallelMs < sequentialMs * 0.8);
 });
 test("Lab 5 and 8: workers use only the connector and collect all four sources", async () => {
   const evidence = fixture(),
