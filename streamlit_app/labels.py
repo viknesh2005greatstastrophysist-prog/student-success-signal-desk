@@ -97,6 +97,25 @@ ISSUES = {
     "UNSUPPORTED_NUMBER": "A number not found in the evidence",
     "UNSUPPORTED_SUMMARY": "Summary not supported by the evidence",
     "INJECTED_STOP": "Stopped for a recovery test",
+    "UNCITED_CLAIM": "A sentence without an evidence citation",
+    "UNKNOWN_COURSE_ALIAS": "A course reference that does not exist",
+    "OUTPUT_PII": "Personal details in the draft text",
+    "LENGTH_LIMIT": "Draft text outside the length limits",
+    "SPECIALIST_LANGUAGE": "Wording not allowed for a wellbeing referral",
+    "SPECIALIST_SCOPE": "Evidence outside the specialist's scope",
+    "SPECIALIST_MISMATCH": "Draft from the wrong specialist",
+    "EGRESS_BLOCKED": "Private details stopped before leaving the server",
+    "MODEL_RATE_LIMITED": "Model rate limit reached",
+    "MODEL_DAILY_CAP": "Daily model allowance used up",
+    "MODEL_HTTP_429": "Model provider rate limit",
+    "MODEL_NOT_CONFIGURED": "No model is configured",
+}
+
+PROVIDERS = {
+    "local": "Local Qwen (this laptop)",
+    "groq": "Groq",
+    "gemini": "Gemini",
+    "configured": "Configured endpoint",
 }
 
 DOMAINS = {
@@ -121,6 +140,9 @@ AGENT_NODES = {
     "RiskAnalysisAgent": ("Risk analysis", "agent"),
     "HistoryRetriever": ("History retrieval", "agent"),
     "RecommendationAgent": ("Recommendation", "agent"),
+    "AcademicSpecialist": ("Academic specialist", "agent"),
+    "AttendanceSpecialist": ("Attendance specialist", "agent"),
+    "WellbeingReferralSpecialist": ("Wellbeing-referral specialist", "agent"),
     "PacketValidator": ("Validation gate", "coordinator"),
     "Regenerator": ("Targeted repair", "agent"),
     "HumanGate": ("Mentor gate", "gate"),
@@ -263,3 +285,32 @@ def pretty_name(raw: Any) -> str:
     """Title-case names stored in capitals; leave mixed-case names untouched."""
     text = str(raw or "").strip()
     return text.title() if text.isupper() else text
+
+
+def provider_label(code: Any) -> str:
+    return PROVIDERS.get(str(code), humanize(code)) if code else "Rule-based"
+
+
+def fmt_number(raw: Any) -> str:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return "not recorded" if raw is None else str(raw)
+    return str(int(raw)) if float(raw).is_integer() else f"{raw:.1f}"
+
+
+POLICY_THRESHOLDS = {
+    "attendancePct": "attendanceMinimum",
+    "markPct": "markMinimum",
+    "inactivityDays": "inactivityMaximum",
+    "overdueAssignments": "overdueMinimum",
+    "missedMilestones": "internshipMinimum",
+    "missedActivities": "placementMinimum",
+}
+
+
+def threshold_for(metric: str, signals: Any, policy: Any) -> Any:
+    """Threshold for a cited metric: the triggering signal first, then policy."""
+    for signal in signals or []:
+        if str(signal.get("path", "")).endswith(f".values.{metric}"):
+            return signal.get("threshold")
+    key = POLICY_THRESHOLDS.get(metric)
+    return (policy or {}).get(key) if key and isinstance(policy, dict) else None

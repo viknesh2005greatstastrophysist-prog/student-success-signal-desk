@@ -107,6 +107,8 @@ h5, h6 { letter-spacing: .01em; }
 
 /* Citation chips */
 .aura-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+.aura-claim { margin: 6px 0 2px; line-height: 1.45; color: var(--aura-ink); }
+.aura-chip:focus { outline: 2px solid #1E5592; outline-offset: 2px; }
 .aura-chip { display: inline-flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 10px;
   background: var(--aura-blue-tint); border: 1px solid #CFE0F2; max-width: 100%; }
 .aura-chip-k { font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #1E5592; }
@@ -318,6 +320,37 @@ def citation_chips(citations: Iterable[dict[str, Any]]) -> None:
         st.html(f'<div class="aura-chips">{"".join(chips)}</div>')
 
 
+def claim_chips(
+    paths: Iterable[Any] | None,
+    evidence_values: dict[str, Any] | None,
+    signals: Iterable[dict[str, Any]] | None,
+    policy: dict[str, Any] | None,
+) -> str:
+    """packet-v2 citation chips: metric (and course), cited value and threshold.
+    Focusable, with the evidence path on hover. Every value is escaped."""
+    chips = []
+    signals = list(signals or [])
+    for path in paths or []:
+        parts = str(path).split(".")
+        source = parts[1] if len(parts) > 1 else ""
+        key = parts[3] if len(parts) > 3 else str(path)
+        metric, _, course = key.partition("@")
+        name = labels.EVIDENCE_FIELDS.get(metric, labels.humanize(metric))
+        value = ((evidence_values or {}).get(source) or {}).get(key)
+        threshold = labels.threshold_for(metric, signals, policy)
+        text = labels.fmt_number(value) + (
+            f" · threshold {labels.fmt_number(threshold)}"
+            if threshold is not None
+            else ""
+        )
+        heading = f"{name} · {course}" if course else name
+        chips.append(
+            f'<span class="aura-chip" tabindex="0" title="{esc(heading)}: {esc(text)} ({esc(path)})">'
+            f'<span class="aura-chip-k">{esc(heading)}</span><span class="aura-chip-v">{esc(text)}</span></span>'
+        )
+    return f'<div class="aura-chips">{"".join(chips)}</div>' if chips else ""
+
+
 def signal_chips(signals: Iterable[dict[str, Any]]) -> str:
     chips = "".join(
         f'<span class="aura-signal">{esc(labels.signal_label(s.get("code")))}</span>'
@@ -361,6 +394,13 @@ COLLECTORS = (
 )
 
 
+SPECIALISTS = (
+    "AcademicSpecialist",
+    "AttendanceSpecialist",
+    "WellbeingReferralSpecialist",
+)
+
+
 def _collectors(trace: dict[str, Any]) -> str:
     rows = []
     for node_id in COLLECTORS:
@@ -389,7 +429,18 @@ def pipeline_stepper(trace: dict[str, Any] | None) -> None:
         _node("EvidenceValidator", trace.get("EvidenceValidator")),
         _node("RiskAnalysisAgent", trace.get("RiskAnalysisAgent")),
         _node("HistoryRetriever", trace.get("HistoryRetriever")),
-        _node("RecommendationAgent", trace.get("RecommendationAgent")),
+        _node(
+            "RecommendationAgent",
+            trace.get("RecommendationAgent"),
+            note=next(
+                (
+                    f'<div class="aura-node-note">{esc(labels.node_label(n))}</div>'
+                    for n in SPECIALISTS
+                    if trace.get(n)
+                ),
+                "",
+            ),
+        ),
         _node("PacketValidator", trace.get("PacketValidator"), note=repair_note),
         _node("HumanGate", trace.get("HumanGate")),
         _node("DashboardPublisher", trace.get("DashboardPublisher")),

@@ -2219,6 +2219,46 @@ def check_line(name: str, result: Any) -> str:
     return f":gray[:material/remove_circle_outline:] {label} · not recorded for this version"
 
 
+def provenance_rows(validation: dict[str, Any], mode: Any, model_id: Any) -> list[dict[str, str]]:
+    """Plain-text rows describing how a draft was produced (mentor/governance only)."""
+    prov = validation.get("provenance") if isinstance(validation, dict) else None
+    if not isinstance(prov, dict):
+        return [
+            {"Step": "Drafted by", "Detail": f"{labels.mode_label(mode)}{' · ' + str(model_id) if model_id else ''}"},
+            {"Step": "Trace", "Detail": "Recorded before provider tracing (packet v1)"},
+        ]
+    egress = [e for e in prov.get("egress") or [] if isinstance(e, dict)]
+    sent = [e for e in egress if e.get("outcome") == "sent"]
+    blocked = [e for e in egress if e.get("outcome") == "blocked"]
+    rows = [
+        {"Step": "Provider", "Detail": labels.provider_label(prov.get("provider")) if prov.get("provider") else labels.mode_label(mode)},
+        {"Step": "Model", "Detail": str(prov.get("model") or "none (rule-based)")},
+        {"Step": "Specialist", "Detail": labels.domain_label(prov.get("specialist"))},
+        {"Step": "Packet format", "Detail": str(validation.get("packetSchema") or "packet-v1")},
+        {"Step": "Repairs", "Detail": str(prov.get("repairs", len(validation.get("repairs") or [])))},
+        {"Step": "Fallback reason", "Detail": str(prov.get("fallbackReason") or "none")},
+    ]
+    for fallback in prov.get("fallbacks") or []:
+        rows.append({"Step": "Provider skipped", "Detail": f"{labels.provider_label(fallback.get('provider'))} {fallback.get('model', '')}: {fallback.get('reason', '')}"})
+    if prov.get("tokens"):
+        rows.append({"Step": "Tokens reported", "Detail": str(prov.get("tokens"))})
+    rows.append({"Step": "Remote requests", "Detail": f"{len(sent)} sent, {len(blocked)} stopped by the privacy guard" if egress else "none (local or rule-based)"})
+    for item in sent[-2:]:
+        rows.append({"Step": "Egress audit hash", "Detail": f"{str(item.get('payloadHash', ''))[:16]}… · {item.get('bytes', '?')} bytes · {len(item.get('fields') or [])} fields"})
+    for item in blocked:
+        rows.append({"Step": "Privacy guard", "Detail": f"Refused: {labels.humanize(item.get('category'))}"})
+    return rows
+
+
+def render_draft_provenance(selected: dict[str, Any], validation: dict[str, Any]) -> None:
+    with st.expander("How this draft was produced", icon=":material/route:"):
+        dataframe(provenance_rows(validation, selected.get("mode"), selected.get("model_id")))
+        st.caption(
+            "Remote models receive anonymised numbers only (case alias, values, thresholds, course aliases); "
+            "aliases are restored on the server after validation."
+        )
+
+
 def render_draft_reviews(
     queue: dict[str, Any],
     actor: dict[str, Any],
@@ -2279,6 +2319,25 @@ def render_draft_reviews(
             f"#### {ui._md_safe(labels.pretty_name(selected.get('display_name', 'Student')))}"
         )
         st.write(packet.get("summary", "No summary recorded."))
+        is_v2 = packet.get("schema") == "packet-v2"
+        evidence_values = selected.get("evidence_values") or {}
+        cited_signals = selected.get("signals") or []
+        cited_policy = selected.get("policy") or {}
+        if is_v2 and packet.get("rationale"):
+            st.markdown("**Why this draft**")
+            ui.html_block(
+                "".join(
+                    f'<p class="aura-claim">{ui.esc(sentence.get("text"))}</p>'
+                    + ui.claim_chips(
+                        sentence.get("citations"),
+                        evidence_values,
+                        cited_signals,
+                        cited_policy,
+                    )
+                    for sentence in packet.get("rationale") or []
+                    if isinstance(sentence, dict)
+                )
+            )
         if validation.get("mentorEdited"):
             st.caption(
                 ":material/edit: This version includes edits by the mentor account."
@@ -2305,6 +2364,30 @@ def render_draft_reviews(
                     ),
                 },
             )
+            if is_v2:
+                for row in actions:
+                    with st.expander(
+                        ui._md_safe(row.get("label") or "Action"),
+                        icon=":material/forum:",
+                    ):
+                        points = "".join(
+                            f"<li>{ui.esc(point)}</li>"
+                            for point in row.get("talkingPoints") or []
+                        )
+                        ui.html_block(
+                            f'<p class="aura-claim">{ui.esc(row.get("personalisation"))}</p>'
+                            + (
+                                f'<p class="aura-eyebrow">Talking points</p><ul>{points}</ul>'
+                                if points
+                                else ""
+                            )
+                            + ui.claim_chips(
+                                row.get("citations"),
+                                evidence_values,
+                                cited_signals,
+                                cited_policy,
+                            )
+                        )
         if packet.get("citations"):
             st.markdown("**Evidence cited**")
             ui.citation_chips(packet.get("citations", []))
@@ -2359,6 +2442,7 @@ def render_draft_reviews(
         st.caption(
             "Reports describe the checks that existed when this version was recorded."
         )
+        render_draft_provenance(selected, validation)
     ui.tech_details(
         [
             ("Case reference", selected.get("id")),
@@ -2417,6 +2501,11 @@ def render_draft_reviews(
             edited = edited_actions.to_dict(orient="records")
             original_codes = [row.get("code") for row in actions]
             for index, row in enumerate(edited):
+                # packet-v2 keeps each action's personalisation, talking
+                # points and citations; the edit is revalidated server-side.
+                for key, value in (actions[index] or {}).items():
+                    if key not in {"code", "label", "owner", "dueInDays"}:
+                        row[key] = value
                 row["code"] = original_codes[index]
                 row["label"] = str(row.pop("Action", "")).strip()
                 row["owner"] = {
@@ -2426,6 +2515,7 @@ def render_draft_reviews(
                 row.pop("Owner", None)
                 row.pop("Due in days", None)
             updated_packet = {
+                **packet,
                 "summary": summary.strip(),
                 "actions": edited,
                 "citations": packet.get("citations", []),
@@ -3436,8 +3526,21 @@ def render_agent_graph(review: dict[str, Any]) -> None:
             ),
             key="graph_job",
         )
-        trace = next(job for job in jobs if str(job["id"]) == job_id).get("node_trace")
+        selected_job = next(job for job in jobs if str(job["id"]) == job_id)
+        trace = selected_job.get("node_trace")
     ui.pipeline_stepper(trace)
+    if jobs:
+        validation = selected_job.get("validation") or {}
+        with st.expander(
+            "Model calls for this run", icon=":material/smart_toy:", expanded=True
+        ):
+            dataframe(
+                provenance_rows(
+                    validation if isinstance(validation, dict) else {},
+                    selected_job.get("mode"),
+                    None,
+                )
+            )
     if trace:
         with st.expander("Node timings", icon=":material/timer:"):
             dataframe(

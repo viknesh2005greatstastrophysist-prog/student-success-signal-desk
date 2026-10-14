@@ -611,7 +611,8 @@ export function chainComposer(
             limiter,
             {
               maxWaitMs: options.maxWaitMs ?? num(process.env.CH11_LIMITER_MAX_WAIT_MS, 15000),
-              timeoutMs: options.timeoutMs ?? 45000,
+              timeoutMs:
+                options.timeoutMs ?? num(process.env.CH11_MODEL_TIMEOUT_MS, 45000),
             },
           );
           meta.provider = endpoint.kind;

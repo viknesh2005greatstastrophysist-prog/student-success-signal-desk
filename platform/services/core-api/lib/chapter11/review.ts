@@ -277,8 +277,10 @@ export async function reviewQueue(actor: ActorContext) {
       [generation, actor.personId, actor.role, actor.departmentId],
     );
     const drafts = await client.query(
-      `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,a.validation,r.mode,r.model_id,person.display_name
-      FROM ch11_jobs j JOIN support_cases c ON c.id=j.support_case_id JOIN agent_runs r ON r.support_case_id=c.id
+      `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,a.validation,r.mode,r.model_id,person.display_name,
+      jsonb_build_object('academic',es.evidence->'academic'->'values','lms',es.evidence->'lms'->'values','internship',es.evidence->'internship'->'values','placement',es.evidence->'placement'->'values') AS evidence_values,
+      es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy
+      FROM ch11_jobs j JOIN support_cases c ON c.id=j.support_case_id JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
       JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id
       WHERE j.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2))) AND c.status='awaiting_faculty'
       AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`,
