@@ -49,6 +49,7 @@ import {
 } from "./investigator";
 import { createInvestigationBackend } from "./investigation-backend";
 import { AiUnavailableError, unavailableReasons } from "./unavailable";
+import type { JudgeVerdict } from "./judge";
 import type { AgentRunSummary, GenerationContext } from "./engine";
 import { courseValueKey, type EgressAudit, type GuardRoster } from "./egress";
 import { readApprovedCollegeSource } from "../college-normalized";
@@ -849,6 +850,51 @@ async function recordEgress(
       );
   });
 }
+/** The judge's scores and reasons (every round) and any fault the test harness
+ * injected, as durable audit rows. An unavailable judge is recorded as such. */
+async function recordJudgeAudit(
+  actor: ActorContext,
+  job: Job,
+  validation: {
+    judge?: JudgeVerdict;
+    provenance?: { injected?: Array<{ kind: string; note: string }> };
+  },
+) {
+  const rounds = [validation.judge?.previous, validation.judge].filter(
+    (v): v is JudgeVerdict => !!v,
+  );
+  const injected = validation.provenance?.injected ?? [];
+  if (!rounds.length && !injected.length) return;
+  await withCoreTransaction(async (client) => {
+    for (const v of rounds)
+      await audit(
+        client,
+        job.generation_id,
+        actor,
+        job.id,
+        v.status === "scored" ? "agent.judge" : "agent.judge_unavailable",
+        { role: "judge", round: v.round, provider: v.provider, model: v.model },
+        v.status === "scored"
+          ? {
+              scores: v.scores,
+              reasons: v.reasons,
+              min: v.min,
+              mean: v.mean,
+              passed: v.passed,
+              threshold: v.threshold,
+              repair: v.repair ?? null,
+              injected: v.injected ?? false,
+            }
+          : {
+              code: "JUDGE_UNAVAILABLE",
+              reason: v.unavailableReason,
+              note: "judge unavailable; the draft was not blocked",
+            },
+      );
+    for (const fault of injected)
+      await audit(client, job.generation_id, actor, job.id, "fault.injected", { kind: fault.kind }, { note: fault.note });
+  });
+}
 /** Identities the egress guard must refuse to send (never sent themselves):
  * the scoped students, their parents, the mentor, the department and college. */
 export async function loadGuardRoster(
@@ -1351,6 +1397,7 @@ export async function executePlan(
                 }
                 const composed = await compose(context, composer, runNode);
                 await recordEgress(actor, job, composed.validation.provenance);
+                await recordJudgeAudit(actor, job, composed.validation);
                 if (composed.unavailable)
                   throw new AiUnavailableError(
                     "No AI model answered, so no draft was made. Retry the review when a model is available.",

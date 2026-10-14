@@ -47,6 +47,10 @@ export const DIAGNOSIS_TEXT: Record<string, string> = {
   UNSUPPORTED_CITATION: "Citation not found in the evidence",
   UNSUPPORTED_NUMBER: "A number not found in the evidence",
   UNSUPPORTED_SUMMARY: "Summary not supported by the evidence",
+  JUDGE_ACTIONABILITY_LOW: "Judge: actions not practical enough for the mentor",
+  JUDGE_GROUNDING_LOW: "Judge: claims not grounded in the cited evidence",
+  JUDGE_SPECIFICITY_LOW: "Judge: too generic, lacks the concrete values",
+  JUDGE_TONE_LOW: "Judge: tone not safe and supportive enough",
 };
 
 /** Schema limits the validator enforces (packet-v2), for length instructions. */

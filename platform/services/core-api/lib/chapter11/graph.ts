@@ -33,6 +33,7 @@ export const reviewGraph = {
     "InvestigatorAgent",
     ...specialistNodes,
     "PacketValidator",
+    "JudgeAgent",
     "Regenerator",
     "HumanGate",
     "DashboardPublisher",
@@ -108,6 +109,23 @@ export const reviewGraph = {
     },
     {
       from: "PacketValidator",
+      to: "JudgeAgent",
+      condition:
+        "valid draft: the judge scores grounding, specificity, actionability and tone (anonymised packet, no tools); an unavailable judge never blocks the draft",
+    },
+    {
+      from: "JudgeAgent",
+      to: "Regenerator",
+      condition:
+        "a score at or below the threshold: its reasons become diagnoses for one targeted repair inside the same repair budget, then revalidation",
+    },
+    {
+      from: "JudgeAgent",
+      to: "HumanGate",
+      condition: "scored (or unavailable): the mentor sees the scores",
+    },
+    {
+      from: "PacketValidator",
       to: "HumanGate",
       condition: "valid or budget exhausted",
     },
@@ -129,6 +147,7 @@ export type NodeId =
   | "PlannerAgent"
   | (typeof specialistNodes)[number]
   | "PacketValidator"
+  | "JudgeAgent"
   | "Regenerator"
   | "HumanGate"
   | "DashboardPublisher";
@@ -151,13 +170,20 @@ export function createNodeRunner(trace: NodeTrace): RunNode {
     const start = performance.now();
     try {
       const result = await work();
+      // a step that reports { skipped: true } did not run (for example an
+      // unavailable judge): it shows as cancelled, not as a failure
       trace[id]!.status =
         result &&
         typeof result === "object" &&
-        "valid" in result &&
-        result.valid === false
-          ? "failed"
-          : "completed";
+        "skipped" in result &&
+        result.skipped === true
+          ? "cancelled"
+          : result &&
+              typeof result === "object" &&
+              "valid" in result &&
+              result.valid === false
+            ? "failed"
+            : "completed";
       return result;
     } catch (error) {
       trace[id]!.status = "failed";

@@ -290,6 +290,40 @@ export function serializeInvestigatorBrief(
   return { payload: brief, fields: fieldList(brief) };
 }
 
+/** The draft as the judge sees it: its own sentences and action fields in alias
+ * space (ev-N, course-N, the case alias), nothing else from the packet. */
+export type JudgeDraftView = {
+  rationale: Array<{ text: string; citations: string[] }>;
+  actions: Array<{
+    code: string;
+    personalisation: string;
+    talkingPoints: string[];
+    dueInDays: number;
+    citations: string[];
+  }>;
+};
+
+/** Payload for the judge agent: the anonymised packet only. Case alias, risk,
+ * signals, the evidence rows, policy numbers and the draft's own sentences.
+ * No catalogue, guidance, prior interventions or tool results. */
+export function serializeJudgeRequest(
+  context: GenerationContext,
+  options: EgressOptions,
+  draft: JudgeDraftView,
+) {
+  const { payload } = serializeDraftRequest(context, options);
+  const brief = {
+    case: payload.case,
+    specialist: payload.specialist,
+    risk: payload.risk,
+    signals: payload.signals,
+    evidence: payload.evidence,
+    ...(payload.policy ? { policy: payload.policy } : {}),
+    draft,
+  };
+  return { payload: brief, fields: fieldList(brief) };
+}
+
 /** Flattened key paths (array positions collapsed) for the audit row. */
 export function fieldList(value: unknown, prefix = ""): string[] {
   if (Array.isArray(value)) {
@@ -328,6 +362,9 @@ export type EgressAudit = {
   bytes: number;
   outcome: "sent" | "blocked";
   category?: EgressCategory;
+  /** set once the provider answered (any HTTP status). "sent" means the request
+   * passed the guard; this says it also left the server and reached the model (#36). */
+  reached?: boolean;
 };
 export class EgressBlocked extends Error {
   override name = "EgressBlocked";

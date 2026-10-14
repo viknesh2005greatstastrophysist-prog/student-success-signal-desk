@@ -522,6 +522,8 @@ export function primedComposer(inner: Composer, outcome: InvestigationOutcome): 
   let used = false;
   return {
     modelId: inner.modelId,
+    // the judge is the inner chain's own capability; priming only changes the first draft
+    ...(inner.judge ? { judge: inner.judge.bind(inner) } : {}),
     async generate(context, failing, prior, meta = newCallMeta(), repair) {
       if (!used && !failing && outcome.primed !== undefined) {
         used = true;

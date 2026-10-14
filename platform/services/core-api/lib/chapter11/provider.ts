@@ -17,6 +17,7 @@ import {
   fieldList,
   sealOutbound,
   serializeDraftRequest,
+  type EgressAudit,
   type GuardRoster,
 } from "./egress";
 import {
@@ -25,6 +26,7 @@ import {
   isPacketV2,
   type PacketV2,
 } from "./packet-v2";
+import { judgeRequest, parseJudge } from "./judge";
 
 export function decodeModelContent(content: string): unknown {
   try {
@@ -288,19 +290,18 @@ export class ModelLimiter {
     key: string,
     estimate: number,
     budget: Budget,
-  ): { waitMs: number } | { refused: "MODEL_RATE_LIMITED" | "MODEL_DAILY_CAP"; detail: string } {
+  ):
+    | { waitMs: number; cooling?: boolean }
+    | { refused: "MODEL_RATE_LIMITED" | "MODEL_DAILY_CAP"; detail: string } {
     const now = this.now();
     const coolUntil = this.cooling.get(key) ?? 0;
-    if (coolUntil > now)
-      return {
-        refused: "MODEL_RATE_LIMITED",
-        detail: `cooling down after HTTP 429 for ${Math.ceil((coolUntil - now) / 1000)}s more`,
-      };
+    // The daily cap still refuses (waiting cannot help); a 429 cool-down is a wait.
     const day = this.day(key);
     if (budget.dailyTokens && day.tokens + estimate > budget.dailyTokens)
       return { refused: "MODEL_DAILY_CAP", detail: "daily token cap reached" };
     if (budget.dailyCalls && day.calls + 1 > budget.dailyCalls)
       return { refused: "MODEL_DAILY_CAP", detail: "daily call cap reached" };
+    if (coolUntil > now) return { waitMs: coolUntil - now, cooling: true };
     const recent = (this.window.get(key) ?? []).filter(
       (e) => now - e.at < 60000,
     );
@@ -376,10 +377,30 @@ export class ModelCallError extends Error {
   constructor(
     code: string,
     readonly detail: string,
+    /** how long until the provider's quota window would admit this call */
+    readonly retryAfterMs?: number,
   ) {
     super(code);
   }
 }
+
+/** Longest a call waits for the rate window before it is reported as a wait.
+ * Background work (the review executor, the judge) waits for a whole 60 s window
+ * plus margin; an interactive call (the planner) waits briefly and then reports
+ * "waiting for AI quota, about N s" so the page can show it and retry (#34). */
+export type WaitPolicy = "background" | "interactive";
+export const BACKGROUND_MAX_WAIT_MS = 70000;
+export const INTERACTIVE_MAX_WAIT_MS = 20000;
+export function maxWaitFor(
+  options: { maxWaitMs?: number; wait?: WaitPolicy },
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  if (options.maxWaitMs !== undefined) return options.maxWaitMs;
+  return options.wait === "interactive"
+    ? num(env.CH11_INTERACTIVE_MAX_WAIT_MS, INTERACTIVE_MAX_WAIT_MS)
+    : num(env.CH11_LIMITER_MAX_WAIT_MS, BACKGROUND_MAX_WAIT_MS);
+}
+const sleepFor = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function postChat(
   endpoint: Endpoint,
@@ -387,10 +408,15 @@ async function postChat(
   context: Pick<GenerationContext, "roster">,
   meta: CallMeta,
   limiter: ModelLimiter,
-  options: { maxWaitMs: number; timeoutMs: number },
+  options: {
+    maxWaitMs: number;
+    timeoutMs: number;
+    sleep?: (ms: number) => Promise<void>;
+  },
 ): Promise<ChatResult> {
   const body = { model: endpoint.model, ...endpoint.extra, ...request.body };
   let serialized: string;
+  let sealedRow: EgressAudit | undefined;
   if (endpoint.remote) {
     try {
       const sealed = sealOutbound(body, {
@@ -400,6 +426,7 @@ async function postChat(
         roster: context.roster,
       });
       serialized = sealed.serialized;
+      sealedRow = sealed.audit;
       meta.egress.push(sealed.audit);
     } catch (error) {
       if (error instanceof EgressBlocked && error.audit)
@@ -411,46 +438,58 @@ async function postChat(
   const budget = budgetFor(endpoint);
   const estimate =
     Math.ceil(serialized.length / 4) + Number(request.body.max_tokens ?? 0);
-  let verdict = limiter.check(key, estimate, budget);
-  if ("waitMs" in verdict && verdict.waitMs > 0) {
-    const wait = verdict.waitMs;
-    if (wait > options.maxWaitMs)
-      throw new ModelCallError(
-        "MODEL_RATE_LIMITED",
-        `tokens-per-minute budget needs a ${Math.ceil(wait / 1000)}s wait`,
-      );
-    await new Promise((r) => setTimeout(r, wait));
-    verdict = limiter.check(key, estimate, budget);
-  }
-  if ("refused" in verdict)
-    throw new ModelCallError(verdict.refused, verdict.detail);
-  if (verdict.waitMs > 0)
-    throw new ModelCallError(
-      "MODEL_RATE_LIMITED",
-      "tokens-per-minute budget still exhausted",
-    );
-  const reservation = limiter.reserve(key, estimate);
-  const response = await fetch(
-    `${endpoint.base.replace(/\/$/, "")}/chat/completions`,
-    {
-      method: "POST",
-      redirect: "error",
-      signal: AbortSignal.timeout(options.timeoutMs),
-      headers: {
-        "Content-Type": "application/json",
-        ...(endpoint.key ? { Authorization: `Bearer ${endpoint.key}` } : {}),
+  const sleep = options.sleep ?? sleepFor;
+  let waited = 0;
+  let response: Response | undefined;
+  let reservation: ReturnType<ModelLimiter["reserve"]> | undefined;
+  // One pass sends the request; an HTTP 429 earns one more pass when the
+  // provider's retry-after fits in the remaining wait allowance.
+  for (let pass = 0; pass < 2 && !response; pass++) {
+    let verdict = limiter.check(key, estimate, budget);
+    while ("waitMs" in verdict && verdict.waitMs > 0) {
+      if (waited + verdict.waitMs > options.maxWaitMs)
+        throw new ModelCallError(
+          "MODEL_RATE_LIMITED",
+          verdict.cooling
+            ? `cooling down after HTTP 429 for ${Math.ceil(verdict.waitMs / 1000)}s more`
+            : `tokens-per-minute budget needs a ${Math.ceil(verdict.waitMs / 1000)}s wait`,
+          verdict.waitMs,
+        );
+      await sleep(verdict.waitMs + 25);
+      waited += verdict.waitMs + 25;
+      verdict = limiter.check(key, estimate, budget);
+    }
+    if ("refused" in verdict)
+      throw new ModelCallError(verdict.refused, verdict.detail);
+    reservation = limiter.reserve(key, estimate);
+    const sent = await fetch(
+      `${endpoint.base.replace(/\/$/, "")}/chat/completions`,
+      {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(options.timeoutMs),
+        headers: {
+          "Content-Type": "application/json",
+          ...(endpoint.key ? { Authorization: `Bearer ${endpoint.key}` } : {}),
+        },
+        body: serialized,
       },
-      body: serialized,
-    },
-  );
-  if (response.status === 429) {
-    const wait = retryAfterMs(response.headers.get("retry-after"));
-    limiter.cool(key, wait);
-    throw new ModelCallError(
-      "MODEL_HTTP_429",
-      `rate limited (HTTP 429, retry after ${Math.ceil(wait / 1000)}s)`,
     );
+    // The provider answered (any status): the request reached the model service (#36).
+    if (sealedRow) sealedRow.reached = true;
+    if (sent.status === 429) {
+      const wait = retryAfterMs(sent.headers.get("retry-after"));
+      limiter.cool(key, wait);
+      if (pass === 0 && waited + wait <= options.maxWaitMs) continue;
+      throw new ModelCallError(
+        "MODEL_HTTP_429",
+        `rate limited (HTTP 429, retry after ${Math.ceil(wait / 1000)}s)`,
+        wait,
+      );
+    }
+    response = sent;
   }
+  if (!response || !reservation) throw new Error("MODEL_UNAVAILABLE");
   if (!response.ok) throw new Error(`MODEL_HTTP_${response.status}`);
   const payload = (await response.json()) as {
     choices?: Array<{
@@ -633,8 +672,13 @@ const legacyDecode: ResultDecoder = (endpoint, content, context) => {
 
 export type ChainOptions = {
   limiter?: ModelLimiter;
+  /** explicit longest wait for the rate window (tests pass 0 to refuse at once) */
   maxWaitMs?: number;
+  /** which default wait applies; background work is the default */
+  wait?: WaitPolicy;
   timeoutMs?: number;
+  /** test hook: replaces the real sleep while waiting for the window */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 /**
@@ -664,10 +708,10 @@ export async function callChain<T = ChatResult>(
         meta,
         limiter,
         {
-          maxWaitMs:
-            options.maxWaitMs ?? num(process.env.CH11_LIMITER_MAX_WAIT_MS, 15000),
+          maxWaitMs: maxWaitFor(options),
           timeoutMs:
             options.timeoutMs ?? num(process.env.CH11_MODEL_TIMEOUT_MS, 45000),
+          sleep: options.sleep,
         },
       );
       const value = accept
@@ -684,6 +728,9 @@ export async function callChain<T = ChatResult>(
         provider: endpoint.kind,
         model: endpoint.model,
         reason: failureReason(error),
+        ...(error instanceof ModelCallError && error.retryAfterMs
+          ? { retryAfterMs: error.retryAfterMs }
+          : {}),
       });
       if (error instanceof EgressBlocked) break;
     }
@@ -698,6 +745,8 @@ export function chainComposer(
   options: ChainOptions & {
     build?: RequestBuilder;
     decode?: ResultDecoder;
+    /** endpoints for the judge agent (its own model first, then the fallbacks) */
+    judgeEndpoints?: Endpoint[];
   } = {},
 ): Composer | undefined {
   if (!endpoints.length) return undefined;
@@ -726,13 +775,36 @@ export function chainComposer(
       );
       return value;
     },
+    ...(options.judgeEndpoints?.length
+      ? {
+          async judge(
+            context: GenerationContext,
+            candidate: unknown,
+            meta: CallMeta = newCallMeta(),
+          ) {
+            const { value } = await callChain(
+              options.judgeEndpoints!,
+              (endpoint) => judgeRequest(endpoint, context, candidate),
+              context.roster,
+              meta,
+              options,
+              (_endpoint, result) => parseJudge(decodeModelContent(result.content)),
+            );
+            return value;
+          },
+        }
+      : {}),
   };
 }
 
 /** OpenAI-compatible provider chain from server configuration only; never
- * accepts a URL or credential from an untrusted browser or source record. */
+ * accepts a URL or credential from an untrusted browser or source record.
+ * The judge agent uses the judge model first (Groq gpt-oss-120b), then the
+ * same fallbacks as drafting. */
 export function configuredComposer(
   role: ModelRole = "draft",
 ): Composer | undefined {
-  return chainComposer(modelEndpoints(role));
+  return chainComposer(modelEndpoints(role), {
+    judgeEndpoints: modelEndpoints("judge"),
+  });
 }

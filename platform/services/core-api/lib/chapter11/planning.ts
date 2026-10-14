@@ -27,7 +27,7 @@ import {
   type PlanningScope,
 } from "./planner";
 import { modelEndpoints, type ChainOptions, type Endpoint } from "./provider";
-import { AiUnavailableError, unavailableReasons } from "./unavailable";
+import { AiUnavailableError, QuotaWaitError, quotaWaitSeconds, unavailableReasons } from "./unavailable";
 
 const TERM = "2026-ODD";
 
@@ -235,7 +235,8 @@ export async function planWithAgent(
     current,
     endpoints,
     roster,
-    options: options.chain,
+    // the planner is interactive: a short wait is absorbed, a long one is reported as a wait (#34)
+    options: { wait: "interactive", ...options.chain },
     aliases: buildPlannerAliases(scope, salt),
     answered,
     conflictKept,
@@ -253,6 +254,8 @@ export async function planWithAgent(
         "EGRESS_BLOCKED",
         "The privacy guard stopped this request because it names a student or contact. Describe the students without names or register numbers and save again.",
       );
+    const quota = quotaWaitSeconds(outcome.summary);
+    if (quota) throw new QuotaWaitError(quota, reasons);
     throw new AiUnavailableError(
       `No AI model answered, so the plan was not saved. Nothing was drafted by rules. Retry in a moment.${
         reasons.length ? ` (${reasons.slice(0, 3).join("; ")})` : ""

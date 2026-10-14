@@ -18,8 +18,26 @@ export class AiUnavailableError extends ConflictError {
   }
 }
 
+/** The model is fine; its quota window is not open yet (#34). An interactive
+ * call reports this instead of "AI unavailable": the page shows "Waiting for AI
+ * quota, about N s" and retries the same request by itself. */
+export const AI_QUOTA_WAIT = "AI_QUOTA_WAIT";
+
+export class QuotaWaitError extends ConflictError {
+  constructor(
+    readonly retryAfterSeconds: number,
+    /** per-provider reason codes, as for AI unavailable */
+    readonly reasons: string[],
+  ) {
+    super(
+      AI_QUOTA_WAIT,
+      `Waiting for AI quota, about ${retryAfterSeconds} s. The request was not lost; it is retried automatically.`,
+    );
+  }
+}
+
 type FailureSummary = {
-  fallbacks: Array<{ provider: string; model: string; reason: string }>;
+  fallbacks: Array<{ provider: string; model: string; reason: string; retryAfterMs?: number }>;
   fallbackReason?: string | null;
   skippedReason?: string;
 };
@@ -33,4 +51,12 @@ export function unavailableReasons(summary: FailureSummary): string[] {
   if (extra && !reasons.some((r) => extra.includes(r) || r.includes(extra)))
     reasons.push(extra.slice(0, 300));
   return reasons.slice(0, 8);
+}
+
+/** Seconds until some provider's window admits the call, when that is the only
+ * reason no model answered (every failed provider reported a wait). */
+export function quotaWaitSeconds(summary: FailureSummary): number | undefined {
+  const waits = summary.fallbacks.map((f) => f.retryAfterMs);
+  if (!waits.length || waits.some((w) => !w)) return undefined;
+  return Math.min(120, Math.ceil(Math.min(...(waits as number[])) / 1000) + 1);
 }

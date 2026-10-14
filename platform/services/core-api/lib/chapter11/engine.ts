@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { validationRoute, type RunNode } from "./graph";
+import { reviewGraph, validationRoute, type RunNode } from "./graph";
 import { buildAliases, restoreAliases, type AliasMap, type EgressAudit, type GuardRoster } from "./egress";
 import {
   isPacketV2,
@@ -13,6 +13,17 @@ export { isPacketV2, packetV2Schema, type PacketV2 };
 import { actions, domainNames } from "./catalogue";
 import { routeSpecialist, specialistRegistry } from "./specialists";
 import { diagnose, type RepairDiagnosis } from "./diagnosis";
+import {
+  injectLowScore,
+  judgeDiagnoses,
+  judgeFailures,
+  scoredVerdict,
+  unavailableVerdict,
+  type JudgeRaw,
+  type JudgeDimension,
+  type JudgeVerdict,
+} from "./judge";
+import { corruptDraft, INJECTED_NOTE, takeFault } from "./faults";
 export { actions, domainNames, routeSpecialist, specialistRegistry };
 export { diagnose, type RepairDiagnosis };
 
@@ -837,14 +848,14 @@ export type AgentRunSummary = {
   skippedReason?: string;
   /** values appended to the evidence snapshot under evidence.tools */
   evidenceValues: number;
-  fallbacks: Array<{ provider: string; model: string; reason: string }>;
+  fallbacks: Array<{ provider: string; model: string; reason: string; retryAfterMs?: number }>;
   egress: EgressAudit[];
 };
 /** Filled by a provider for each call so the run trace can show who served it. */
 export type CallMeta = {
   provider?: string;
   model?: string;
-  fallbacks: Array<{ provider: string; model: string; reason: string }>;
+  fallbacks: Array<{ provider: string; model: string; reason: string; retryAfterMs?: number }>;
   egress: EgressAudit[];
   usage?: { prompt?: number; completion?: number; total?: number };
   latencyMs?: number;
@@ -860,6 +871,13 @@ export interface Composer {
     /** deterministic patch instructions for the failing parts (Brief 16-lite) */
     repair?: RepairDiagnosis[],
   ): Promise<unknown>;
+  /** Judge agent: scores a candidate that already passed the validator. A
+   * composer without it simply is not judged. */
+  judge?(
+    context: GenerationContext,
+    candidate: unknown,
+    meta?: CallMeta,
+  ): Promise<JudgeRaw>;
 }
 function providerFailure(error: unknown): string {
   if (error instanceof SyntaxError) return "MODEL_INVALID_JSON";
@@ -957,6 +975,8 @@ export async function compose(
     attempt: number;
     failures: Diagnosis[];
     diagnoses: RepairDiagnosis[];
+    /** set when the judge, not the validator, asked for this repair */
+    source?: "judge";
   }> = [];
   const domain = v2 ? (context.baseline as PacketV2).specialist : context.domain;
   const diagnoseFor = (failures: Diagnosis[], form: unknown) =>
@@ -975,6 +995,33 @@ export async function compose(
     call?: CallMeta;
   }> = [];
   const metas: CallMeta[] = [];
+  /** the judge's own calls: audited, but never the "served by" model of the draft */
+  const judgeMetas: CallMeta[] = [];
+  /** faults injected by the test harness (faults.ts); empty in normal use */
+  const injected: Array<{ kind: string; note: string }> = [];
+  const asObject = (value: unknown): Record<string, unknown> =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  /** Merge a regenerator patch into the candidate, field by field. */
+  const applyPatch = (current0: unknown, patch: unknown, failures: Diagnosis[]) => {
+    const current = asObject(current0);
+    const supplied = asObject(patch);
+    const next: Record<string, unknown> = { ...current };
+    let usedBaseline = false;
+    for (const [field, indexes] of failingParts(failures)) {
+      const part = patchedItems(current[field], supplied[field], indexes);
+      if (part) {
+        // Item-level faults: only the failing sentences or actions change; the
+        // passing ones stay byte-for-byte as they were.
+        next[field] = part;
+        continue;
+      }
+      if (supplied[field] === undefined) usedBaseline = true;
+      next[field] = supplied[field] ?? baselineFields[field];
+    }
+    return { next, usedBaseline };
+  };
   if (provider) {
     const meta = newCallMeta();
     metas.push(meta);
@@ -994,6 +1041,10 @@ export async function compose(
         outputHash: digest(candidate),
         call: meta,
       });
+      if (v2 && takeFault("draft")) {
+        candidate = corruptDraft(candidate);
+        injected.push({ kind: "draft", note: INJECTED_NOTE });
+      }
     } catch (error) {
       providerError = providerFailure(error);
     }
@@ -1036,28 +1087,90 @@ export async function compose(
         break;
       }
     }
-    const current =
-      candidate && typeof candidate === "object" && !Array.isArray(candidate)
-        ? (candidate as Record<string, unknown>)
-        : {};
-    const supplied =
-      patch && typeof patch === "object" && !Array.isArray(patch)
-        ? (patch as Record<string, unknown>)
-        : {};
-    candidate = { ...current };
-    for (const [field, indexes] of failingParts(report.failures)) {
-      const target = candidate as Record<string, unknown>;
-      const part = patchedItems(current[field], supplied[field], indexes);
-      if (part) {
-        // Item-level faults: only the failing sentences or actions change; the
-        // passing ones stay byte-for-byte as they were.
-        target[field] = part;
-        continue;
-      }
-      if (supplied[field] === undefined) baselineRepair = true;
-      target[field] = supplied[field] ?? baselineFields[field];
-    }
+    const applied = applyPatch(candidate, patch, report.failures);
+    candidate = applied.next;
+    if (applied.usedBaseline) baselineRepair = true;
     report = await runNode("PacketValidator", () => check(candidate));
+  }
+  // Judge agent: a draft that passed the validator is scored on grounding,
+  // specificity, actionability and tone. A low score becomes diagnoses for one
+  // targeted repair inside the same repair budget; the repaired draft must pass
+  // the validator again or the earlier valid draft is kept. An unavailable judge
+  // is recorded and never blocks the draft.
+  let judge: JudgeVerdict | undefined;
+  if (v2 && provider?.judge && !providerError && report.valid) {
+    const judgeOnce = async (round: number) => {
+      const meta = newCallMeta();
+      judgeMetas.push(meta);
+      return runNode("JudgeAgent", async () => {
+        try {
+          let raw = await provider.judge!(context, candidate, meta);
+          const lowered = round === 1 && takeFault("judge");
+          if (lowered) {
+            raw = injectLowScore(raw);
+            injected.push({ kind: "judge", note: INJECTED_NOTE });
+          }
+          const scored = scoredVerdict(raw, round, meta, context);
+          return {
+            skipped: false as const,
+            aliasReasons: scored.aliasReasons as Record<JudgeDimension, string> | undefined,
+            verdict: lowered ? { ...scored.verdict, injected: true } : scored.verdict,
+          };
+        } catch (error) {
+          return {
+            skipped: true as const,
+            aliasReasons: undefined,
+            verdict: unavailableVerdict(
+              round,
+              meta,
+              error instanceof z.ZodError ? "MODEL_INVALID_OUTPUT" : providerFailure(error),
+            ),
+          };
+        }
+      });
+    };
+    const first = await judgeOnce(1);
+    judge = first.verdict;
+    if (
+      judge.status === "scored" &&
+      judge.low?.length &&
+      first.aliasReasons &&
+      repairs.length < reviewGraph.maxRepairs
+    ) {
+      const failures = judgeFailures(judge);
+      const diagnoses = judgeDiagnoses(judge, first.aliasReasons, context.roster);
+      repairs.push({ attempt: repairs.length + 1, failures, diagnoses, source: "judge" });
+      const meta = newCallMeta();
+      metas.push(meta);
+      let repaired = false;
+      try {
+        const patch = await runNode("Regenerator", () =>
+          provider.generate(context, failures, candidate, meta, diagnoses),
+        );
+        modelAttempts.push({
+          attempt: repairs.length,
+          inputHash: digest({ context, failures, diagnoses, candidate }),
+          output: patch,
+          outputHash: digest(patch),
+          call: meta,
+        });
+        const applied = applyPatch(candidate, patch, failures);
+        const after = check(applied.next);
+        if (after.valid && !applied.usedBaseline) {
+          await runNode("PacketValidator", () => after);
+          candidate = applied.next;
+          report = after;
+          repaired = true;
+        }
+      } catch {
+        /* the earlier valid draft stays */
+      }
+      judge = { ...judge, repair: repaired ? "applied" : "discarded" };
+      if (repaired) {
+        const second = await judgeOnce(2);
+        judge = { ...second.verdict, previous: judge };
+      }
+    }
   }
   // Server-side restoration, then the same checks on the restored text
   // (output PII scan included) without any alias map.
@@ -1119,9 +1232,16 @@ export async function compose(
       providerError,
       modelAttempts,
       packetSchema: v2 ? "packet-v2" : "packet-v1",
+      ...(judge ? { judge } : {}),
       provenance: {
         ...calls,
-        egress: [...calls.egress, ...(input.agent?.egress ?? [])],
+        egress: [
+          ...calls.egress,
+          ...judgeMetas.flatMap((m) => m.egress),
+          ...(input.agent?.egress ?? []),
+        ],
+        ...(judge ? { judge } : {}),
+        ...(injected.length ? { injected } : {}),
         agent: input.agent ? withoutEgress(input.agent) : null,
         specialist: v2
           ? (context.baseline as PacketV2).specialist
