@@ -150,8 +150,8 @@ export async function loadRefreshInput(c: PoolClient, opts: LoadOptions): Promis
 // ---------------------------------------------------------------------------
 // Bulk helpers. Every column travels as text and is cast in SQL.
 
-type Col = [name: string, type: string];
-async function bulkInsert(c: PoolClient, table: string, cols: Col[], rows: Array<Array<string | number | null>>, tail = "") {
+export type Col = [name: string, type: string];
+export async function bulkInsert(c: PoolClient, table: string, cols: Col[], rows: Array<Array<string | number | null>>, tail = "") {
   for (let start = 0; start < rows.length; start += 1500) {
     const chunk = rows.slice(start, start + 1500);
     const arrays = cols.map((_, i) => chunk.map((r) => (r[i] === null || r[i] === undefined ? null : String(r[i]))));
@@ -162,7 +162,7 @@ async function bulkInsert(c: PoolClient, table: string, cols: Col[], rows: Array
   }
 }
 /** Updates `set` columns of rows matched by id, after saving each previous row image. */
-async function revise(
+export async function revise(
   c: PoolClient,
   ctx: { generation: string; actor: string; reason: string },
   table: string,
@@ -276,7 +276,7 @@ export async function applyRefresh(c: PoolClient, input: Awaited<ReturnType<type
  * each case keeps its evidence, runs, artifacts and history. */
 export async function supersedeStaleDrafts(
   c: PoolClient,
-  opts: { label: string; operatorId: string; excludeStudentIds: string[]; reason?: string },
+  opts: { label: string; operatorId: string; excludeStudentIds: string[]; reason?: string; seed?: string },
 ): Promise<{ superseded: number; keptPending: number }> {
   const gen = await getCurrentGeneration(c);
   const reason = opts.reason ?? "superseded by data refresh";
@@ -301,7 +301,7 @@ export async function supersedeStaleDrafts(
     const res = await c.query("UPDATE support_cases SET status='superseded',revision=revision+1 WHERE id=ANY($1::uuid[]) AND status='awaiting_faculty'", [ids]);
     if (res.rowCount !== ids.length) throw new Error("Unexpected number of superseded cases");
     await writeCommandLedger(c, {
-      generationId: gen, commandId: randomUUID(), actorPersonId: opts.operatorId, aggregateType: "data_generation", aggregateId: projectId("aura-realistic-data-v2", `${opts.label}:data-generation`),
+      generationId: gen, commandId: randomUUID(), actorPersonId: opts.operatorId, aggregateType: "data_generation", aggregateId: projectId(opts.seed ?? "aura-realistic-data-v2", `${opts.label}:data-generation`),
       eventType: "data.drafts.superseded", action: "data.drafts.supersede", topic: "data.generation", payload: { label: opts.label, superseded: ids.length, reason },
       metadata: { performedBy: "Claude, authorised by the project owner", keptPending: open.length - ids.length },
     });

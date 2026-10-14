@@ -12,6 +12,10 @@
  *   policy     approve the graded-scoring policy version for each mentor
  *   stats      measure the live data: per-course marks, risk histograms, fees, loads
  *   candidates list students per mentor with their graded risk signals (to choose drafts)
+ *   att-plan   realistic-v3: print the attendance plan (anchors, courses, sessions), write nothing
+ *   att-apply  realistic-v3: rebuild the generated attendance from the college attendance report (additive)
+ *   att-supersede  realistic-v3: mark open drafts computed on the old attendance as superseded
+ *   att-stats  measure the live attendance: anchor coverage, per-course mean and SD, shape, distance from the anchor
  *   drafts     run the real agent pipeline (Groq first) for chosen students, one plan per
  *              --group "<mentor-email>|<academic|attendance|wellbeing-referral>|<register>,<register>"
  *
@@ -68,6 +72,8 @@ const { withCoreTransaction, withCoreSnapshot, closePool } = await import("../li
 const { migrateCoreDatabase } = await import("../lib/migrations");
 const { REFRESH_LABEL, REFRESH_SEED, planRefresh, projectId, histogram } = await import("../lib/data-refresh/generator");
 const { loadRefreshInput, applyRefresh, supersedeStaleDrafts, resolveStudentIds } = await import("../lib/data-refresh/apply");
+const { ATTENDANCE_LABEL, ATTENDANCE_SEED, planAttendance } = await import("../lib/data-refresh/attendance");
+const { loadAttendanceInput, applyAttendanceRefresh, loadAnchors } = await import("../lib/data-refresh/attendance-apply");
 const { approvePolicy } = await import("../lib/chapter11/service");
 const { routeSpecialist } = await import("../lib/chapter11/specialists");
 const { demoPolicy, riskAnalysis, policySchema } = await import("../lib/chapter11/engine");
@@ -142,6 +148,7 @@ async function stats() {
   const distinct = (xs: number[]) => new Set(xs).size;
   return {
     asOf, schema: process.env.CORE_DATABASE_SCHEMA, dataGenerations: gens,
+    attendanceBasisLabelled: live.filter((r) => (r.ev.academic.values as Record<string, unknown>).attendanceBasis === "college_attendance_report").length,
     excludedStudents: exclude.length,
     marksByCourse: marks, resultsByCourse: results, submissions: lateSubs[0],
     fees: { tuitionStudentState: fees, invoicesByStatus: feeAll },
@@ -221,7 +228,7 @@ async function drafts() {
     const policyId = projectId(REFRESH_SEED, `policy:PROJECT-SUPPORT-V2:${info.m.id}`);
     const resume = flag("--resume-plan");
     const plan = resume ? { id: resume, status: "locked", revision: 0 } : await savePlan(actor, {
-      request: `Post data-refresh review (${REFRESH_LABEL}): prepare support options for these ${info.st.length} students from the refreshed figures and the approved graded policy.`,
+      request: `Post data-refresh review (${ATTENDANCE_LABEL}): prepare support options for these ${info.st.length} students from the refreshed figures and the approved graded policy.`,
       studentIds: info.st.map((s) => s.id), domain, policyId, feedback: "Use scoped evidence only; keep every number traceable to the evidence and require mentor review.",
     });
     const locked = plan.status === "locked" ? plan : await lockPlan(actor, plan.id, plan.revision);
@@ -243,6 +250,90 @@ async function drafts() {
   }
   return [...report, { modelCalls }];
 }
+
+const loadAttendance = async () => {
+  const exclude = await excluded();
+  const input = await withCoreSnapshot((c) => loadAttendanceInput(c, { asOf, label: ATTENDANCE_LABEL, seed: ATTENDANCE_SEED, excludeStudentIds: exclude }));
+  return { input, exclude };
+};
+
+const pearson = (xs: number[], ys: number[]) => {
+  const n = xs.length, mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { sxy += (xs[i]! - mx) * (ys[i]! - my); sxx += (xs[i]! - mx) ** 2; syy += (ys[i]! - my) ** 2; }
+  return Math.round((sxy / Math.sqrt(sxx * syy)) * 1000) / 1000;
+};
+const r1 = (x: number) => Math.round(x * 10) / 10;
+const stat = (xs: number[]) => {
+  const n = xs.length, mean = xs.reduce((a, b) => a + b, 0) / n, sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / n);
+  const s = [...xs].sort((a, b) => a - b), at = (p: number) => s[Math.min(n - 1, Math.floor(p * n))]!;
+  return { n, mean: r1(mean), sd: r1(sd), min: r1(s[0]!), p10: r1(at(0.1)), median: r1(at(0.5)), p90: r1(at(0.9)), max: r1(s[n - 1]!) };
+};
+
+/** Attendance as the app derives it (present or late over everything not excused), per course, against the college anchor. */
+async function attStats() {
+  const exclude = await excluded();
+  const generation = await withCoreSnapshot((c) => getCurrentGeneration(c));
+  const sql = async <T extends object>(text: string, params: unknown[] = []) => withCoreSnapshot(async (c) => (await c.query(text, params)).rows as T[]);
+  const rows = await sql<{ student_id: string; code: string; att: string; held: string; total: string }>(
+    `SELECT r.student_id,cc.code,count(*) FILTER (WHERE r.status IN ('present','late'))::text att,count(*) FILTER (WHERE r.status<>'excused')::text held,count(*)::text total
+     FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id JOIN course_offerings o ON o.id=s.course_offering_id JOIN courses cc ON cc.id=o.course_id
+     WHERE r.generation_id=$1 AND s.status IN ('submitted','locked') AND r.student_id<>ALL($2::uuid[]) GROUP BY 1,2`, [generation, exclude]);
+  const anchors = await withCoreSnapshot((c) => loadAnchors(c, generation));
+  const marks = await sql<{ student_id: string; code: string; pct: string }>(
+    `SELECT r.student_id,cc.code,r.percentage::text pct FROM course_results r JOIN course_offerings o ON o.id=r.course_offering_id JOIN courses cc ON cc.id=o.course_id
+     WHERE r.generation_id=$1 AND r.student_id<>ALL($2::uuid[])`, [generation, exclude]);
+  const counts = (await sql<{ sessions: string; records: string; per_course: string; gens: string }>(
+    `SELECT (SELECT count(*) FROM attendance_sessions WHERE generation_id=$1)::text sessions,(SELECT count(*) FROM attendance_records WHERE generation_id=$1)::text records,
+       (SELECT string_agg(code||'='||n,', ') FROM (SELECT cc.code,count(*) n FROM attendance_sessions s JOIN course_offerings o ON o.id=s.course_offering_id JOIN courses cc ON cc.id=o.course_id WHERE s.generation_id=$1 GROUP BY 1 ORDER BY 1) x) per_course,
+       (SELECT string_agg(label,' > ' ORDER BY created_at) FROM data_generations WHERE generation_id=$1) gens`, [generation]))[0]!;
+  const pct = (r: { att: string; held: string }) => (Number(r.held) ? (Number(r.att) / Number(r.held)) * 100 : 0);
+  const codes = [...new Set(rows.map((r) => r.code))].sort();
+  const bins = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+  const perCourse: Record<string, unknown> = {};
+  for (const code of codes) {
+    const xs = rows.filter((r) => r.code === code).map(pct);
+    perCourse[code] = {
+      ...stat(xs), distinctValues: new Set(xs.map((x) => Math.round(x * 100))).size,
+      at100: xs.filter((x) => x >= 99.995).length, below75: xs.filter((x) => x < 75).length, below50: xs.filter((x) => x < 50).length,
+      histogram: histogram(xs.map((x) => Math.min(99, Math.floor(x))), bins.slice(0, 10)),
+    };
+  }
+  const students = [...new Set(rows.map((r) => r.student_id))];
+  const overall = students.map((id) => {
+    const mine = rows.filter((r) => r.student_id === id);
+    const held = mine.reduce((a, r) => a + Number(r.held), 0);
+    return held ? (mine.reduce((a, r) => a + Number(r.att), 0) / held) * 100 : 0;
+  });
+  const withAnchor = students.map((id, i) => ({ id, overall: overall[i]!, anchor: anchors.get(id)?.anchor ?? null })).filter((x) => x.anchor !== null);
+  const gap = withAnchor.map((x) => x.overall - x.anchor!);
+  const markMean = (id: string) => { const m = marks.filter((x) => x.student_id === id); return m.length ? m.reduce((a, x) => a + Number(x.pct), 0) / m.length : NaN; };
+  const paired = students.map((id, i) => ({ a: overall[i]!, m: markMean(id) })).filter((x) => Number.isFinite(x.m));
+  const byCourseMarkCorr: Record<string, number> = {};
+  for (const code of codes) {
+    const p = rows.filter((r) => r.code === code).map((r) => ({ a: pct(r), m: Number(marks.find((m) => m.student_id === r.student_id && m.code === code)?.pct ?? NaN) })).filter((x) => Number.isFinite(x.m));
+    byCourseMarkCorr[code] = pearson(p.map((x) => x.a), p.map((x) => x.m));
+  }
+  const anchorVals = [...anchors.values()];
+  return {
+    asOf, schema: process.env.CORE_DATABASE_SCHEMA, dataGenerations: counts.gens,
+    sessions: Number(counts.sessions), records: Number(counts.records), sessionsPerCourse: counts.per_course, studentsMeasured: students.length, excludedStudents: exclude.length,
+    anchorCoverage: {
+      studentsInCollegeData: anchors.size, withUsableValue: anchorVals.filter((a) => a.anchor !== null).length,
+      usableCells: anchorVals.reduce((a, x) => a + x.cells, 0), outOfRangeCells: anchorVals.reduce((a, x) => a + x.outOfRange, 0),
+      anchor: stat(anchorVals.filter((a) => a.anchor !== null).map((a) => a.anchor!)),
+    },
+    perCourse, overall: { ...stat(overall), histogram: histogram(overall.map((x) => Math.min(99, Math.floor(x))), bins.slice(0, 10)) },
+    overallVsAnchor: {
+      students: withAnchor.length, meanDifference: r1(gap.reduce((a, b) => a + b, 0) / gap.length),
+      meanAbsDifference: r1(gap.reduce((a, b) => a + Math.abs(b), 0) / gap.length),
+      within5: gap.filter((g) => Math.abs(g) <= 5).length, within10: gap.filter((g) => Math.abs(g) <= 10).length,
+      correlation: pearson(withAnchor.map((x) => x.overall), withAnchor.map((x) => x.anchor!)),
+    },
+    marksCorrelation: { overallAttendanceVsMeanMark: pearson(paired.map((x) => x.a), paired.map((x) => x.m)), perCourse: byCourseMarkCorr },
+  };
+}
+
 
 async function policy() {
   const created: Array<{ mentor: string; id: string; version: string }> = [];
@@ -283,6 +374,24 @@ try {
     await emit(result);
   } else if (command === "policy") {
     await emit(await policy());
+  } else if (command === "att-plan") {
+    const { input, exclude } = await loadAttendance();
+    const plan = planAttendance(input);
+    await emit({ asOf, excluded: exclude.length, summary: plan.summary });
+  } else if (command === "att-apply") {
+    await migrateCoreDatabase();
+    const { input, exclude } = await loadAttendance();
+    const plan = planAttendance(input);
+    const result = await withCoreTransaction((c) => applyAttendanceRefresh(c, input, plan), "exclusive");
+    await emit({ asOf, excluded: exclude.length, ...result });
+  } else if (command === "att-supersede") {
+    const exclude = await excluded();
+    const operatorId = await withCoreSnapshot(async (c) => (await c.query<{ id: string }>(
+      "SELECT p.id FROM people p JOIN role_assignments r ON r.person_id=p.id AND r.generation_id=p.generation_id WHERE p.generation_id=$1 AND r.role='governance' AND r.active ORDER BY p.email LIMIT 1", [await getCurrentGeneration(c)])).rows[0]!.id);
+    const result = await withCoreTransaction((c) => supersedeStaleDrafts(c, { label: ATTENDANCE_LABEL, seed: ATTENDANCE_SEED, operatorId, excludeStudentIds: exclude, reason: "superseded by attendance refresh (college attendance report)" }), "exclusive");
+    await emit(result);
+  } else if (command === "att-stats") {
+    await emit(await attStats());
   } else if (command === "stats") {
     await emit(await stats());
   } else if (command === "candidates") {

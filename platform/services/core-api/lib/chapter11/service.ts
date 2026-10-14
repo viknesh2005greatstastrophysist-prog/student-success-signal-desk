@@ -598,8 +598,11 @@ async function defaultSourceAdapter(
       const raw = await client.query<{
         dataset_hash: string;
         student: { reports: Array<{ sourceId: string; courses: unknown[] }> };
+        attendance_from_report: boolean;
       }>(
-        "SELECT d.dataset_hash,student FROM project_dataset d CROSS JOIN LATERAL jsonb_array_elements(d.review->'students') student WHERE d.id=$1 AND student->>'id'=$2",
+        // `attendance_from_report`: this student's attendance was rebuilt from the college attendance report
+        // (data generation realistic-v3 wrote records for them; student 021 was left as generated).
+        "SELECT d.dataset_hash,student,EXISTS(SELECT 1 FROM data_generations g JOIN attendance_records ar ON ar.generation_id=g.generation_id AND ar.student_id::text=$2 AND ar.recorded_at>=g.as_of WHERE g.generation_id=d.id AND g.label='realistic-v3') AS attendance_from_report FROM project_dataset d CROSS JOIN LATERAL jsonb_array_elements(d.review->'students') student WHERE d.id=$1 AND student->>'id'=$2",
         [generation, studentId],
       );
       if (!raw.rowCount)
@@ -618,6 +621,10 @@ async function defaultSourceAdapter(
           ...new Set(original.student.reports.map((r) => r.sourceId)),
         ].join(","),
         rawSourceDefinitionsKnown: false,
+        // Provenance of the attendance figures: built from the college attendance report, not raw register entries.
+        ...(original.attendance_from_report && attendance.length
+          ? { attendanceBasis: "college_attendance_report" }
+          : {}),
       });
     }
     return sourceSchema.parse({
