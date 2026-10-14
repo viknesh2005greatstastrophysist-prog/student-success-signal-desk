@@ -196,7 +196,7 @@ INIT_JS = r"""
       return {
         texts, dataframes, alerts, exceptions, overflow, truncated, charts, brokenImages, metrics, headings,
         scrollHeight: main ? main.scrollHeight : 0,
-        sidebarPages: side ? [...side.querySelectorAll('[data-testid="stRadioOption"]')].map((o) => clean(o)) : [],
+        sidebarPages: side ? [...side.querySelectorAll('[data-testid="stSidebarNavLink"], [data-testid="stRadioOption"]')].map((o) => clean(o)) : [],
       };
     },
     mark(panelId) {
@@ -672,10 +672,11 @@ class Walk:
             pages = page.evaluate("() => window.__e2e.collect().sidebarPages")
             result["pages"] = pages or ["(single page)"]
             self.drain()
+            result["unreachable"] = self.unreachable_check(page, role, pages or [])
             for index, name in enumerate(result["pages"]):
                 load = login_s if index == 0 else None
                 if index > 0:
-                    page.locator('[data-testid="stSidebar"] [data-testid="stRadioOption"]').nth(index).click()
+                    page.locator('[data-testid="stSidebar"] [data-testid="stSidebarNavLink"]').nth(index).click()
                     load = self.settle(page)
                 base = f"{role}__{index + 1:02d}-{slug(name)}"
                 try:
@@ -692,6 +693,41 @@ class Walk:
             result["elapsed_s"] = round(time.time() - started, 1)
             ctx.close()
         return result
+
+    # Pages a role must never be offered or reach (rework 1): fees are the parent's concern,
+    # source records are evidence for staff only.
+    FORBIDDEN_PAGES = {
+        "student001": {"fee": re.compile(r"fee|receipt|invoice", re.I), "source": re.compile(r"source", re.I)},
+        "lms-student001": {"fee": re.compile(r"fee|receipt|invoice", re.I), "source": re.compile(r"source", re.I)},
+        "parent001": {"source": re.compile(r"source", re.I)},
+    }
+    FORBIDDEN_URLS = {"student001": ["fees", "fees-and-receipts", "source-records", "sources"], "parent001": ["source-records", "sources"]}
+
+    def unreachable_check(self, page: Page, role: str, pages: list[str]) -> dict[str, Any]:
+        """Neither offered in the sidebar nor reachable by changing the URL after sign-in."""
+        rules = self.FORBIDDEN_PAGES.get(role)
+        if not rules:
+            return {}
+        offered = [f"{name}: {title}" for title in pages for name, rule in rules.items() if rule.search(title)]
+        reached: list[str] = []
+        for path in self.FORBIDDEN_URLS.get(role, []):
+            try:
+                page.evaluate(
+                    "(p) => { history.pushState({}, '', '/' + p); window.dispatchEvent(new PopStateEvent('popstate')); }", path
+                )
+                self.settle(page, grace=0.5, quiet=0.4)
+                shown = page.evaluate("() => window.__e2e.collect().headings.join(' | ')")
+                if re.search(r"fees and receipts|source records", shown, re.I):
+                    reached.append(f"/{path}: {shown[:80]}")
+            except PlaywrightError:
+                continue
+        # back to the landing page so the walk continues from the default state
+        links = page.locator('[data-testid="stSidebar"] [data-testid="stSidebarNavLink"]')
+        if links.count():  # a single-page workspace (the LMS) has no navigation
+            links.first.click()
+            self.settle(page)
+        self.drain()
+        return {"offered": offered, "reached": reached}
 
     def mobile_home(self, browser: Browser, spec: dict[str, str]) -> dict[str, Any]:
         role = spec["key"]
@@ -887,6 +923,7 @@ def main() -> int:
         "leak_findings": sum(len(v.get("leaks", [])) for v in views),
         "truncated_views": sum(1 for v in views if v.get("truncated")),
         "walk_errors": sum(len(r["errors"]) for r in summary["roles"]) + sum(1 for v in views if v.get("kind") == "walk-error"),
+        "forbidden_pages": sum(len((r.get("unreachable") or {}).get("offered", [])) + len((r.get("unreachable") or {}).get("reached", [])) for r in summary["roles"]),
         "elapsed_s": round(time.time() - started, 1),
     }
     (walk.out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n")
@@ -894,7 +931,7 @@ def main() -> int:
     print(json.dumps(summary["totals"], indent=2))
     print(f"summary: {(walk.out / 'summary.json').relative_to(ROOT)}  issues: {(walk.out / 'issues.txt').relative_to(ROOT)}")
     totals = summary["totals"]
-    return 1 if (totals["exceptions"] or totals["walk_errors"]) else 0
+    return 1 if (totals["exceptions"] or totals["walk_errors"] or totals["forbidden_pages"]) else 0
 
 
 if __name__ == "__main__":
