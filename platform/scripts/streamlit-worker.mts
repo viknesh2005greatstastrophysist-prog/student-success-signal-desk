@@ -224,6 +224,63 @@ async function authenticated(token: unknown) {
     throw new AccessError("UNAUTHENTICATED", "Sign in again to continue", 401);
   return bind(session.user_id, session.portal);
 }
+// Read-only actions that may be served inside a batch (and one at a time).
+const BATCHABLE_READS = new Set([
+  "overview",
+  "sources",
+  "student",
+  "classroom",
+  "lms_overview",
+  "lms_course",
+  "review_overview",
+  "review_queue",
+  "receipt",
+]);
+async function readAction(
+  a: Awaited<ReturnType<typeof authenticated>>,
+  action: string,
+  p: Record<string, unknown>,
+) {
+  if (action === "overview") return experienceOverview(a);
+  if (action === "sources") {
+    // Source records are evidence for staff; students and parents never see them.
+    if (a.role === "student" || a.role === "parent")
+      throw new AccessError("FORBIDDEN", "Source records are for staff only", 403);
+    return loadProjectSources(a);
+  }
+  if (action === "student") return experienceStudent(a, uuid(p.studentId));
+  if (action === "classroom") return experienceClassroom(a, uuid(p.offeringId));
+  if (action === "lms_overview") return lmsOverview(a);
+  if (action === "lms_course") return lmsCourseDetail(a, uuid(p.courseId));
+  if (action === "review_overview") return overview(a);
+  if (action === "review_queue") return reviewQueue(a);
+  if (action === "receipt") return loadPaymentReceipt(a, uuid(p.transactionId));
+  throw new AccessError("UNKNOWN_ACTION", "That action is unavailable", 404);
+}
+function failure(error: unknown) {
+  const e = error as Error & { code?: string; status?: number };
+  const expected =
+    error instanceof AccessError ||
+    (typeof e.status === "number" && e.status < 500);
+  return {
+    code:
+      error instanceof z.ZodError
+        ? "INVALID_INPUT"
+        : expected
+          ? e.code
+          : "REQUEST_FAILED",
+    status: error instanceof z.ZodError ? 400 : expected ? e.status : 500,
+    message:
+      error instanceof z.ZodError
+        ? error.issues[0]?.message
+        : expected
+          ? e.message
+          : "The action could not complete. Refresh and retry.",
+    ...(expected && typeof (e as { retryAfterSeconds?: unknown }).retryAfterSeconds === "number"
+      ? { retryAfterSeconds: (e as { retryAfterSeconds: number }).retryAfterSeconds }
+      : {}),
+  };
+}
 async function dispatch(
   action: string,
   p: Record<string, unknown>,
@@ -253,13 +310,33 @@ async function dispatch(
     body = { ...p };
   delete body.commandId;
   if (action === "actor") return a;
-  if (action === "overview") return experienceOverview(a);
-  if (action === "sources") return loadProjectSources(a);
-  if (action === "student") return experienceStudent(a, uuid(p.studentId));
-  if (action === "classroom") return experienceClassroom(a, uuid(p.offeringId));
+  if (action === "batch") {
+    // Several read-only actions for one page, authenticated once and run
+    // together, so a page pays for one trip to the database instead of one each.
+    const requests = z
+      .array(
+        z.object({
+          action: z.string(),
+          payload: z.record(z.string(), z.unknown()).default({}),
+        }),
+      )
+      .min(1)
+      .max(8)
+      .parse(p.requests);
+    return Promise.all(
+      requests.map(async (item) => {
+        try {
+          if (!BATCHABLE_READS.has(item.action))
+            throw new AccessError("UNKNOWN_ACTION", "That action is unavailable", 404);
+          return { ok: true, data: await readAction(a, item.action, item.payload) };
+        } catch (error) {
+          return { ok: false, error: failure(error) };
+        }
+      }),
+    );
+  }
+  if (BATCHABLE_READS.has(action)) return readAction(a, action, p);
   if (action === "experience_command") return experienceCommand(a, cmd, body);
-  if (action === "lms_overview") return lmsOverview(a);
-  if (action === "lms_course") return lmsCourseDetail(a, uuid(p.courseId));
   if (action === "lms_command") return lmsCommand(a, cmd, body);
   if (action === "lms_attachment")
     return readLmsAttachment(
@@ -267,8 +344,6 @@ async function dispatch(
       z.enum(["lessons", "assignments", "submissions"]).parse(p.kind),
       uuid(p.id),
     );
-  if (action === "review_overview") return overview(a);
-  if (action === "review_queue") return reviewQueue(a);
   if (action === "policy_approve") return approvePolicy(a, body, cmd);
   if (action === "plan_save") return planWithAgent(a, body, { commandId: cmd });
   if (action === "plan_revise")
@@ -326,7 +401,6 @@ async function dispatch(
       cmd,
       paymentAttemptInput.parse(body),
     );
-  if (action === "receipt") return loadPaymentReceipt(a, uuid(p.transactionId));
   throw new AccessError("UNKNOWN_ACTION", "That action is unavailable", 404);
 }
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -352,34 +426,7 @@ for await (const line of lines) {
     const data = await dispatch(raw.action, raw.payload, raw.token);
     process.stdout.write(JSON.stringify({ id, ok: true, data }) + "\n");
   } catch (error) {
-    const e = error as Error & { code?: string; status?: number };
-    const expected =
-      error instanceof AccessError ||
-      (typeof e.status === "number" && e.status < 500);
-    process.stdout.write(
-      JSON.stringify({
-        id,
-        ok: false,
-        error: {
-          code:
-            error instanceof z.ZodError
-              ? "INVALID_INPUT"
-              : expected
-                ? e.code
-                : "REQUEST_FAILED",
-          status: error instanceof z.ZodError ? 400 : expected ? e.status : 500,
-          message:
-            error instanceof z.ZodError
-              ? error.issues[0]?.message
-              : expected
-                ? e.message
-                : "The action could not complete. Refresh and retry.",
-          ...(expected && typeof (e as { retryAfterSeconds?: unknown }).retryAfterSeconds === "number"
-            ? { retryAfterSeconds: (e as { retryAfterSeconds: number }).retryAfterSeconds }
-            : {}),
-        },
-      }) + "\n",
-    );
+    process.stdout.write(JSON.stringify({ id, ok: false, error: failure(error) }) + "\n");
   }
 }
 await closePool();

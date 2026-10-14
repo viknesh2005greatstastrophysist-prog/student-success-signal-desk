@@ -26924,8 +26924,8 @@ async function collectSnapshot(readers, concurrency = 4) {
         }
       )
     );
-    const failure = settled.find((r) => r.status === "rejected");
-    if (failure?.status === "rejected") throw failure.reason;
+    const failure2 = settled.find((r) => r.status === "rejected");
+    if (failure2?.status === "rejected") throw failure2.reason;
     await exporter.query("COMMIT");
     return {
       results,
@@ -28152,9 +28152,9 @@ var NOUN = {
   actions: ["action", "a", "action"],
   citations: ["citation", "c", "citation"]
 };
-function locate(failure) {
-  const match = (failure.path ?? failure.field).match(PATH);
-  const field = match ? match[1] : failure.field;
+function locate(failure2) {
+  const match = (failure2.path ?? failure2.field).match(PATH);
+  const field = match ? match[1] : failure2.field;
   const index = match?.[2] !== void 0 ? Number(match[2]) : void 0;
   const sub = match?.[3];
   const noun = NOUN[field];
@@ -28222,10 +28222,10 @@ function diagnose(failures, ctx = {}) {
   };
   const seen = /* @__PURE__ */ new Set();
   const out = [];
-  for (const failure of failures) {
-    const loc = locate(failure);
+  for (const failure2 of failures) {
+    const loc = locate(failure2);
     const path = loc.sub ? `${loc.base}.${loc.sub}` : loc.base;
-    const key = `${failure.code}:${path}`;
+    const key = `${failure2.code}:${path}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const own2 = citedRefs(loc);
@@ -28235,7 +28235,7 @@ function diagnose(failures, ctx = {}) {
       domain: domain2,
       article: /^[aeiou]/.test(domain2) ? "an" : "a",
       codes: codes.join(", "),
-      code: failure.code,
+      code: failure2.code,
       min: 0,
       max: 0
     };
@@ -28243,7 +28243,7 @@ function diagnose(failures, ctx = {}) {
     let instruction;
     if (loc.field === "summary") instruction = say("summary");
     else
-      switch (failure.code) {
+      switch (failure2.code) {
         case "UNSUPPORTED_NUMBER":
           instruction = own2 ? say("numberRefs", own2) : say("number");
           break;
@@ -28301,11 +28301,11 @@ function diagnose(failures, ctx = {}) {
       instruction = fill(TEMPLATES.generic, {
         ...vars,
         loc: loc.base,
-        code: /^[A-Z][A-Z0-9_]{2,40}$/.test(failure.code) ? failure.code : "SCHEMA_INVALID"
+        code: /^[A-Z][A-Z0-9_]{2,40}$/.test(failure2.code) ? failure2.code : "SCHEMA_INVALID"
       });
-    const wording = DIAGNOSIS_TEXT[failure.code] ?? "Draft did not pass a check";
+    const wording = DIAGNOSIS_TEXT[failure2.code] ?? "Draft did not pass a check";
     out.push({
-      code: failure.code,
+      code: failure2.code,
       path,
       diagnosis: loc.human === loc.field ? wording : `${wording} (${loc.human})`,
       instruction
@@ -33716,10 +33716,10 @@ async function loadPlan(actor, id) {
   requireRole(actor, "faculty", "hod", "governance");
   return withCoreTransaction((client) => getPlan(client, actor, id));
 }
-async function recordPlannerAudit(actor, planId, summary, failure) {
+async function recordPlannerAudit(actor, planId, summary, failure2) {
   await withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
-    if (failure)
+    if (failure2)
       await audit(
         client,
         generation,
@@ -33727,7 +33727,7 @@ async function recordPlannerAudit(actor, planId, summary, failure) {
         planId,
         "planner.unavailable",
         { role: summary.role },
-        failure
+        failure2
       );
     for (const row of toolAuditRows(summary))
       await audit(client, generation, actor, planId, row.event.replace("agent.", "planner."), row.input, row.output);
@@ -35796,6 +35796,43 @@ async function authenticated(token) {
     throw new AccessError("UNAUTHENTICATED", "Sign in again to continue", 401);
   return bind(session.user_id, session.portal);
 }
+var BATCHABLE_READS = /* @__PURE__ */ new Set([
+  "overview",
+  "sources",
+  "student",
+  "classroom",
+  "lms_overview",
+  "lms_course",
+  "review_overview",
+  "review_queue",
+  "receipt"
+]);
+async function readAction(a, action, p) {
+  if (action === "overview") return experienceOverview(a);
+  if (action === "sources") {
+    if (a.role === "student" || a.role === "parent")
+      throw new AccessError("FORBIDDEN", "Source records are for staff only", 403);
+    return loadProjectSources(a);
+  }
+  if (action === "student") return experienceStudent(a, uuid5(p.studentId));
+  if (action === "classroom") return experienceClassroom(a, uuid5(p.offeringId));
+  if (action === "lms_overview") return lmsOverview(a);
+  if (action === "lms_course") return lmsCourseDetail(a, uuid5(p.courseId));
+  if (action === "review_overview") return overview(a);
+  if (action === "review_queue") return reviewQueue(a);
+  if (action === "receipt") return loadPaymentReceipt(a, uuid5(p.transactionId));
+  throw new AccessError("UNKNOWN_ACTION", "That action is unavailable", 404);
+}
+function failure(error61) {
+  const e = error61;
+  const expected = error61 instanceof AccessError || typeof e.status === "number" && e.status < 500;
+  return {
+    code: error61 instanceof external_exports.ZodError ? "INVALID_INPUT" : expected ? e.code : "REQUEST_FAILED",
+    status: error61 instanceof external_exports.ZodError ? 400 : expected ? e.status : 500,
+    message: error61 instanceof external_exports.ZodError ? error61.issues[0]?.message : expected ? e.message : "The action could not complete. Refresh and retry.",
+    ...expected && typeof e.retryAfterSeconds === "number" ? { retryAfterSeconds: e.retryAfterSeconds } : {}
+  };
+}
 async function dispatch(action, p, token) {
   if (action === "login") return login(p);
   if (action === "logout") {
@@ -35816,13 +35853,27 @@ async function dispatch(action, p, token) {
   const a = await authenticated(token), cmd = external_exports.string().uuid().parse(p.commandId ?? randomUUID10()), body = { ...p };
   delete body.commandId;
   if (action === "actor") return a;
-  if (action === "overview") return experienceOverview(a);
-  if (action === "sources") return loadProjectSources(a);
-  if (action === "student") return experienceStudent(a, uuid5(p.studentId));
-  if (action === "classroom") return experienceClassroom(a, uuid5(p.offeringId));
+  if (action === "batch") {
+    const requests = external_exports.array(
+      external_exports.object({
+        action: external_exports.string(),
+        payload: external_exports.record(external_exports.string(), external_exports.unknown()).default({})
+      })
+    ).min(1).max(8).parse(p.requests);
+    return Promise.all(
+      requests.map(async (item) => {
+        try {
+          if (!BATCHABLE_READS.has(item.action))
+            throw new AccessError("UNKNOWN_ACTION", "That action is unavailable", 404);
+          return { ok: true, data: await readAction(a, item.action, item.payload) };
+        } catch (error61) {
+          return { ok: false, error: failure(error61) };
+        }
+      })
+    );
+  }
+  if (BATCHABLE_READS.has(action)) return readAction(a, action, p);
   if (action === "experience_command") return experienceCommand(a, cmd, body);
-  if (action === "lms_overview") return lmsOverview(a);
-  if (action === "lms_course") return lmsCourseDetail(a, uuid5(p.courseId));
   if (action === "lms_command") return lmsCommand(a, cmd, body);
   if (action === "lms_attachment")
     return readLmsAttachment(
@@ -35830,8 +35881,6 @@ async function dispatch(action, p, token) {
       external_exports.enum(["lessons", "assignments", "submissions"]).parse(p.kind),
       uuid5(p.id)
     );
-  if (action === "review_overview") return overview(a);
-  if (action === "review_queue") return reviewQueue(a);
   if (action === "policy_approve") return approvePolicy(a, body, cmd);
   if (action === "plan_save") return planWithAgent(a, body, { commandId: cmd });
   if (action === "plan_revise")
@@ -35889,7 +35938,6 @@ async function dispatch(action, p, token) {
       cmd,
       paymentAttemptInput.parse(body)
     );
-  if (action === "receipt") return loadPaymentReceipt(a, uuid5(p.transactionId));
   throw new AccessError("UNKNOWN_ACTION", "That action is unavailable", 404);
 }
 var lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -35912,20 +35960,7 @@ for await (const line of lines) {
     const data = await dispatch(raw.action, raw.payload, raw.token);
     process.stdout.write(JSON.stringify({ id, ok: true, data }) + "\n");
   } catch (error61) {
-    const e = error61;
-    const expected = error61 instanceof AccessError || typeof e.status === "number" && e.status < 500;
-    process.stdout.write(
-      JSON.stringify({
-        id,
-        ok: false,
-        error: {
-          code: error61 instanceof external_exports.ZodError ? "INVALID_INPUT" : expected ? e.code : "REQUEST_FAILED",
-          status: error61 instanceof external_exports.ZodError ? 400 : expected ? e.status : 500,
-          message: error61 instanceof external_exports.ZodError ? error61.issues[0]?.message : expected ? e.message : "The action could not complete. Refresh and retry.",
-          ...expected && typeof e.retryAfterSeconds === "number" ? { retryAfterSeconds: e.retryAfterSeconds } : {}
-        }
-      }) + "\n"
-    );
+    process.stdout.write(JSON.stringify({ id, ok: false, error: failure(error61) }) + "\n");
   }
 }
 await closePool();
