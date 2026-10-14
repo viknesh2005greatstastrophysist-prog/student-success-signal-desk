@@ -1,6 +1,20 @@
-# Work status — 15 October 2026, rework 1 (structure, speed, drop-downs)
+# Work status — 15 October 2026, rework 1 (structure, speed, drop-downs) and rework 2 (realistic data)
 
 Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes.
+
+## Rework 2 (15 Oct): realistic generated data (worker 2 of 4)
+
+Owner decisions: `~/Personal Brain/brainstorms/2026-10-14-aura-app-rework.md`. Full before/after numbers, method and limits: `docs/E2E_TEST_LOG.md`, "Rework: realistic data".
+
+- Data generation `realistic-v2` applied to the LOCAL database and to hosted Neon (`aura_hosted_project_core` only; `aura_core` and `aura_identity` untouched). Additive and audited: changed rows keep their whole previous image in `record_changes`; the generation is a row in the new append-only `data_generations` table (migration 011, which also allows the case status `superseded`). No delete, no reset. Deterministic generator and CLI in the repo: `platform/services/core-api/lib/data-refresh/` and `scripts/refresh-generated-data.ts` (commands `plan`, `apply`, `policy`, `supersede`, `stats`, `candidates`, `drafts`; always pass `--exclude-email student021@aura.project.test --exclude-case d398bbc3`; `apply` refuses a repeat).
+- Results (320 students): the three courses now differ (mean 61.9, 68.2 and 70.3, SD 15.3, 13.4 and 12.3; below 40 in 7.2%, 1.5% and 0.6%); LMS inactivity right-skewed (128 students at 0 days, tail to 20+); overdue assignments mostly 0 or 1; fees 78% paid, 18% partly paid, 4% overdue; internships and placements by semester; mentor loads 112, 113 and 96 by section; risk scores spread (49 distinct values, graded) instead of 4.
+- Scoring: new policy field `severity: "graded"` (points scale with the distance beyond the faculty-set threshold; thresholds and weights unchanged; old policies and replays unchanged). `PROJECT-SUPPORT-V2` approved for the three mentors through `approvePolicy`, with V1 kept.
+- Review queue: 163 stale open drafts (156 hosted) marked `superseded` through an audited path; student 021's case `d398bbc3` still `awaiting_faculty`, untouched. Fresh drafts through the real pipeline (Groq first): 9 local (three per mentor, attendance, academic and wellbeing routes), 3 hosted plus one escalated to the mentor after its repair budget; 38 Groq calls, 0 Gemini.
+- Backups before hosted changes: `runtime/backups/neon-hosted-pre-refresh-20261014T204224.sql` (and the local one, `local-pre-refresh-20261014T195236.sql`), git-ignored, restore-tested table by table. `pg_dump` is not installed, so `platform/scripts/dump-schemas.mjs` produced them.
+- Real attendance: `project_dataset` and all 9,630 attendance records unchanged (md5 checks before and after, both databases). **Finding for the owner:** the attendance the app shows and scores is itself a generated pattern (4, 6, 8 or 9 of 10 present, identical in all three courses), not the supplied college cells; it was left as is because of the never-change rule. Deriving it from the supplied cells would be a separate, explicit decision.
+- Also fixed: the roster egress guard blocked every wellbeing-referral draft because the generated parent names contain the word "family" (now a stopword); the parent's fee totals counted voided invoices.
+- Checks: Core tsc, eslint, 198 tests (189 pass, 9 opt-in skipped); four DB suites in disposable local schemas (dropped); engine rebuilt and `check:engine` passes; every `verify_*.py` except `verify_local.py` and `verify_cloud.py` passes; read-only walk `--pass data1`: 134 views, all counters 0. Servers: own server on 8503 started and stopped; 8502 never touched.
+- Open: the hosted app was not opened (private; it reads the same Neon data and redeploys on push); parent-student pairing unchanged; LMS inactivity grows by a day each day because the evidence reads the clock; the shown attendance (above).
 
 ## Rework 1 (15 Oct): structure, speed and drop-downs (worker 1 of 4)
 

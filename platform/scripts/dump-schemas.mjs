@@ -23,6 +23,8 @@ const local = ["127.0.0.1", "localhost"].includes(new URL(url).hostname);
 const client = new pg.Client({ connectionString: url, ssl: local ? false : { rejectUnauthorized: false } });
 await client.connect();
 await client.query("SET statement_timeout = 0");
+// Row hashes use the text form of each row; fix the time zone so they match across servers.
+await client.query("SET TIME ZONE 'UTC'");
 const id = (s) => `"${String(s).replaceAll('"', '""')}"`;
 const lines = [];
 const manifest = { tag, takenAt: new Date().toISOString(), schemas: {} };
