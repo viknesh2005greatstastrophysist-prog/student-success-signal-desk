@@ -36,6 +36,7 @@ STATUS = {
     "complete": ("Complete", "green", ":material/check_circle:"),
     "approved": ("Approved", "green", ":material/verified:"),
     "rejected": ("Not approved", "red", ":material/cancel:"),
+    "superseded": ("Superseded by data refresh", "gray", ":material/update:"),
     "published": ("Published", "green", ":material/campaign:"),
     # Interventions and follow-ups
     "planned": ("Planned", "blue", ":material/event:"),

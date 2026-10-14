@@ -36,8 +36,11 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
     if not invoices:
         ui.empty_state("No fee records", "Invoices will appear here once issued.")
         return
-    billed = sum(int(row.get("amount_paise") or 0) for row in invoices)
-    paid = sum(int(row.get("paid_paise") or 0) for row in invoices)
+    # A voided invoice (replaced by a later fee schedule) is kept in the list for the
+    # record but is not part of what is billed, paid or owed.
+    counted = [row for row in invoices if row.get("status") != "void"]
+    billed = sum(int(row.get("amount_paise") or 0) for row in counted)
+    paid = sum(int(row.get("paid_paise") or 0) for row in counted)
     ui.kpi_row(
         [
             {
@@ -61,7 +64,9 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
                 "Amount": money(row.get("amount_paise")),
                 "Paid": money(row.get("paid_paise")),
                 "Balance": money(
-                    max(
+                    0
+                    if row.get("status") == "void"
+                    else max(
                         0,
                         int(row.get("amount_paise") or 0)
                         - int(row.get("paid_paise") or 0),
