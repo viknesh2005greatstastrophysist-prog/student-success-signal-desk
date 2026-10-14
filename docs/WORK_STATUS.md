@@ -1,4 +1,4 @@
-# Work status — 14 October 2026, 12:45 IST
+# Work status — 14 October 2026, 13:00 IST
 
 Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes.
 
@@ -7,7 +7,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 | Item | State |
 |---|---|
 | Branch | `streamlit-college-project` |
-| HEAD | Brief 16-lite (deterministic diagnosis in the repair loop): one commit on top of `bb92e3d` (Brief 12.3), pushed to `origin/streamlit-college-project` once all checks below passed. Earlier: Brief 12 (`1aceac0`, `9892467`, `bb92e3d`). |
+| HEAD | Hygiene batch (audit 0.3, 0.4, 0.6) on top of `6ec8189` (Brief 16-lite): `7c8e15c` (0.3), `6f01f5c` (0.4), `855d5e4` (0.6), then a docs commit; pushed to `origin/streamlit-college-project` once all checks below passed. Earlier: Brief 16-lite (`6ec8189`), Brief 12 (`1aceac0`, `9892467`, `bb92e3d`). |
 | Hosted Streamlit (aura-college-workspace.streamlit.app) | Deployed from `5f7db7e` (Briefs 1–9). Does not yet have Brief 17. Private app; owner sign-in required. |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
@@ -16,7 +16,16 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 `gh auth switch --user viknesh2005greatstastrophysist-prog && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project && gh auth switch --user vikneshwaranmarimuthu-cmyk`.
 Streamlit Cloud redeploys from the branch on every push. Codex's subscription ended 14 Oct; Claude implements under a strict usage cap (one agent at a time).
 
-## Verification at HEAD (run 14 Oct 12:45 IST, Brief 16-lite)
+## Verification at HEAD (run 14 Oct 13:00 IST, hygiene batch 0.3 / 0.4 / 0.6)
+
+- Core `tsc --noEmit` and eslint clean; Core tests 140: 132 pass, 0 fail, 8 skipped (opt-in DB suites) (was 139: 131 pass). New: a positive-control test in `chapter11-escalation.test.ts`; its four fault tests now assert `checks[name] === false`, that no other check flips, and the specific failure code. The Lab 8 timing assertion in `chapter11.test.ts` is now a max-in-flight counter (1 sequential, exactly 4 parallel).
+- Core source did not change, so the bundle was not rebuilt: `npm run check:engine` passes. Python: `verify_ui.py` (6 logins, 21 pages), `verify_chapter11_dashboard.py`, `verify_chapter11_planning.py` (picks its student by status), `verify_draft_v2.py`, `verify_agent_trace.py` and the new offline `verify_read_cache.py` pass.
+- 0.3: `verify-ch11-escalation.mts` and `verify-ch11-parallel.mts` are deleted (they asserted `aura_project_core` and wrote pending jobs into it). Their unique assertions moved into the DB-gated tests, which only accept `aura_core_test_ch11*` schemas. `migrate-ch11-release.mts` now preserves every student whose latest case is `awaiting_faculty`, selected by status. Synthetic fixture register numbers in unit tests (`01FE24BCI047`, fictional students) remain.
+- Opt-in DB suites were NOT run, so the folded assertions in `chapter11-database.test.ts` and `chapter11-lease-database.test.ts` are type-checked and linted but not executed: the local database password lives in a git-ignored runtime file that this batch was told not to read. Run them once in a disposable `aura_core_test_ch11*` schema before relying on them.
+- 0.6: `load()` serves ten read-only actions from a 30 s per-session cache in `st.session_state` (not `st.cache_data`, which is process-wide and would hold users' results in shared server memory); `save_action`, sign-in, sign-out and a 401 clear it; writes are never cached. F9/F10: file names use a code span; mentor/faculty free text uses `ui.plain_text`. The mentor-authored review request used as a heading in the plan view still uses `_md_safe`.
+- Live model calls: 0 Groq, 0 Gemini. Student 021 untouched (the planning check excludes students with a pending job; it saved one technical plan in the local project database as before).
+
+## Verification before the hygiene batch (run 14 Oct 12:45 IST, Brief 16-lite)
 
 - Core `tsc --noEmit` and eslint clean; Core tests 139: 131 pass, 0 fail, 8 skipped (opt-in DB suites) (was 124: 116 pass). New `chapter11-diagnosis.test.ts` (15 tests, stubbed providers and the local mock server, no network): the six failure injections (ungrounded number, missing trigger citation, diagnostic language, wrong-domain action code, over-length rationale, PII string) each diagnosed with the right code and path; four repaired within budget with the unaffected parts asserted identical, two escalated carrying an accurate diagnosis. Also covers the `labels.ISSUES` wording parity, the instruction allowlist and egress refusal of names, the whole-field fallback, v1 packets and the instruction reaching a sealed mock request.
 - `npm run check:engine` passes after `node scripts/build-streamlit-engine.mjs` (Core changed). `verify_ui.py` (6 logins, 21 pages), `verify_draft_v2.py` and `verify_agent_trace.py` pass; the last two gained cases for a stored diagnosis, an open diagnosis and an older record that falls back to the `ISSUES` wording.
@@ -68,7 +77,7 @@ Streamlit Cloud redeploys from the branch on every push. Codex's subscription en
 | 16-lite (diagnosis in the repair loop, no model call) | `docs/CHAPTER11_AGENTIC_BRIEFS.md` Brief 16, audit table | **Done locally by Claude (14 Oct), pushed after verification.** Ledger row 16-lite. |
 | 17 (visual redesign) | `docs/STREAMLIT_DESIGN_BRIEF.md` | Done by Claude in `6b34843`. Codex's "before" captures are in `runtime/streamlit-project/design/before/`; "after" captures in `.../design/after/` (git-ignored). |
 
-The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Remaining order: hygiene batch (0.3, 0.4, 0.6) → 0.5/0.2 if budget remains. Brief 14 deferred.
+The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Hygiene batch (0.3, 0.4, 0.6) is done. Remaining order: 0.5 (app.py split) and 0.2 (CI) only if budget remains; owner actions. Brief 14 deferred.
 
 ## Standing decisions (owner)
 
