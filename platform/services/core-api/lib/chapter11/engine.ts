@@ -1,18 +1,24 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { validationRoute, type RunNode } from "./graph";
-import type { AliasMap, EgressAudit, GuardRoster } from "./egress";
+import { buildAliases, restoreAliases, type AliasMap, type EgressAudit, type GuardRoster } from "./egress";
+import {
+  isPacketV2,
+  packetV2Schema,
+  templateV2,
+  validatePacketV2,
+  type PacketV2,
+} from "./packet-v2";
+export { isPacketV2, packetV2Schema, type PacketV2 };
+import { actions, domainNames } from "./catalogue";
+import { specialistRegistry } from "./specialists";
+export { actions, domainNames, specialistRegistry };
 
 export const sourceNames = [
   "academic",
   "lms",
   "internship",
   "placement",
-] as const;
-export const domainNames = [
-  "academic",
-  "attendance",
-  "wellbeing-referral",
 ] as const;
 export type SourceName = (typeof sourceNames)[number];
 export const policySchema = z
@@ -372,20 +378,6 @@ export function retrieve(
     .slice(0, 5);
 }
 
-export const actions = {
-  "faculty-check-in":
-    "Schedule a 20-minute academic check-in with the assigned mentor",
-  "student-study-plan": "Agree a weekly study plan with the assigned mentor",
-  "attendance-review":
-    "Review attendance barriers and agree an attendance plan with the mentor",
-  "lms-catch-up": "Agree a catch-up schedule for overdue learning activities",
-  "internship-review":
-    "Review missed internship milestones with the assigned mentor",
-  "placement-review":
-    "Review placement preparation activities with the assigned mentor",
-  "wellbeing-referral":
-    "Ask the mentor whether an optional support-service referral is appropriate",
-} as const;
 export const packetSchema = z
   .object({
     summary: z.string().min(12).max(600),
@@ -422,32 +414,6 @@ export const packetSchema = z
   })
   .strict();
 export type Packet = z.infer<typeof packetSchema>;
-export const specialistRegistry: Record<
-  (typeof domainNames)[number],
-  { codes: Array<keyof typeof actions>; instruction: string }
-> = {
-  academic: {
-    codes: [
-      "faculty-check-in",
-      "student-study-plan",
-      "lms-catch-up",
-      "internship-review",
-      "placement-review",
-    ],
-    instruction:
-      "Explain academic support options without diagnosing or predicting failure.",
-  },
-  attendance: {
-    codes: ["faculty-check-in", "attendance-review", "lms-catch-up"],
-    instruction:
-      "Focus on attendance barriers and feasible mentor-led catch-up.",
-  },
-  "wellbeing-referral": {
-    codes: ["faculty-check-in", "wellbeing-referral"],
-    instruction:
-      "Never infer a mental-health condition. Only offer an optional mentor-led referral.",
-  },
-};
 export const specialists = specialistRegistry;
 export function formatSkill(
   risk: Risk,
@@ -496,9 +462,59 @@ export function formatSkill(
   };
 }
 export type Diagnosis = {
-  field: "summary" | "actions" | "citations" | "prohibited";
+  field:
+    | "summary"
+    | "actions"
+    | "citations"
+    | "prohibited"
+    | "rationale"
+    | "schema"
+    | "specialist";
   code: string;
 };
+/** packet-v2 template: the labelled deterministic fallback for v2 drafts. */
+export function formatSkillV2(
+  risk: Risk,
+  domain: (typeof domainNames)[number],
+  evidence: Evidence,
+): PacketV2 {
+  return templateV2(formatSkill(risk, domain), risk, evidence, domain);
+}
+export const anyPacketSchema = z.union([packetSchema, packetV2Schema]);
+export type AnyPacket = Packet | PacketV2;
+export type CheckOptions = {
+  aliases?: AliasMap;
+  roster?: GuardRoster;
+  policy?: Policy;
+  specialist?: (typeof domainNames)[number];
+  /** expected packet version; inferred from the candidate when omitted */
+  version?: 1 | 2;
+};
+/** Dispatch: v1 keeps its exact-string rules; v2 uses claim-level checks. */
+export function validateAnyPacket(
+  candidate: unknown,
+  evidence: Evidence,
+  risk: Risk,
+  domain: (typeof domainNames)[number],
+  o: CheckOptions = {},
+): { valid: boolean; failures: Diagnosis[] } {
+  const v2 = o.version ? o.version === 2 : isPacketV2(candidate);
+  if (!v2) return validatePacket(candidate, evidence, risk, domain);
+  const specialist = o.specialist ?? domain;
+  return validatePacketV2(candidate, evidence, risk, {
+    codes: specialists[specialist].codes,
+    specialist,
+    canonical: new Map(
+      formatSkill(risk, domain).citations.map((c) => [
+        c.evidencePath,
+        c.statement,
+      ]),
+    ),
+    aliases: o.aliases,
+    roster: o.roster,
+    policy: o.policy,
+  });
+}
 export function validatePacket(
   candidate: unknown,
   evidence: Evidence,
@@ -600,9 +616,18 @@ export function acceptanceChecks(
   risk: Risk,
   domain: (typeof domainNames)[number],
   policyGuard?: PolicyGuard,
+  options: CheckOptions = {},
 ) {
-  const report = validatePacket(candidate, evidence, risk, domain);
-  const p = packetSchema.safeParse(candidate);
+  const v2 = options.version ? options.version === 2 : isPacketV2(candidate);
+  const report = validateAnyPacket(candidate, evidence, risk, domain, {
+    ...options,
+    version: v2 ? 2 : 1,
+  });
+  const parsed = (v2 ? packetV2Schema : packetSchema).safeParse(candidate);
+  const p = parsed.success
+    ? { success: true as const, data: parsed.data as Packet | PacketV2 }
+    : { success: false as const };
+  const claimCodes = ["UNSUPPORTED_CITATION", "MISSING_TRIGGER_COVERAGE", "UNCITED_CLAIM"];
   const checks = {
     alerts_cite_triggers:
       p.success &&
@@ -613,7 +638,9 @@ export function acceptanceChecks(
             c.statement === signal.explanation,
         ),
       ) &&
-      !report.failures.some((f) => f.field === "citations"),
+      !report.failures.some(
+        (f) => f.field === "citations" || (v2 && claimCodes.includes(f.code)),
+      ),
     thresholds_faculty_set: policyGuard
       ? policyGuard.facultyApproved &&
         policyGuard.version === risk.policyVersion
@@ -624,9 +651,10 @@ export function acceptanceChecks(
       !report.failures.some(
         (f) => f.code === "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS",
       ),
-    privacy_scope_enforced: sourceNames.every(
-      (name) => evidence[name].studentId === evidence.academic.studentId,
-    ),
+    privacy_scope_enforced:
+      sourceNames.every(
+        (name) => evidence[name].studentId === evidence.academic.studentId,
+      ) && !report.failures.some((f) => f.code === "OUTPUT_PII"),
   };
   const failures = [...report.failures];
   if (checks.thresholds_faculty_set === false)
@@ -650,7 +678,7 @@ export type GenerationContext = {
     embeddingModel: string;
     actionCodes?: string[];
   }>;
-  baseline: Packet;
+  baseline: Packet | PacketV2;
   policyGuard?: PolicyGuard;
   /** approved policy (thresholds and weights may leave as numbers only) */
   policy?: Policy;
@@ -706,10 +734,33 @@ function summariseCalls(metas: CallMeta[]) {
   };
 }
 export async function compose(
-  context: GenerationContext,
+  input: GenerationContext,
   provider?: Composer,
   runNode: RunNode = async (_id, work) => work(),
 ) {
+  // packet-v2: one alias map per case run; the model works in alias space and
+  // aliases are restored on the server only after validation passes.
+  const v2 = isPacketV2(input.baseline);
+  const context: GenerationContext = v2
+    ? { ...input, aliases: input.aliases ?? buildAliases(input.evidence) }
+    : input;
+  const options: CheckOptions = {
+    aliases: context.aliases,
+    roster: context.roster,
+    policy: context.policy,
+    specialist: v2 ? (context.baseline as PacketV2).specialist : undefined,
+    version: v2 ? 2 : 1,
+  };
+  const check = (packet: unknown, o: CheckOptions = options) =>
+    acceptanceChecks(
+      packet,
+      context.evidence,
+      context.risk,
+      context.domain,
+      context.policyGuard,
+      o,
+    );
+  const baselineFields = context.baseline as unknown as Record<string, unknown>;
   let candidate: unknown = context.baseline;
   let mode: "deterministic" | "model" = "deterministic";
   let providerError: string | null = null;
@@ -740,15 +791,7 @@ export async function compose(
       providerError = providerFailure(error);
     }
   }
-  let report = await runNode("PacketValidator", () =>
-    acceptanceChecks(
-      candidate,
-      context.evidence,
-      context.risk,
-      context.domain,
-      context.policyGuard,
-    ),
-  );
+  let report = await runNode("PacketValidator", () => check(candidate));
   for (
     let attempt = 1;
     validationRoute(report.valid, repairs.length) === "regenerate";
@@ -786,29 +829,32 @@ export async function compose(
     for (const { field } of report.failures) {
       if (supplied[field] === undefined) baselineRepair = true;
       (candidate as Record<string, unknown>)[field] =
-        supplied[field] ?? context.baseline[field];
+        supplied[field] ?? baselineFields[field];
     }
-    report = await runNode("PacketValidator", () =>
-      acceptanceChecks(
-        candidate,
-        context.evidence,
-        context.risk,
-        context.domain,
-        context.policyGuard,
-      ),
-    );
+    report = await runNode("PacketValidator", () => check(candidate));
   }
-  const needsHuman = !!providerError || !report.valid || baselineRepair;
-  const offeredTemplate = acceptanceChecks(
-    context.baseline,
-    context.evidence,
-    context.risk,
-    context.domain,
-    context.policyGuard,
-  );
+  // Server-side restoration, then the same checks on the restored text
+  // (output PII scan included) without any alias map.
+  let restored: unknown = candidate;
+  let restoreFailures: Diagnosis[] = [];
+  if (v2 && report.valid) {
+    restored = restoreAliases(candidate, context.aliases!);
+    const after = check(restored, { ...options, aliases: undefined });
+    restoreFailures = after.failures;
+  }
+  const needsHuman =
+    !!providerError ||
+    !report.valid ||
+    baselineRepair ||
+    restoreFailures.length > 0;
+  const offeredTemplate = check(context.baseline);
   const calls = summariseCalls(metas);
   return {
-    packet: needsHuman ? context.baseline : packetSchema.parse(candidate),
+    packet: needsHuman
+      ? context.baseline
+      : v2
+        ? packetV2Schema.parse(restored)
+        : packetSchema.parse(candidate),
     mode: needsHuman ? ("deterministic" as const) : mode,
     modelId:
       !needsHuman && mode === "model"
@@ -818,6 +864,7 @@ export async function compose(
         : null,
     validation: {
       ...report,
+      failures: [...report.failures, ...restoreFailures],
       valid: !needsHuman && report.valid,
       repairs,
       fallback: needsHuman,
@@ -825,14 +872,21 @@ export async function compose(
       templateValid: offeredTemplate.valid,
       providerError,
       modelAttempts,
+      packetSchema: v2 ? "packet-v2" : "packet-v1",
       provenance: {
         ...calls,
+        specialist: v2
+          ? (context.baseline as PacketV2).specialist
+          : context.domain,
+        repairs: repairs.length,
         fallbackReason: needsHuman
           ? providerError
             ? `provider failed: ${providerError}`
             : baselineRepair
               ? "a repair needed template fields"
-              : "validation failed after the repair budget"
+              : restoreFailures.length
+                ? "restored text failed validation"
+                : "validation failed after the repair budget"
           : null,
       },
       selection: {

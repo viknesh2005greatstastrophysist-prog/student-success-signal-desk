@@ -12,8 +12,9 @@ import { ConflictError, NotFoundError } from "../http";
 import { requireRole } from "../security";
 import { hashJson } from "../support-commands";
 import {
-  packetSchema,
+  anyPacketSchema,
   acceptanceChecks,
+  type Policy,
   type Evidence,
   type Risk,
   type PolicyGuard,
@@ -24,7 +25,7 @@ const editSchema = z
   .object({
     expectedRevision: z.number().int().nonnegative(),
     artifactId: z.string().uuid(),
-    packet: packetSchema,
+    packet: anyPacketSchema,
     rationale: z.string().trim().min(12).max(600),
   })
   .strict();
@@ -57,7 +58,11 @@ export async function editDraft(
     const result = await client.query<{
       revision: number;
       status: string;
-      evidence: Evidence & { risk: Risk; policyGuard?: PolicyGuard };
+      evidence: Evidence & {
+        risk: Risk;
+        policyGuard?: PolicyGuard;
+        policy?: Policy;
+      };
       domain: (typeof domainNames)[number];
       run_id: string;
       artifact_id: string;
@@ -84,12 +89,15 @@ export async function editDraft(
         "STALE_ARTIFACT",
         "Reload the current draft before editing",
       );
+    // Mentor edits are revalidated under the rules of their packet version:
+    // v1 exact-string checks, v2 claim-level checks against the frozen snapshot.
     const validation = acceptanceChecks(
       input.packet,
       current.evidence,
       current.evidence.risk,
       current.domain,
       current.policy_guard,
+      { policy: current.evidence.policy },
     );
     if (!validation.valid)
       throw new ConflictError(

@@ -19,7 +19,7 @@ import {
   DataBlocked,
   demoPolicy,
   digest,
-  formatSkill,
+  formatSkillV2,
   parallelMap,
   planInputSchema,
   planSkill,
@@ -40,7 +40,7 @@ import {
   type PolicyGuard,
 } from "./engine";
 import { configuredComposer } from "./provider";
-import type { EgressAudit, GuardRoster } from "./egress";
+import { courseValueKey, type EgressAudit, type GuardRoster } from "./egress";
 import { readApprovedCollegeSource } from "../college-normalized";
 import { loadAuthenticatedCollegeSources } from "../college-vault";
 
@@ -520,19 +520,33 @@ async function defaultSourceAdapter(
       value: number;
       record_id: string;
       observed_at: Date;
+      course: string;
     }>(
-      `SELECT 'attendance' AS kind, CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END AS value,r.id::text AS record_id,s.session_date::timestamptz AS observed_at
+      `SELECT 'attendance' AS kind, CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END AS value,r.id::text AS record_id,s.session_date::timestamptz AS observed_at,cc.code AS course
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
-       JOIN course_offerings co ON co.id=s.course_offering_id JOIN terms t ON t.id=co.term_id
+       JOIN course_offerings co ON co.id=s.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id
        WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'
-       UNION ALL SELECT 'mark', (m.score / NULLIF(a.maximum_score,0) * 100)::float,m.id::text,m.recorded_at
-       FROM marks m JOIN assessments a ON a.id=m.assessment_id JOIN course_offerings co ON co.id=a.course_offering_id JOIN terms t ON t.id=co.term_id WHERE t.code='2026-ODD' AND t.active AND m.generation_id=$1 AND m.student_id=$2 AND a.published`,
+       UNION ALL SELECT 'mark', (m.score / NULLIF(a.maximum_score,0) * 100)::float,m.id::text,m.recorded_at,cc.code
+       FROM marks m JOIN assessments a ON a.id=m.assessment_id JOIN course_offerings co ON co.id=a.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id WHERE t.code='2026-ODD' AND t.active AND m.generation_id=$1 AND m.student_id=$2 AND a.published`,
       [generation, studentId],
     );
     const attendance = records.rows.filter((r) => r.kind === "attendance");
     const marks = records.rows.filter((r) => r.kind === "mark");
     const average = (rows: typeof records.rows) =>
       rows.reduce((sum, r) => sum + Number(r.value), 0) / rows.length;
+    // Per-course breakdown (Brief 11): lets a draft name the driving course.
+    const perCourse: Record<string, number> = {};
+    for (const [metric, rows] of [
+      ["attendancePct", attendance],
+      ["markPct", marks],
+    ] as const) {
+      const byCourse = new Map<string, typeof records.rows>();
+      for (const r of rows)
+        if (r.course) byCourse.set(r.course, [...(byCourse.get(r.course) ?? []), r]);
+      if (byCourse.size > 1)
+        for (const [course, group] of byCourse)
+          perCourse[courseValueKey(metric, course)] = average(group);
+    }
     const lineage: Record<string, string | number | boolean> = {};
     if (isCollegeProject()) {
       const raw = await client.query<{
@@ -581,6 +595,7 @@ async function defaultSourceAdapter(
       values: {
         ...(attendance.length ? { attendancePct: average(attendance) } : {}),
         ...(marks.length ? { markPct: average(marks) } : {}),
+        ...perCourse,
         ...lineage,
       },
     });
@@ -1139,9 +1154,10 @@ export async function executePlan(
                     policyGuard: initial.policyGuard,
                     policy: initial.policy,
                     roster: initial.roster,
-                    baseline: formatSkill(
+                    baseline: formatSkillV2(
                       job.checkpoint.risk!,
                       initial.plan.body.domain!,
+                      job.checkpoint.evidence!,
                     ),
                   },
                   provider,
