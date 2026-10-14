@@ -10,6 +10,7 @@ import {
 } from "../command-ledger";
 import { ConflictError, NotFoundError } from "../http";
 import { requireRole } from "../security";
+import { awaitingCases } from "./awaiting";
 import { hashJson } from "../support-commands";
 import {
   anyPacketSchema,
@@ -282,16 +283,48 @@ export async function reviewQueue(actor: ActorContext) {
       WHERE p.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$2))) ORDER BY p.created_at DESC`,
       [generation, actor.personId, actor.role, actor.departmentId],
     );
-    const drafts = await client.query(
-      `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
+    // One definition of "awaiting decision" (awaiting.ts): the latest active AI
+    // draft per student; earlier open drafts ride along as history.
+    const groups = await awaitingCases(client, generation, actor);
+    const DRAFT_SELECT = `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.artifact_version,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
       jsonb_build_object('academic',es.evidence->'academic'->'values','lms',es.evidence->'lms'->'values','internship',es.evidence->'internship'->'values','placement',es.evidence->'placement'->'values') AS evidence_values,
       es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy
-      FROM ch11_jobs j JOIN support_cases c ON c.id=j.support_case_id JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
-      JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id
-      WHERE j.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2))) AND c.status='awaiting_faculty'
-      AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)`,
-      [generation, actor.personId, actor.role, actor.departmentId],
-    );
+      FROM support_cases c JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
+      JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id`;
+    const currentIds = groups.map((group) => group.current.artifact_id);
+    const activeRows = currentIds.length
+      ? (await client.query(`${DRAFT_SELECT} WHERE a.id=ANY($1::uuid[])`, [currentIds])).rows
+      : [];
+    const byArtifact = new Map(activeRows.map((row) => [row.artifact_id, row]));
+    const active = groups.flatMap((group) => {
+      const row = byArtifact.get(group.current.artifact_id);
+      if (!row) return [];
+      return [
+        {
+          ...row,
+          earlier_count: group.earlier.length,
+          earlier_drafts: group.earlier.map((e) => ({
+            case_id: e.case_id,
+            artifact_id: e.artifact_id,
+            artifact_version: e.artifact_version,
+            opened_at: e.opened_at,
+            drafted_at: e.drafted_at,
+          })),
+        },
+      ];
+    });
+    // Drafts written by the retired rule-based path never count as awaiting;
+    // they stay on record, read-only, so nothing disappears (and none is decided).
+    const legacy = (
+      await client.query(
+        `${DRAFT_SELECT} WHERE c.generation_id=$1 AND c.status='awaiting_faculty' AND r.mode<>'model'
+        AND EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.support_case_id=c.id AND j.generation_id=$1)
+        AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$2)))
+        AND a.artifact_version=(SELECT max(v.artifact_version) FROM agent_artifacts v WHERE v.agent_run_id=r.id)
+        ORDER BY a.created_at DESC`,
+        [generation, actor.personId, actor.role, actor.departmentId],
+      )
+    ).rows;
     const log = await client.query(
       `SELECT e.id,e.aggregate_id AS plan_id,e.event_type,e.payload,e.occurred_at,actor.display_name AS actor_name,p.student_id,student.display_name AS student_name FROM domain_events e JOIN support_plans p ON p.id=e.aggregate_id AND p.generation_id=e.generation_id JOIN student_profiles sp ON sp.id=p.student_id JOIN people student ON student.id=sp.person_id JOIN people actor ON actor.id=e.actor_person_id WHERE e.generation_id=$1 AND e.aggregate_type='support_plan' AND e.aggregate_id=ANY($2::uuid[]) ORDER BY e.occurred_at DESC`,
       [generation, plans.rows.map((row) => row.id)],
@@ -300,10 +333,6 @@ export async function reviewQueue(actor: ActorContext) {
       `SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`,
       [generation, plans.rows.map((row) => row.id)],
     );
-    // Drafts written by the retired rule-based path leave the active queue but
-    // stay on record, read-only, so nothing disappears (and none is decided).
-    const active = drafts.rows.filter((row) => row.mode === "model");
-    const legacy = drafts.rows.filter((row) => row.mode !== "model");
     // Individual risk scores, signals and evidence values are visible only to the
     // student's assigned mentor (E2E log #8). The department head sees who is
     // waiting on a mentor and the draft's state, never its evidence.
@@ -322,12 +351,15 @@ export async function reviewQueue(actor: ActorContext) {
                 mode: row.mode,
                 model_id: row.model_id,
                 drafted_at: row.drafted_at,
+                earlier_count: row.earlier_count,
+                earlier_drafts: row.earlier_drafts,
               }) as unknown as T,
           );
     return {
       versions: versions.rows,
       plans: plans.rows,
       drafts: shape(active),
+      awaitingCount: groups.length,
       legacyDrafts: shape(legacy),
       interventionLog: log.rows,
     };

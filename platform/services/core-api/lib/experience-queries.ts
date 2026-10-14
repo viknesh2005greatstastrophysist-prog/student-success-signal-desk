@@ -15,6 +15,7 @@ import { getCurrentGeneration } from "./command-ledger";
 import { AuthorizationError, requireRole } from "./security";
 import { NotFoundError } from "./http";
 import { lmsEvidence, requireLmsCourse } from "./lms-queries";
+import { awaitingCount } from "./chapter11/awaiting";
 
 export async function requireExperienceStudent(
   client: PoolClient,
@@ -161,13 +162,18 @@ export async function experienceOverview(
           )
         ).rows
       : [];
+    // "Awaiting" is defined once, in chapter11/awaiting.ts, and shared with the
+    // review queue so the overview and Support reviews cannot disagree.
     const status = ["hod", "faculty", "governance"].includes(actor.role)
-      ? (
-          await client.query<{ pending: number; failed: number }>(
-            `SELECT count(*) FILTER(WHERE j.status='awaiting_faculty')::int AS pending,count(*) FILTER(WHERE j.status IN ('failed','blocked'))::int AS failed FROM ch11_jobs j JOIN student_profiles s ON s.id=j.student_id WHERE j.generation_id=$1 AND ($2='governance' OR s.department_id=$3) AND ($2<>'faculty' OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$4))`,
-            [gen, actor.role, actor.departmentId ?? null, actor.personId],
-          )
-        ).rows[0]
+      ? {
+          pending: await awaitingCount(client, gen, actor),
+          failed: (
+            await client.query<{ failed: number }>(
+              `SELECT count(*) FILTER(WHERE j.status IN ('failed','blocked'))::int AS failed FROM ch11_jobs j JOIN student_profiles s ON s.id=j.student_id WHERE j.generation_id=$1 AND ($2='governance' OR s.department_id=$3) AND ($2<>'faculty' OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$4))`,
+              [gen, actor.role, actor.departmentId ?? null, actor.personId],
+            )
+          ).rows[0]!.failed,
+        }
       : undefined;
     const windows =
       actor.role === "hod"

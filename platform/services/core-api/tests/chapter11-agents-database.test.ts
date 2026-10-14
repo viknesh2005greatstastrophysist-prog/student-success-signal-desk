@@ -13,6 +13,7 @@ import { chainComposer, ModelLimiter } from "../lib/chapter11/provider";
 import { editDraft, reviewQueue } from "../lib/chapter11/review";
 import { decideSupportCase, replayAgentRun } from "../lib/support-commands";
 import { lmsCommand } from "../lib/lms-commands";
+import { experienceOverview } from "../lib/experience-queries";
 import { groqEndpoint, groundedComposer } from "./agent-fixtures";
 import { draftReply, hasTools, route, scriptedPlanner, startMockOpenAI, toolCallReply, userPayload, type MockReply } from "./mock-openai-server";
 
@@ -364,10 +365,16 @@ test(
       assert.equal(mine.drafts.length, 1);
       assert.ok(mine.drafts[0]!.recommendation && mine.drafts[0]!.signals?.length);
       assert.deepEqual(mine.legacyDrafts, []);
+      // E2E log #1, #2, #9: the queue, Support reviews and the overview share one definition of "awaiting".
+      assert.equal(mine.awaitingCount, 1);
+      assert.equal((await experienceOverview(faculty)).counts.pending_reviews, mine.awaitingCount);
+      assert.equal(mine.drafts[0]!.earlier_count, 0);
       for (const actor of [hod]) {
         const queue = await reviewQueue(actor);
         assert.equal(queue.drafts.length, 1);
-        assert.deepEqual(Object.keys(queue.drafts[0]!).sort(), ["display_name", "drafted_at", "id", "mode", "model_id", "register_number", "revision", "status", "student_id"]);
+        assert.equal(queue.awaitingCount, 1);
+        assert.equal((await experienceOverview(actor)).counts.pending_reviews, queue.awaitingCount);
+        assert.deepEqual(Object.keys(queue.drafts[0]!).sort(), ["display_name", "drafted_at", "earlier_count", "earlier_drafts", "id", "mode", "model_id", "register_number", "revision", "status", "student_id"]);
       }
       const ownView = await overview(faculty);
       assert.ok(ownView.riskView.length > 0 && ownView.riskView.some((r) => r.score !== null));
@@ -390,6 +397,8 @@ test(
       await withCoreTransaction((c) => c.query("UPDATE agent_runs SET mode='deterministic' WHERE support_case_id=$1", [caseId]));
       const queue = await reviewQueue(faculty);
       assert.deepEqual(queue.drafts, [], "leaves the active queue");
+      assert.equal(queue.awaitingCount, 0, "a legacy draft is never counted as awaiting");
+      assert.equal((await experienceOverview(faculty)).counts.pending_reviews, 0);
       assert.equal(queue.legacyDrafts.length, 1, "stays viewable");
       assert.equal(queue.legacyDrafts[0]!.id, caseId);
       assert.ok(queue.legacyDrafts[0]!.recommendation);

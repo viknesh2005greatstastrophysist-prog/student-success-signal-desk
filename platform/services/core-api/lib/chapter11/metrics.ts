@@ -36,6 +36,8 @@ export type MetricInput = {
   decision?: string | null;
   artifact_version?: number | null;
 };
+const isEscalated = (r: MetricInput) =>
+  r.status === "needs_human" || r.validation?.escalated === true;
 export function evaluationMetrics(rows: MetricInput[]) {
   const perRun = rows
     .filter((r) => r.validation)
@@ -47,7 +49,7 @@ export function evaluationMetrics(rows: MetricInput[]) {
       fallback: r.validation!.fallback === true,
       toolCalls: (r.validation!.provenance?.agent?.toolCalls ?? []).filter((c) => c.status === "ok").length,
       toolRefusals: (r.validation!.provenance?.agent?.toolCalls ?? []).filter((c) => c.status !== "ok").length,
-      escalated: r.status === "needs_human" || r.validation!.escalated === true,
+      escalated: isEscalated(r),
       mode: r.mode ?? "not recorded",
       decision: r.decision ?? null,
       approveAsIs: r.decision === "approved" ? r.artifact_version === 1 : null,
@@ -95,5 +97,18 @@ export function evaluationMetrics(rows: MetricInput[]) {
         : null,
     };
   });
-  return { perRun, cycles };
+  // One set of headline counts for every screen (E2E log #10, #11). Escalations
+  // count every escalated job, including ones that stopped before validation;
+  // `waiting` jobs are queued and have not started, so they are not recorded runs.
+  const totals = {
+    jobs: rows.length,
+    recorded: rows.filter((r) => r.status !== "queued").length,
+    waiting: rows.filter((r) => r.status === "queued").length,
+    evaluated: perRun.length,
+    validationPassed: perRun.filter((r) => r.validationPassed).length,
+    escalated: rows.filter(isEscalated).length,
+    escalatedEvaluated: perRun.filter((r) => r.escalated).length,
+    repairs: perRun.reduce((n, r) => n + r.repairsUsed, 0),
+  };
+  return { perRun, cycles, totals };
 }

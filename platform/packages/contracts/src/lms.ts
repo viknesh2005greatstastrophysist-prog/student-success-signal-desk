@@ -43,6 +43,8 @@ export type LmsSubmission = {
   answer: string;
   attachment_name: string | null;
   submitted_at: string;
+  /** true when the submission was made after the assignment's due date */
+  late: boolean;
   revision: number;
   score: string | null;
   feedback: string;

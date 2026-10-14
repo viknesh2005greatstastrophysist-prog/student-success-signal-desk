@@ -127,7 +127,7 @@ export async function lmsCourseDetail(
     );
     const submissions = await client.query<LmsSubmission>(
       `SELECT s.id,s.assignment_id,s.student_id,p.display_name AS student_name,s.answer,s.attachment->>'name' AS attachment_name,
-        s.submitted_at::text,s.revision,s.score::text,s.feedback,s.graded_at::text
+        s.submitted_at::text,(s.submitted_at > a.due_at) AS late,s.revision,s.score::text,s.feedback,s.graded_at::text
        FROM lms_submissions s JOIN lms_assignments a ON a.id=s.assignment_id JOIN student_profiles sp ON sp.id=s.student_id JOIN people p ON p.id=sp.person_id
        WHERE s.generation_id=$1 AND a.course_offering_id=$2 AND ($3<>'student' OR (a.published AND s.student_id=$4)) ORDER BY s.submitted_at DESC`,
       [generation, offeringId, actor.role, actor.studentId ?? null],
