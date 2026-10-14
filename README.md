@@ -1,150 +1,108 @@
-# AURA student-support ecosystem
+# AURA: Student Success and Early Warning System
 
-AURA is a production-shaped, synthetic college simulation composed of six
-independent websites, one central identity service, and one authoritative Core
-API backed by PostgreSQL.
+AURA is an agentic AI system that spots students who are starting to struggle and drafts a support plan for
+each one. AI agents gather the evidence, score the risk, investigate with tools and write the draft. A mentor
+reviews every draft and decides; nothing reaches a student or their family without that approval.
 
-Start in the mentor portal. Use the sidebar to open a timetable, a mentee profile, or support and follow-ups. HoD Home contains department totals and shortcuts; individual students appear in Students.
+It is the Chapter 11 capstone of the *Agentic AI: 15 Worklets / 14-Lab Build Book*.
 
-The [fictional demo cohort](docs/DEMO_COHORT.md) contains ten CSE students shared across three mentors (4–3–3), with attendance, marks, GPA results, LMS coursework, fees and follow-ups. Select a demo account at entry; no PIN is required. Run `npm run populate:local` after local initialization to reproduce the cohort without replacing existing records.
+**Live app:** https://aura-college-workspace.streamlit.app (private while in testing; ask the owner for access)
 
-The six connected portals are:
+## What it does
 
-- Student: one semester course selection, timetable, progress and confirmed support.
-- Parent: linked-child attendance, marks/GPA, simulated fee payment, receipts and mentor updates.
-- Mentor: timetable/class records, assigned mentees, support decisions and follow-ups.
-- HoD: department summaries, faculty/students, courses/timetables and AI controls.
-- LMS: courses, lessons, assignments, private submissions and faculty feedback.
-- AI Activity: review status, evidence, rules/model method, failure recovery and history.
+One web app with six workspaces, each showing only what that role is allowed to see:
 
-This repository contains no real student data and performs no real payment.
-Governance may propose support, but it cannot alter academic records or approve
-its own artifacts.
+| Workspace | Who | What they do |
+| --- | --- | --- |
+| Student | Students | Courses, attendance, marks, fees, and support their mentor has approved |
+| Parent | Parents | Their child's attendance, marks, fees and receipts, and mentor updates |
+| Mentor | Faculty mentors | Classroom records, mentees, the AI review queue, approvals and follow-ups |
+| Department head | HoD | Department trends, risk across cohorts, mentor workload, faculty-set policies |
+| AI activity | Operations | Every agent run: steps, models used, tool calls, checks, failures and repairs |
+| Learning (LMS) | Students and faculty | Lessons, assignments, submissions and feedback |
 
-## Chapter 11 agentic worklet
-
-The connected worklet now includes four source collectors, a clarifying coordinator,
-locked plans, risk calculation, scoped retrieval, three recommendation specialists,
-validation and bounded repair, saved checkpoints, mentor edits and approval,
-intervention tracking, and reversible publication. A configured local model can
-make bounded recommendation choices; fallback is always labelled.
-
-Start with the [submission guide](submission/README.md),
-[project report](submission/PROJECT_REPORT.md), and
-[14-lab acceptance ledger](docs/CHAPTER11_COMPLETION.md).
-Run `cd platform && npm run chapter11:build` for the credential-free lab build.
-The professor's real-case and actual mentor-approval requirements remain separate
-from the included synthetic demonstration.
-
-## Architecture
+## How the agents work
 
 ```text
-Student site  ─┐
-Parent site   ─┤
-Faculty site  ─┼─> same-origin BFFs ─> Core API ─> Neon PostgreSQL
-HOD site      ─┤          │                 │              │
-AI Activity   ─┤
-LMS           ─┘          └─ OIDC tokens    ├─ audit ledger
-                           Identity service  └─ deterministic agent runtime
+Mentor request ──> Planner agent (asks clarifying questions, then a plan is locked)
+                         │
+                         v
+Coordinator ──> 4 collectors in parallel: academic records · LMS · internships · placements
+                         │
+                         v
+Evidence validator ──> Risk analysis (faculty-set thresholds) ──> History retrieval
+                         │
+                         v
+Investigator agent (read-only tools) ──> Specialist drafts: academic · attendance · wellbeing referral
+                         │
+                         v
+Packet validator ⇄ Regenerator (diagnoses each failed check, repairs only that part, at most 2 repairs)
+                         │
+                         v
+Mentor gate (edit, approve or decline the exact version) ──> Publisher (student, parent, dashboards)
 ```
 
-Browser sessions are encrypted, HttpOnly, secure in production, and isolated
-per portal origin. Mutations require a session-bound CSRF token, exact-origin
-validation, server-owned role scope, input validation, optimistic concurrency,
-idempotency, one database transaction, a domain event, and an audit row.
+- **Models:** Groq first (`qwen/qwen3.8-27b` drafts, `openai/gpt-oss-120b` judges), then Gemini 3.1
+  Flash-Lite, then a local Qwen model when running on the owner's laptop. Requests are rate- and token-limited
+  to stay inside free tiers.
+- **Grounded drafts:** every claim in a draft must cite a piece of collected evidence. Uncited numbers,
+  diagnostic wording, wrong-domain actions and personal details are caught by the validator and repaired or
+  escalated to the mentor.
+- **Privacy:** hosted models never see names or IDs. Students, courses and evidence are replaced by aliases
+  and only anonymised numbers leave the server; an egress guard blocks anything else.
+- **Governance:** approval is tied to the exact draft version (content hash and revision). Every step is
+  written to an append-only audit ledger, and any run can be replayed and checked.
 
-The implementation authority is [`platform/`](platform/). The earlier
-single-portal prototype remains in the repository as historical reference and
-is not part of this release architecture.
+## Repository layout
 
-## Local development
-
-Requirements: Node.js 22.12 or newer, npm, and a PostgreSQL database.
-
-```bash
-cd platform
-npm ci
-cp .env.example .env.local
-# Fill the private database connection and random secrets before continuing.
-npm run initialize:local
-npm run dev:local
-```
-
-The initializer requires separate local or test schemas, creates missing identity and Core tables, provisions public PKCE clients, and links the synthetic logins. It preserves an existing institutional generation. Use Node 22.12 or newer. For a new setup, see [LOCAL_SETUP.md](submission/LOCAL_SETUP.md).
-
-Local services:
-
-| Surface | URL |
+| Path | What it is |
 | --- | --- |
-| Student | `http://127.0.0.1:3101` |
-| Parent | `http://127.0.0.1:3102` |
-| Faculty | `http://127.0.0.1:3103` |
-| HOD | `http://127.0.0.1:3104` |
-| Governance | `http://127.0.0.1:3105` |
-| LMS | `http://127.0.0.1:3106` |
-| Identity | `http://127.0.0.1:3200` |
-| Core API | `http://127.0.0.1:3300` |
+| `streamlit_app/` | The app: `app.py` (pages), `ui.py` (components), `labels.py` (plain-language text), `bridge.py` (talks to the engine), `engine.mjs` (bundled engine) |
+| `platform/services/core-api/` | The engine in TypeScript: agents, validators, privacy guard, database layer, migrations and tests |
+| `platform/services/core-api/lib/chapter11/` | The agentic pipeline: planner, investigator, agent loop, providers, packet validation, diagnosis |
+| `docs/` | Status, audit, briefs and test log (start with `docs/WORK_STATUS.md`) |
+| `platform/apps/` | Earlier six-site Next.js version, kept for reference and not deployed |
 
-Keep secrets in ignored `.env.local` files. Never commit database URLs, OIDC
-client secrets or session secrets. Demo login itself requires no password.
+The repository contains no student records and no secrets. The app reads records from a private PostgreSQL
+database, and credentials live only in ignored `.env` files or Streamlit secrets.
 
-## Verification
+## Run it yourself
 
-```bash
-cd platform
-npm run check
-npm audit --omit=dev --audit-level=high
-RUN_REBUILD_MUTATIONS=1 npx playwright test e2e/walking-skeleton.spec.ts
-npx playwright test e2e/quality-gates.spec.ts
-```
-
-`npm run check` builds, lints, and type-checks all eight deployables, validates
-the action manifest and security configuration, and runs Core unit tests. The
-database integration test is opt-in and must target a disposable schema:
+These steps run a private copy on your own computer. Requirements: Python 3.12, Node.js 22 or newer and
+PostgreSQL.
 
 ```bash
-RUN_DB_TESTS=1 CORE_DATABASE_SCHEMA=aura_core_test_release npm run test:db --workspace=@aura/core-api
+python3 -m venv .venv
+.venv/bin/pip install -r streamlit_app/requirements.txt
+cd platform && npm ci && cd ..
 ```
 
-The three browser suites cover registration persistence, academic records reaching parents, simulated payment/receipt access, current-record AI reviews, mentor publication, six-portal navigation, accessibility and responsive layout. Database suites separately exercise scope, parent grants, concurrency, reconnect persistence, immutable versions and reversible publication.
+Create a private `.env` in the repo root (never commit it) with your database connection and model keys; see
+`streamlit_app/secrets.example.toml` for the settings the app expects. Then:
 
-## Deployment
+```bash
+.venv/bin/streamlit run streamlit_app/app.py
+```
 
-Eight Vercel projects deploy a committed application release. Each has its own root directory and private environment. Verify the full release through every health endpoint, then fresh hosted sessions and cross-portal workflows. Do not reset production as test setup.
+The app opens at `http://localhost:8501` on your own machine. After any change to the TypeScript engine, rebuild
+the bundle with `cd platform && npm run build:engine`.
 
-Stable production domains:
+## Tests
 
-- <https://aura-student-portal.vercel.app>
-- <https://aura-parent-portal.vercel.app>
-- <https://aura-faculty-portal.vercel.app>
-- <https://aura-hod-portal.vercel.app>
-- <https://aura-ai-governance.vercel.app>
-- <https://aura-lms-portal.vercel.app>
-- <https://aura-identity-service.vercel.app>
-- <https://aura-core-api.vercel.app>
+```bash
+cd platform/services/core-api && npx tsx --test tests/*.test.ts   # engine unit tests
+cd platform && npm run check:engine                                # bundle matches the source
+.venv/bin/python streamlit_app/verify_ui.py                        # every role and page loads
+```
 
-See the current release procedure and rollback boundaries in
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Release evidence is recorded in
-`docs/RELEASE_EVIDENCE.md` only after exact-commit production verification.
+Database suites are opt-in and must use a throwaway `aura_core_test_*` schema; see `docs/WORK_STATUS.md`.
 
-## Current agreement and historical contracts
+## Status
 
-[`docs/PORTAL_EXPERIENCE_SPEC.md`](docs/PORTAL_EXPERIENCE_SPEC.md) is the current interface authority. The documents below retain earlier architectural and acceptance context; where they differ, use the six-portal agreement and latest release evidence.
+- Current state, verification results and the remaining work: [`docs/WORK_STATUS.md`](docs/WORK_STATUS.md)
+- End-to-end test passes and open findings: [`docs/E2E_TEST_LOG.md`](docs/E2E_TEST_LOG.md)
+- Senior-developer audit and plan: [`docs/AUDIT_2026-10-13.md`](docs/AUDIT_2026-10-13.md)
+- Lab-manual coverage: [`docs/CHAPTER11_COMPLETION.md`](docs/CHAPTER11_COMPLETION.md)
 
-- [`docs/FULL_COLLEGE_ECOSYSTEM_BUILD_PLAN.md`](docs/FULL_COLLEGE_ECOSYSTEM_BUILD_PLAN.md)
-- [`docs/MULTI_PORTAL_ARCHITECTURE.md`](docs/MULTI_PORTAL_ARCHITECTURE.md)
-- [`docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md`](docs/FIVE_PORTAL_ACCEPTANCE_CONTRACT.md)
-- [`docs/TEST_STRATEGY.md`](docs/TEST_STRATEGY.md)
-- [`docs/PREREQUISITE_AUDIT.md`](docs/PREREQUISITE_AUDIT.md)
-
-## Honest limitations
-
-- All people, records, money, and events are synthetic.
-- Payment is a deterministic sandbox outcome, not a processor integration.
-- The governed deterministic agent path is part of the release contract. The
-  optional live-model composer remains unverified unless a release record says
-  otherwise.
-- A real college deployment still requires institutional SSO, authoritative
-  SIS/LMS/ERP integrations, approved data-retention policy, key rotation,
-  disaster-recovery drills, accessibility review, privacy review, and formal
-  operational ownership.
+In progress: the end-to-end test-and-fix passes, removing the remaining rule-based fallback so every review
+runs on AI agents, and a visual redesign.
