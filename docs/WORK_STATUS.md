@@ -12,7 +12,9 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
 
-**Push is blocked from this Mac.** Git here authenticates as GitHub user `vikneshwaranmarimuthu-cmyk`; the repo is owned by `viknesh2005greatstastrophysist-prog`. Either the owner pushes (`git push origin streamlit-college-project`), the Codex desktop session pushes (it pushed `5f7db7e` successfully), or the owner adds the other account as a collaborator.
+**Pushing.** Plain `git push` fails here (keychain holds `vikneshwaranmarimuthu-cmyk`; the repo belongs to `viknesh2005greatstastrophysist-prog`). Both accounts are signed in to `gh`, so push with:
+`gh auth switch --user viknesh2005greatstastrophysist-prog && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project && gh auth switch --user vikneshwaranmarimuthu-cmyk`.
+Streamlit Cloud redeploys from the branch on every push. Codex's subscription ended 14 Oct; Claude implements under a strict usage cap (one agent at a time).
 
 ## Verification at HEAD (run 14 Oct 11:25 IST, Brief 11)
 
@@ -38,7 +40,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 | 11 (grounded drafting + egress + specialists) | `docs/CHAPTER11_AGENTIC_BRIEFS.md`, audit Phase 1 | **Done locally by Claude (14 Oct).** Ledger row in `docs/CHAPTER11_GAP_IMPLEMENTATION.md`. Next: 12 (tool-using investigator + planner), 16-lite; 14 deferred. |
 | 17 (visual redesign) | `docs/STREAMLIT_DESIGN_BRIEF.md` | Done by Claude in `6b34843`. Codex's "before" captures are in `runtime/streamlit-project/design/before/`; "after" captures in `.../design/after/` (git-ignored). |
 
-A senior-dev audit of Briefs 1–9 and 17 is in progress (13 Oct 23:00 IST). Its findings and a revised, slimmer plan for 11–16 will be recorded in `docs/AUDIT_2026-10-13.md` when complete. Do not start Briefs 11–16 until that audit lands.
+The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Remaining order: Phase 0 item 0.8 (lease/snapshot fixes) → Brief 12 → Brief 16-lite → Sonnet hygiene batch (0.3, 0.4, 0.6) → 0.5 / 0.2 only if budget remains. Brief 14 deferred.
 
 ## Standing decisions (owner)
 
