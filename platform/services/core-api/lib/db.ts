@@ -5,14 +5,32 @@ import { loadCoreConfig, quoteIdentifier } from "./config";
 let pool: Pool | undefined;
 const snapshotClient = new AsyncLocalStorage<PoolClient>();
 
+/** How long an idle pooled connection is kept (ms). The default is 20 s; the
+ * Streamlit worker sets CORE_DB_IDLE_TIMEOUT_MS to keep connections for a couple of
+ * minutes, because opening one to a database in another region costs several round
+ * trips (TCP, TLS, authentication) and people click less often than every 20 s. */
+export function idleTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = Number(env.CORE_DB_IDLE_TIMEOUT_MS);
+  return Number.isInteger(raw) && raw >= 1_000 && raw <= 600_000
+    ? raw
+    : 20_000;
+}
+
+/** The institution revision lock key shared by every Core transaction. */
+const CORE_LOCK_KEY = 420042;
+
 export function getPool(): Pool {
   if (!pool) {
     const config = loadCoreConfig();
     pool = new Pool({
       connectionString: config.databaseUrl,
       max: 5,
-      idleTimeoutMillis: 20_000,
+      idleTimeoutMillis: idleTimeoutMs(),
       connectionTimeoutMillis: 10_000,
+      // Detect a connection the network dropped while it sat idle.
+      keepAlive: true,
     });
     pool.on("error", () => {
       console.error(
@@ -62,13 +80,15 @@ export async function withCoreTransaction<T>(
   const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
   let discard: Error | undefined;
   try {
-    await client.query("BEGIN");
-    await client.query(`SET LOCAL search_path TO ${schema}, public`);
+    // One round trip, not three: the three statements have no parameters (the lock
+    // key is a constant) so they go as one simple query. Each saved round trip is
+    // a full network delay when the database is in another region.
     await client.query(
-      mode === "exclusive"
-        ? "SELECT pg_advisory_xact_lock($1)"
-        : "SELECT pg_advisory_xact_lock_shared($1)",
-      [420042],
+      `BEGIN; SET LOCAL search_path TO ${schema}, public; SELECT ${
+        mode === "exclusive"
+          ? "pg_advisory_xact_lock"
+          : "pg_advisory_xact_lock_shared"
+      }(${CORE_LOCK_KEY})`,
     );
     const result = await work(client);
     await client.query("COMMIT");
@@ -89,6 +109,24 @@ export async function withCoreSnapshot<T>(
   return withCoreTransaction((client) =>
     snapshotClient.run(client, () => work(client)),
   );
+}
+
+/** Open `count` pooled connections at once and give them back, so the first real
+ * request does not pay for connecting (and a suspended serverless database wakes
+ * while the person is still typing their password). Reads nothing. */
+export async function warmPool(count = 4): Promise<number> {
+  const n = Math.max(1, Math.min(count, 5));
+  await Promise.all(
+    Array.from({ length: n }, async () => {
+      const client = await getPool().connect();
+      try {
+        await client.query("SELECT 1");
+      } finally {
+        client.release();
+      }
+    }),
+  );
+  return n;
 }
 
 export async function closePool(): Promise<void> {

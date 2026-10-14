@@ -2571,7 +2571,7 @@ var require_serializer = __commonJS({
         }
       }
     };
-    var bind2 = (config3 = {}) => {
+    var bind = (config3 = {}) => {
       const portal = config3.portal || "";
       const statement = config3.statement || "";
       const binary = config3.binary || false;
@@ -2683,7 +2683,7 @@ var require_serializer = __commonJS({
       sendSCRAMClientFinalMessage,
       query,
       parse: parse3,
-      bind: bind2,
+      bind,
       execute,
       describe: describe3,
       close,
@@ -26781,14 +26781,21 @@ var defaults = import_lib.default.defaults;
 import { AsyncLocalStorage } from "node:async_hooks";
 var pool;
 var snapshotClient = new AsyncLocalStorage();
+function idleTimeoutMs(env = process.env) {
+  const raw = Number(env.CORE_DB_IDLE_TIMEOUT_MS);
+  return Number.isInteger(raw) && raw >= 1e3 && raw <= 6e5 ? raw : 2e4;
+}
+var CORE_LOCK_KEY = 420042;
 function getPool() {
   if (!pool) {
     const config3 = loadCoreConfig();
     pool = new Pool({
       connectionString: config3.databaseUrl,
       max: 5,
-      idleTimeoutMillis: 2e4,
-      connectionTimeoutMillis: 1e4
+      idleTimeoutMillis: idleTimeoutMs(),
+      connectionTimeoutMillis: 1e4,
+      // Detect a connection the network dropped while it sat idle.
+      keepAlive: true
     });
     pool.on("error", () => {
       console.error(
@@ -26821,11 +26828,8 @@ async function withCoreTransaction(work, mode = "shared") {
   const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
   let discard;
   try {
-    await client.query("BEGIN");
-    await client.query(`SET LOCAL search_path TO ${schema}, public`);
     await client.query(
-      mode === "exclusive" ? "SELECT pg_advisory_xact_lock($1)" : "SELECT pg_advisory_xact_lock_shared($1)",
-      [420042]
+      `BEGIN; SET LOCAL search_path TO ${schema}, public; SELECT ${mode === "exclusive" ? "pg_advisory_xact_lock" : "pg_advisory_xact_lock_shared"}(${CORE_LOCK_KEY})`
     );
     const result = await work(client);
     await client.query("COMMIT");
@@ -26841,6 +26845,20 @@ async function withCoreSnapshot(work) {
   return withCoreTransaction(
     (client) => snapshotClient.run(client, () => work(client))
   );
+}
+async function warmPool(count = 4) {
+  const n = Math.max(1, Math.min(count, 5));
+  await Promise.all(
+    Array.from({ length: n }, async () => {
+      const client = await getPool().connect();
+      try {
+        await client.query("SELECT 1");
+      } finally {
+        client.release();
+      }
+    })
+  );
+  return n;
 }
 async function closePool() {
   if (sourcePool) {
@@ -35687,19 +35705,13 @@ var uuid5 = (value) => external_exports.string().uuid().parse(value);
 var dummy = await hashPassword$1(randomBytes4(24).toString("hex"));
 await withCoreTransaction(async (c) => {
   await c.query(
-    `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_sessions(token_hash text PRIMARY KEY,user_id text NOT NULL,portal text NOT NULL,expires_at timestamptz NOT NULL)`
-  );
-  await c.query(
-    `ALTER TABLE ${authSchema}.streamlit_sessions ADD COLUMN IF NOT EXISTS auth_session_id text, ADD COLUMN IF NOT EXISTS credential_hash text`
-  );
-  await c.query(
-    `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_login_attempts(email_hash text PRIMARY KEY,window_at timestamptz NOT NULL,attempts int NOT NULL)`
-  );
-  await c.query(
-    `DELETE FROM ${authSchema}.streamlit_sessions WHERE expires_at<now()`
-  );
-  await c.query(
-    `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '1 day'`
+    [
+      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_sessions(token_hash text PRIMARY KEY,user_id text NOT NULL,portal text NOT NULL,expires_at timestamptz NOT NULL)`,
+      `ALTER TABLE ${authSchema}.streamlit_sessions ADD COLUMN IF NOT EXISTS auth_session_id text, ADD COLUMN IF NOT EXISTS credential_hash text`,
+      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_login_attempts(email_hash text PRIMARY KEY,window_at timestamptz NOT NULL,attempts int NOT NULL)`,
+      `DELETE FROM ${authSchema}.streamlit_sessions WHERE expires_at<now()`,
+      `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '1 day'`
+    ].join(";\n")
   );
 });
 var AccessError = class extends Error {
@@ -35709,33 +35721,31 @@ var AccessError = class extends Error {
     this.status = status;
   }
 };
-async function bind(userId, portal) {
-  return withCoreTransaction(async (c) => {
-    const result = await c.query(
-      `SELECT p.id AS person_id,p.display_name,p.email,r.role,r.department_id,sp.id AS student_id FROM institution_revisions ir JOIN people p ON p.generation_id=ir.current_generation_id JOIN role_assignments r ON r.generation_id=ir.current_generation_id AND r.person_id=p.id AND r.active LEFT JOIN student_profiles sp ON sp.generation_id=ir.current_generation_id AND sp.person_id=p.id WHERE ir.singleton AND p.external_subject=$1 LIMIT 2`,
-      [userId]
+async function bindWith(c, userId, portal) {
+  const result = await c.query(
+    `SELECT p.id AS person_id,p.display_name,p.email,r.role,r.department_id,sp.id AS student_id FROM institution_revisions ir JOIN people p ON p.generation_id=ir.current_generation_id JOIN role_assignments r ON r.generation_id=ir.current_generation_id AND r.person_id=p.id AND r.active LEFT JOIN student_profiles sp ON sp.generation_id=ir.current_generation_id AND sp.person_id=p.id WHERE ir.singleton AND p.external_subject=$1 LIMIT 2`,
+    [userId]
+  );
+  if (result.rowCount !== 1)
+    throw new AccessError(
+      "UNAUTHENTICATED",
+      "Account has no unique active college assignment",
+      401
     );
-    if (result.rowCount !== 1)
-      throw new AccessError(
-        "UNAUTHENTICATED",
-        "Account has no unique active college assignment",
-        401
-      );
-    const row = result.rows[0];
-    const actor = actorContextSchema.parse({
-      subject: userId,
-      personId: row.person_id,
-      role: row.role,
-      departmentId: row.department_id ?? void 0,
-      studentId: row.student_id ?? void 0
-    });
-    if (!portalAllowedRoles[portalIdSchema.parse(portal)].includes(actor.role))
-      throw new AccessError(
-        "PORTAL_DENIED",
-        "This account cannot enter the selected workspace"
-      );
-    return { ...actor, displayName: row.display_name, email: row.email };
+  const row = result.rows[0];
+  const actor = actorContextSchema.parse({
+    subject: userId,
+    personId: row.person_id,
+    role: row.role,
+    departmentId: row.department_id ?? void 0,
+    studentId: row.student_id ?? void 0
   });
+  if (!portalAllowedRoles[portalIdSchema.parse(portal)].includes(actor.role))
+    throw new AccessError(
+      "PORTAL_DENIED",
+      "This account cannot enter the selected workspace"
+    );
+  return { ...actor, displayName: row.display_name, email: row.email };
 }
 async function login(raw) {
   const input2 = external_exports.object({
@@ -35793,16 +35803,14 @@ async function login(raw) {
       401
     );
   }
-  const actor = await bind(user.id, input2.portal), token = randomBytes4(32).toString("base64url"), authId = randomUUID10();
-  await withCoreTransaction(async (c) => {
+  const token = randomBytes4(32).toString("base64url"), authId = randomUUID10();
+  const actor = await withCoreTransaction(async (c) => {
+    const bound = await bindWith(c, user.id, input2.portal);
     await c.query(
-      `INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3)`,
-      [authId, sha2(token), user.id]
+      `WITH s AS (INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3) RETURNING id) INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) SELECT $2,$3,$4,now()+interval '8 hours',s.id,$5 FROM s`,
+      [authId, sha2(token), user.id, input2.portal, sha2(user.password)]
     );
-    await c.query(
-      `INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) VALUES($1,$2,$3,now()+interval '8 hours',$4,$5)`,
-      [sha2(token), user.id, input2.portal, authId, sha2(user.password)]
-    );
+    return bound;
   });
   return { token, actor };
 }
@@ -35810,15 +35818,15 @@ async function authenticated(token) {
   if (typeof token !== "string" || token.length < 40 || token.length > 100)
     throw new AccessError("UNAUTHENTICATED", "Sign in to continue", 401);
   const value = token;
-  const session = await withCoreTransaction(
-    async (c) => (await c.query(
+  return withCoreTransaction(async (c) => {
+    const session = (await c.query(
       `SELECT s.user_id,s.portal FROM ${authSchema}.streamlit_sessions s JOIN ${authSchema}.session b ON b.id=s.auth_session_id AND b."expiresAt">now() JOIN ${authSchema}.account a ON a."userId"=s.user_id AND a."providerId"='credential' WHERE s.token_hash=$1 AND s.expires_at>now() AND s.credential_hash=encode(sha256(a.password::bytea),'hex')`,
       [sha2(value)]
-    )).rows[0]
-  );
-  if (!session)
-    throw new AccessError("UNAUTHENTICATED", "Sign in again to continue", 401);
-  return bind(session.user_id, session.portal);
+    )).rows[0];
+    if (!session)
+      throw new AccessError("UNAUTHENTICATED", "Sign in again to continue", 401);
+    return bindWith(c, session.user_id, session.portal);
+  });
 }
 var BATCHABLE_READS = /* @__PURE__ */ new Set([
   "overview",
@@ -35859,6 +35867,7 @@ function failure(error61) {
 }
 async function dispatch(action, p, token) {
   if (action === "login") return login(p);
+  if (action === "warm") return { connections: await warmPool(4) };
   if (action === "logout") {
     if (typeof token !== "string")
       throw new AccessError("UNAUTHENTICATED", "Sign in to continue", 401);

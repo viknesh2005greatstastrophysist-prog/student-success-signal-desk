@@ -12,7 +12,11 @@ import {
   loadCoreConfig,
   quoteIdentifier,
 } from "../services/core-api/lib/config";
-import { withCoreTransaction, closePool } from "../services/core-api/lib/db";
+import {
+  withCoreTransaction,
+  closePool,
+  warmPool,
+} from "../services/core-api/lib/db";
 import {
   experienceOverview,
   experienceStudent,
@@ -70,21 +74,17 @@ const authSchema = quoteIdentifier(process.env.AUTH_DATABASE_SCHEMA!);
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const uuid = (value: unknown) => z.string().uuid().parse(value);
 const dummy = await hashPassword(randomBytes(24).toString("hex"));
+// Start-up housekeeping: five statements with no parameters, sent as one simple
+// query (one round trip to the database, not five).
 await withCoreTransaction(async (c) => {
   await c.query(
-    `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_sessions(token_hash text PRIMARY KEY,user_id text NOT NULL,portal text NOT NULL,expires_at timestamptz NOT NULL)`,
-  );
-  await c.query(
-    `ALTER TABLE ${authSchema}.streamlit_sessions ADD COLUMN IF NOT EXISTS auth_session_id text, ADD COLUMN IF NOT EXISTS credential_hash text`,
-  );
-  await c.query(
-    `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_login_attempts(email_hash text PRIMARY KEY,window_at timestamptz NOT NULL,attempts int NOT NULL)`,
-  );
-  await c.query(
-    `DELETE FROM ${authSchema}.streamlit_sessions WHERE expires_at<now()`,
-  );
-  await c.query(
-    `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '1 day'`,
+    [
+      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_sessions(token_hash text PRIMARY KEY,user_id text NOT NULL,portal text NOT NULL,expires_at timestamptz NOT NULL)`,
+      `ALTER TABLE ${authSchema}.streamlit_sessions ADD COLUMN IF NOT EXISTS auth_session_id text, ADD COLUMN IF NOT EXISTS credential_hash text`,
+      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_login_attempts(email_hash text PRIMARY KEY,window_at timestamptz NOT NULL,attempts int NOT NULL)`,
+      `DELETE FROM ${authSchema}.streamlit_sessions WHERE expires_at<now()`,
+      `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '1 day'`,
+    ].join(";\n"),
   );
 });
 
@@ -97,33 +97,32 @@ class AccessError extends Error {
     super(message);
   }
 }
-async function bind(userId: string, portal: string) {
-  return withCoreTransaction(async (c) => {
-    const result = await c.query(
-      `SELECT p.id AS person_id,p.display_name,p.email,r.role,r.department_id,sp.id AS student_id FROM institution_revisions ir JOIN people p ON p.generation_id=ir.current_generation_id JOIN role_assignments r ON r.generation_id=ir.current_generation_id AND r.person_id=p.id AND r.active LEFT JOIN student_profiles sp ON sp.generation_id=ir.current_generation_id AND sp.person_id=p.id WHERE ir.singleton AND p.external_subject=$1 LIMIT 2`,
-      [userId],
+type Query = Pick<import("pg").PoolClient, "query">;
+async function bindWith(c: Query, userId: string, portal: string) {
+  const result = await c.query(
+    `SELECT p.id AS person_id,p.display_name,p.email,r.role,r.department_id,sp.id AS student_id FROM institution_revisions ir JOIN people p ON p.generation_id=ir.current_generation_id JOIN role_assignments r ON r.generation_id=ir.current_generation_id AND r.person_id=p.id AND r.active LEFT JOIN student_profiles sp ON sp.generation_id=ir.current_generation_id AND sp.person_id=p.id WHERE ir.singleton AND p.external_subject=$1 LIMIT 2`,
+    [userId],
+  );
+  if (result.rowCount !== 1)
+    throw new AccessError(
+      "UNAUTHENTICATED",
+      "Account has no unique active college assignment",
+      401,
     );
-    if (result.rowCount !== 1)
-      throw new AccessError(
-        "UNAUTHENTICATED",
-        "Account has no unique active college assignment",
-        401,
-      );
-    const row = result.rows[0]!;
-    const actor = actorContextSchema.parse({
-      subject: userId,
-      personId: row.person_id,
-      role: row.role,
-      departmentId: row.department_id ?? undefined,
-      studentId: row.student_id ?? undefined,
-    });
-    if (!portalAllowedRoles[portalIdSchema.parse(portal)].includes(actor.role))
-      throw new AccessError(
-        "PORTAL_DENIED",
-        "This account cannot enter the selected workspace",
-      );
-    return { ...actor, displayName: row.display_name, email: row.email };
+  const row = result.rows[0]!;
+  const actor = actorContextSchema.parse({
+    subject: userId,
+    personId: row.person_id,
+    role: row.role,
+    departmentId: row.department_id ?? undefined,
+    studentId: row.student_id ?? undefined,
   });
+  if (!portalAllowedRoles[portalIdSchema.parse(portal)].includes(actor.role))
+    throw new AccessError(
+      "PORTAL_DENIED",
+      "This account cannot enter the selected workspace",
+    );
+  return { ...actor, displayName: row.display_name, email: row.email };
 }
 async function login(raw: unknown) {
   const input = z
@@ -199,18 +198,18 @@ async function login(raw: unknown) {
       401,
     );
   }
-  const actor = await bind(user.id, input.portal),
-    token = randomBytes(32).toString("base64url"),
+  const token = randomBytes(32).toString("base64url"),
     authId = randomUUID();
-  await withCoreTransaction(async (c) => {
+  // Binding the account to the workspace and storing the session share one
+  // transaction and one statement for the two inserts (4 round trips, was 10).
+  // A refused workspace throws before anything is inserted, as before.
+  const actor = await withCoreTransaction(async (c) => {
+    const bound = await bindWith(c, user.id, input.portal);
     await c.query(
-      `INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3)`,
-      [authId, sha(token), user.id],
+      `WITH s AS (INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3) RETURNING id) INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) SELECT $2,$3,$4,now()+interval '8 hours',s.id,$5 FROM s`,
+      [authId, sha(token), user.id, input.portal, sha(user.password)],
     );
-    await c.query(
-      `INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) VALUES($1,$2,$3,now()+interval '8 hours',$4,$5)`,
-      [sha(token), user.id, input.portal, authId, sha(user.password)],
-    );
+    return bound;
   });
   return { token, actor };
 }
@@ -218,18 +217,19 @@ async function authenticated(token: unknown) {
   if (typeof token !== "string" || token.length < 40 || token.length > 100)
     throw new AccessError("UNAUTHENTICATED", "Sign in to continue", 401);
   const value = token;
-  const session = await withCoreTransaction(
-    async (c) =>
-      (
-        await c.query(
-          `SELECT s.user_id,s.portal FROM ${authSchema}.streamlit_sessions s JOIN ${authSchema}.session b ON b.id=s.auth_session_id AND b."expiresAt">now() JOIN ${authSchema}.account a ON a."userId"=s.user_id AND a."providerId"='credential' WHERE s.token_hash=$1 AND s.expires_at>now() AND s.credential_hash=encode(sha256(a.password::bytea),'hex')`,
-          [sha(value)],
-        )
-      ).rows[0],
-  );
-  if (!session)
-    throw new AccessError("UNAUTHENTICATED", "Sign in again to continue", 401);
-  return bind(session.user_id, session.portal);
+  // The session check and the account binding are one transaction (4 round trips
+  // to the database, was 10); both still run on every request.
+  return withCoreTransaction(async (c) => {
+    const session = (
+      await c.query(
+        `SELECT s.user_id,s.portal FROM ${authSchema}.streamlit_sessions s JOIN ${authSchema}.session b ON b.id=s.auth_session_id AND b."expiresAt">now() JOIN ${authSchema}.account a ON a."userId"=s.user_id AND a."providerId"='credential' WHERE s.token_hash=$1 AND s.expires_at>now() AND s.credential_hash=encode(sha256(a.password::bytea),'hex')`,
+        [sha(value)],
+      )
+    ).rows[0];
+    if (!session)
+      throw new AccessError("UNAUTHENTICATED", "Sign in again to continue", 401);
+    return bindWith(c, session.user_id, session.portal);
+  });
 }
 // Read-only actions that may be served inside a batch (and one at a time).
 const BATCHABLE_READS = new Set([
@@ -294,6 +294,9 @@ async function dispatch(
   token: unknown,
 ) {
   if (action === "login") return login(p);
+  // Opens the database connections before they are needed. Takes no input, needs
+  // no session and returns nothing about the data.
+  if (action === "warm") return { connections: await warmPool(4) };
   if (action === "logout") {
     if (typeof token !== "string")
       throw new AccessError("UNAUTHENTICATED", "Sign in to continue", 401);
