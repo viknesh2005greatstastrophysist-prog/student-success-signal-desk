@@ -35725,7 +35725,7 @@ async function login(raw) {
     portal: portalIdSchema,
     source: external_exports.string().max(100).default("server-local")
   }).strict().parse(raw), email3 = input2.email.toLowerCase();
-  await withCoreTransaction(
+  const housekeeping = withCoreTransaction(
     (c) => c.query(
       `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '15 minutes'`
     )
@@ -35743,19 +35743,24 @@ async function login(raw) {
     )
   );
   const sourceKey = "source:" + input2.source, emailKey = "email:" + input2.source + ":" + email3;
-  const allowed = await failedAttempts(sourceKey) < 120 && await failedAttempts(emailKey) < 10;
-  if (!allowed)
-    throw new AccessError(
-      "RATE_LIMITED",
-      "Too many sign-in attempts. Wait fifteen minutes and retry.",
-      429
-    );
-  const user = await withCoreTransaction(
+  const lookup = withCoreTransaction(
     async (c) => (await c.query(
       `SELECT u.id,a.password FROM ${authSchema}."user" u JOIN ${authSchema}.account a ON a."userId"=u.id AND a."providerId"='credential' WHERE lower(u.email)=$1`,
       [email3]
     )).rows[0]
   );
+  const [, sourceFailures, emailFailures, user] = await Promise.all([
+    housekeeping,
+    failedAttempts(sourceKey),
+    failedAttempts(emailKey),
+    lookup
+  ]);
+  if (!(sourceFailures < 120 && emailFailures < 10))
+    throw new AccessError(
+      "RATE_LIMITED",
+      "Too many sign-in attempts. Wait fifteen minutes and retry.",
+      429
+    );
   const valid = await verifyPassword$1({
     hash: user?.password ?? dummy,
     password: input2.password

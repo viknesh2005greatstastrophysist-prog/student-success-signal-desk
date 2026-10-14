@@ -136,7 +136,10 @@ async function login(raw: unknown) {
       .strict()
       .parse(raw),
     email = input.email.toLowerCase();
-  await withCoreTransaction((c) =>
+  // The housekeeping, both limit checks and the account lookup do not depend on
+  // each other, so they run together: sign-in pays for one round of trips to the
+  // database instead of four. The limits are still checked before the password.
+  const housekeeping = withCoreTransaction((c) =>
     c.query(
       `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '15 minutes'`,
     ),
@@ -162,15 +165,7 @@ async function login(raw: unknown) {
     );
   const sourceKey = "source:" + input.source,
     emailKey = "email:" + input.source + ":" + email;
-  const allowed =
-    (await failedAttempts(sourceKey)) < 120 && (await failedAttempts(emailKey)) < 10;
-  if (!allowed)
-    throw new AccessError(
-      "RATE_LIMITED",
-      "Too many sign-in attempts. Wait fifteen minutes and retry.",
-      429,
-    );
-  const user = await withCoreTransaction(
+  const lookup = withCoreTransaction(
     async (c) =>
       (
         await c.query(
@@ -179,6 +174,18 @@ async function login(raw: unknown) {
         )
       ).rows[0],
   );
+  const [, sourceFailures, emailFailures, user] = await Promise.all([
+    housekeeping,
+    failedAttempts(sourceKey),
+    failedAttempts(emailKey),
+    lookup,
+  ]);
+  if (!(sourceFailures < 120 && emailFailures < 10))
+    throw new AccessError(
+      "RATE_LIMITED",
+      "Too many sign-in attempts. Wait fifteen minutes and retry.",
+      429,
+    );
   const valid = await verifyPassword({
     hash: user?.password ?? dummy,
     password: input.password,

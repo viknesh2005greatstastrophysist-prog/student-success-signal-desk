@@ -31,6 +31,30 @@ EXPECTED_PAGES = {
     "lms": [""],
 }
 checks = []
+
+# Source records are evidence for staff: the engine refuses them to students and
+# parents (their workspaces do not offer the page either), and serves staff.
+from bridge import BridgeError, Client  # noqa: E402
+
+client = Client()
+try:
+    for portal in ("student", "parent", "faculty"):
+        account = next(a for a in accounts if a["id"] == ids[portal])
+        session = client.login(account["email"], account["password"], portal)
+        try:
+            if portal == "faculty":
+                assert client.request("sources", token=session["token"])["counts"]["students"] > 0
+                continue
+            try:
+                client.request("sources", token=session["token"])
+            except BridgeError as error:
+                assert error.status == 403, (portal, error.status)
+            else:
+                raise AssertionError(f"{portal} was served source records")
+        finally:
+            client.logout(session["token"])
+finally:
+    client.close()
 for portal, id in ids.items():
     account = next(a for a in accounts if a["id"] == id)
     at = AppTest.from_file(str(root / "streamlit_app/app.py"), default_timeout=30).run()
