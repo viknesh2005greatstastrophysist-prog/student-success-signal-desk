@@ -1,64 +1,67 @@
-# AURA "Signal" visual system: quiet paper, ink and one signal colour.
-# paper #F4F1EA, surface #FBFAF6, ink #0E1116, ink-2 #3A3F47, hairline #E2DDD2.
-# signal (vermilion) #FF5A1F = primary CTA and "needs you"; agent (cobalt) #2B59FF = anything the AI did.
-# Risk bands: low #2F9E6F, medium #E5A200, high #E5484D. Streamlit tone names map onto them:
-# blue = agent, orange = needs a human (signal), green = low / done, violet = medium risk,
-# red = high / failed, gray = neutral. Primary stays ink so selection states are calm; the
-# vermilion primary button is applied in ui.py (a single CTA per view).
+# AURA visual system: clear, quiet, Apple-like (docs/DESIGN_SYSTEM.md).
+# Light only. Page #F5F5F7, surfaces #FFFFFF, text #1D1D1F / #6E6E73 / #86868B.
+# backgroundColor is white on purpose: Streamlit paints table cells, menus and popovers with it,
+# and those are surfaces. The page itself is painted #F5F5F7 by ui.CSS (--bg).
+# One accent, Apple blue #0071E3: primary buttons, links and the active state.
+# Status colours are used as a small dot plus a word, never as large fills:
+# green #34C759 (fine), orange #FF9F0A (attention), red #FF3B30 (urgent).
+# Streamlit's tone names map onto them: green = fine / done, orange and violet = attention,
+# red = urgent / failed, blue = in progress, gray = neutral. The text tones below are the
+# darker variants of the status colours so words stay readable on white (4.5:1 or better).
 
 [theme]
 base = "light"
-primaryColor = "#0E1116"
-backgroundColor = "#F4F1EA"
-secondaryBackgroundColor = "#FBFAF6"
-textColor = "#0E1116"
-linkColor = "#2B59FF"
+primaryColor = "#0071E3"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F7"
+textColor = "#1D1D1F"
+linkColor = "#0071E3"
 linkUnderline = false
-borderColor = "#E2DDD2"
+borderColor = "#E3E3E8"
 showWidgetBorder = true
 showSidebarBorder = false
-baseRadius = "12px"
+baseRadius = "14px"
 buttonRadius = "full"
-baseFontSize = 15
-font = "Geist:https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap"
-headingFont = "Instrument Serif:https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap"
-codeFont = "Geist Mono:https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap"
-headingFontWeights = [400, 400, 400, 600, 600, 600]
-headingFontSizes = ["3.5rem", "2.25rem", "1.75rem", "1.0625rem", "0.9375rem", "0.75rem"]
-metricValueFontWeight = 500
-dataframeBorderColor = "#E2DDD2"
-dataframeHeaderBackgroundColor = "#F4F1EA"
-codeBackgroundColor = "#EFEBE1"
-blueColor = "#2B59FF"
-blueBackgroundColor = "#E8EDFF"
-blueTextColor = "#1F3FBF"
-greenColor = "#2F9E6F"
-greenBackgroundColor = "#E2F3EA"
-greenTextColor = "#1B6B49"
-orangeColor = "#FF5A1F"
-orangeBackgroundColor = "#FFEDE4"
-orangeTextColor = "#B8360A"
-redColor = "#E5484D"
-redBackgroundColor = "#FCE6E7"
-redTextColor = "#B3262B"
-violetColor = "#E5A200"
-violetBackgroundColor = "#FBF0CF"
-violetTextColor = "#7A5600"
-grayColor = "#5B6068"
-grayBackgroundColor = "#ECE8DE"
-grayTextColor = "#3A3F47"
-chartCategoricalColors = ["#2B59FF", "#2F9E6F", "#E5A200", "#E5484D", "#0E1116", "#FF5A1F", "#8A8F98"]
-chartSequentialColors = ["#EEF1FF", "#D3DCFF", "#B3C2FF", "#90A6FF", "#6C88FF", "#486BFF", "#2B59FF", "#2146CC", "#183499", "#102366"]
+baseFontSize = 16
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+codeFont = "SF Mono, ui-monospace, Menlo, monospace"
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+headingFontSizes = ["2.25rem", "1.625rem", "1.375rem", "1.1875rem", "1.0625rem", "0.9375rem"]
+metricValueFontWeight = 600
+dataframeBorderColor = "#E3E3E8"
+dataframeHeaderBackgroundColor = "#FFFFFF"
+codeBackgroundColor = "#F5F5F7"
+blueColor = "#0071E3"
+blueBackgroundColor = "#EAF3FD"
+blueTextColor = "#0071E3"
+greenColor = "#34C759"
+greenBackgroundColor = "#EAF8EE"
+greenTextColor = "#1F8A3B"
+orangeColor = "#FF9F0A"
+orangeBackgroundColor = "#FFF4E0"
+orangeTextColor = "#A35F00"
+redColor = "#FF3B30"
+redBackgroundColor = "#FFECEA"
+redTextColor = "#D70015"
+violetColor = "#FF9F0A"
+violetBackgroundColor = "#FFF4E0"
+violetTextColor = "#A35F00"
+grayColor = "#86868B"
+grayBackgroundColor = "#F0F0F3"
+grayTextColor = "#6E6E73"
+chartCategoricalColors = ["#0071E3", "#86868B", "#34C759", "#FF9F0A", "#FF3B30", "#1D1D1F"]
+chartSequentialColors = ["#EAF3FD", "#CFE4FB", "#A9CEF7", "#7FB5F2", "#4F98EC", "#2A82E8", "#0071E3", "#0062C4", "#0053A5", "#004486"]
 
 [theme.sidebar]
-backgroundColor = "#0E1116"
-secondaryBackgroundColor = "#3A3F47"
-textColor = "#F4F1EA"
-primaryColor = "#FF5A1F"
-borderColor = "#2A2F37"
-linkColor = "#9DB1FF"
-codeBackgroundColor = "#1A1F27"
-grayTextColor = "#A8ADB6"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#E8E8ED"
+textColor = "#1D1D1F"
+primaryColor = "#0071E3"
+borderColor = "#E3E3E8"
+linkColor = "#0071E3"
+codeBackgroundColor = "#F5F5F7"
+grayTextColor = "#6E6E73"
 
 [client]
 toolbarMode = "minimal"

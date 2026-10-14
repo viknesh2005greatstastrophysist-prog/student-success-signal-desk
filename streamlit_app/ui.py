@@ -1,4 +1,4 @@
-"""AURA visual components: the "Signal" design system (see docs/DESIGN_SYSTEM.md).
+"""AURA visual components: the Apple-style design system (see docs/DESIGN_SYSTEM.md).
 
 Presentation only. Every dynamic value that reaches custom HTML passes through
 ``esc``; tones, roles and icons come from fixed allowlists, never from records.
@@ -12,8 +12,10 @@ import html
 import re
 from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import labels
 import streamlit as st
@@ -22,431 +24,423 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 TONES = {"blue", "green", "orange", "red", "violet", "gray", "primary"}
 NODE_ROLES = {"coordinator", "agent", "gate", "publish"}
 STATE_TONES = {"green", "blue", "orange", "red", "gray"}
+# Status tone -> the dot colour class used by `status_html` (violet is amber, like orange).
+DOT_TONE = {
+    "green": "green",
+    "orange": "orange",
+    "violet": "orange",
+    "red": "red",
+    "blue": "blue",
+    "gray": "gray",
+    "primary": "blue",
+}
 
 CSS = r"""
 <style>
 /* ==========================================================================
-   AURA "Signal" design system. Quiet paper, ink and one signal colour.
-   Tokens first, then base type, layout, navigation, components, motion.
+   AURA design system. Clear, quiet, Apple-like: content leads, the UI recedes.
+   Tokens, base type, layout, sidebar, surfaces, controls, data, sign-in, motion.
    ========================================================================== */
 :root {
-  --paper: #F4F1EA; --surface: #FBFAF6; --ink: #0E1116; --ink-2: #3A3F47; --ink-3: #5B6068;
-  --hairline: #E2DDD2; --hairline-2: #D3CDBF;
-  --signal: #FF5A1F; --signal-ink: #B8360A; --signal-tint: #FFEDE4;
-  --agent: #2B59FF; --agent-ink: #1F3FBF; --agent-tint: #E8EDFF; --agent-on-ink: #8BA3FF;
-  --low: #2F9E6F; --medium: #E5A200; --high: #E5484D;
-  --low-tint: #E2F3EA; --medium-tint: #FBF0CF; --high-tint: #FCE6E7;
-  --font-display: "Instrument Serif", "Cormorant Garamond", Georgia, serif;
-  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --ease: cubic-bezier(.22, .8, .2, 1);
-  --s1: 8px; --s2: 16px; --s3: 24px; --s4: 32px; --s5: 40px; --s6: 48px; --s8: 64px; --s12: 96px;
-  --radius: 16px;
-  --lift: 0 14px 34px -14px rgba(14, 17, 22, .22), 0 2px 6px -2px rgba(14, 17, 22, .08);
+  --bg: #F5F5F7; --surface: #FFFFFF; --fill: #E8E8ED; --fill-hover: #DEDEE3;
+  --text: #1D1D1F; --text-2: #6E6E73; --text-3: #86868B;
+  --sep: rgba(0, 0, 0, .08); --hair: rgba(0, 0, 0, .06); --field: rgba(0, 0, 0, .14);
+  --blue: #0071E3; --blue-hover: #0077ED; --blue-press: #006EDB; --blue-tint: rgba(0, 113, 227, .12);
+  --green: #34C759; --orange: #FF9F0A; --red: #FF3B30;
+  --green-text: #1F8A3B; --orange-text: #A35F00; --red-text: #D70015;
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --ease: cubic-bezier(.25, .1, .25, 1);
+  --radius: 18px; --radius-sm: 12px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .04);
+  --shadow-hover: 0 1px 2px rgba(0, 0, 0, .05), 0 12px 32px rgba(0, 0, 0, .08);
+  --shadow-sheet: 0 1px 3px rgba(0, 0, 0, .05), 0 24px 56px rgba(0, 0, 0, .10);
 }
 
 /* ---- Base --------------------------------------------------------------- */
-.stApp, [data-testid="stAppViewContainer"] { background: var(--paper); color: var(--ink); font-family: var(--font-ui); }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] { background: var(--bg); color: var(--text); font-family: var(--font); }
 [data-testid="stHeader"] { background: transparent; height: 3rem; }
-[data-testid="stMainBlockContainer"] { max-width: 1240px; padding: 56px 40px 96px; }
-::selection { background: var(--ink); color: var(--paper); }
-:focus-visible { outline: 2px solid var(--agent) !important; outline-offset: 2px; }
-p, li, label, [data-testid="stMarkdownContainer"] { font-size: 15px; line-height: 1.55; }
-a { text-underline-offset: 3px; }
+[data-testid="stMainBlockContainer"] { max-width: 1040px; padding: 64px 48px 120px; }
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] { gap: 24px; }
+[data-testid="stMain"] [data-testid="stVerticalBlock"] { gap: 1.25rem; }
+::selection { background: rgba(0, 113, 227, .22); color: var(--text); }
+:focus-visible { outline: 2px solid var(--blue) !important; outline-offset: 2px; }
+p, li, label, [data-testid="stMarkdownContainer"] { font-size: 17px; line-height: 1.47; letter-spacing: -.011em; }
+a { color: var(--blue); text-underline-offset: 3px; }
+strong, b { font-weight: 600; }
 
-h1, h2, h3 { font-family: var(--font-display) !important; font-weight: 400 !important; color: var(--ink); }
-h1 { font-size: clamp(36px, 5.4vw, 60px) !important; line-height: 1.02 !important; letter-spacing: -.025em !important;
-  padding: 0 !important; margin: 0 !important; overflow-wrap: anywhere; }
-h1 em, h2 em, h3 em { font-style: italic; }
-h2 { font-size: 36px !important; line-height: 1.08 !important; letter-spacing: -.02em !important; padding: 0 !important; }
-h3 { font-size: 28px !important; line-height: 1.15 !important; letter-spacing: -.015em !important;
-  padding: 0 !important; margin: var(--s5) 0 0 !important; }
-h4 { font-family: var(--font-ui) !important; font-size: 16px !important; font-weight: 600 !important; letter-spacing: -.005em !important; padding: 0 !important; }
-h5, h6 { font-family: var(--font-mono) !important; font-size: 11.5px !important; font-weight: 500 !important; letter-spacing: .1em !important;
-  text-transform: uppercase; color: var(--ink-2); padding: 0 !important; margin: 0 !important; }
-[data-testid="stCaptionContainer"], .stCaption, small { color: var(--ink-3); font-size: 13px; line-height: 1.5; }
-code, kbd, pre, [data-testid="stCode"] { font-family: var(--font-mono) !important; font-size: .86em; }
-code { background: #EFEBE1; border-radius: 6px; padding: .1em .4em; color: var(--ink); }
-hr, [data-testid="stDivider"] hr { border: 0; border-top: 1px solid var(--hairline); margin: var(--s3) 0; }
+h1, h2, h3, h4, h5, h6 { font-family: var(--font) !important; font-weight: 600 !important; color: var(--text); text-transform: none; }
+h1 { font-size: 36px !important; line-height: 1.1 !important; letter-spacing: -.022em !important; padding: 0 !important; margin: 0 !important; overflow-wrap: anywhere; }
+h2 { font-size: 28px !important; line-height: 1.14 !important; letter-spacing: -.02em !important; padding: 0 !important; }
+h3 { font-size: 24px !important; line-height: 1.17 !important; letter-spacing: -.018em !important; padding: 0 !important; margin: 32px 0 0 !important; }
+h4 { font-size: 19px !important; line-height: 1.25 !important; letter-spacing: -.014em !important; padding: 0 !important; }
+h5, h6 { font-size: 15px !important; letter-spacing: -.01em !important; color: var(--text-2); padding: 0 !important; margin: 0 !important; }
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p, .stCaption, small { color: var(--text-2) !important; opacity: 1 !important; font-size: 13px; line-height: 1.4; letter-spacing: -.003em; }
+[data-testid="stMarkdownContainer"]:has(h1, h2, h3, h4, h5, h6) { margin-bottom: 0 !important; }
+[data-testid="stElementContainer"]:has(h1) + [data-testid="stElementContainer"]:has(.aura-subtitle) { margin-top: -14px; }
+[data-testid="stElementContainer"]:has(h3) + [data-testid="stElementContainer"]:has([data-testid="stCaptionContainer"]) { margin-top: -12px; }
+[data-testid="stElementContainer"]:has(h3) + [data-testid="stElementContainer"] [data-testid="stCaptionContainer"], [data-testid="stElementContainer"]:has(h3) + [data-testid="stElementContainer"] [data-testid="stCaptionContainer"] p { font-size: 15px; }
+code, kbd, pre, [data-testid="stCode"] { font-family: var(--mono) !important; font-size: .86em; }
+code { background: var(--bg); border-radius: 6px; padding: .1em .4em; color: var(--text); }
+hr, [data-testid="stDivider"] hr { border: 0; border-top: 1px solid var(--sep); margin: 24px 0; }
 .aura-num, [data-testid="stMetricValue"], [data-testid="stDataFrame"] { font-variant-numeric: tabular-nums; }
+[data-testid="stIconMaterial"] { font-variation-settings: "FILL" 0, "wght" 300, "GRAD" 0, "opsz" 24; }
 
-/* ---- Page header: eyebrow, serif title, one-line subtitle, hairline ------ */
-.aura-eyebrow { display: flex; align-items: center; gap: 12px; margin: 0 0 var(--s2) !important; font-family: var(--font-mono);
-  font-size: 11.5px; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
-.aura-eyebrow::before { content: ""; width: 24px; height: 1px; background: var(--ink); flex: 0 0 auto; }
-.aura-eyebrow.plain::before { display: none; }
-.aura-subtitle { color: var(--ink-2); font-size: 17px; line-height: 1.5; max-width: 62ch; margin: var(--s2) 0 0 !important; }
-.aura-rule { border: 0; border-top: 1px solid var(--hairline); margin: var(--s4) 0 var(--s1); height: 0; }
+/* ---- Page header: large title, one secondary line -------------------------- */
+.aura-subtitle { color: var(--text-2); font-size: 17px; line-height: 1.47; max-width: 62ch; margin: 8px 0 0 !important; }
+.aura-eyebrow { font-size: 15px; font-weight: 600; color: var(--text-2); margin: 0 0 6px !important; letter-spacing: -.01em; }
 .aura-plain { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 .5rem; }
-.aura-plain-muted { color: var(--ink-3); font-size: 13px; }
+.aura-plain-muted { color: var(--text-2); font-size: 13px; }
 
-/* ---- Sidebar: ink with paper text ---------------------------------------- */
-[data-testid="stSidebar"] { background: var(--ink); border-right: 0; }
-[data-testid="stSidebar"] [data-testid="stSidebarHeader"] { height: 0; min-height: 0; padding: 0; margin: 0; }
-[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] { position: absolute; top: 14px; right: 10px; z-index: 2; }
-[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding: 28px 20px 24px; }
-[data-testid="stSidebar"] [data-testid="stRadio"], [data-testid="stSidebar"] [data-testid="stRadio"] > div { width: 100% !important; }
-[data-testid="stSidebar"] [role="radiogroup"] { display: flex; flex-direction: column; gap: 2px; width: 100%; }
-[data-testid="stSidebar"] [data-testid="stRadioOption"] { position: relative; display: flex; width: 100%; padding: 11px 14px 11px 16px;
-  border-radius: 10px; margin: 0; overflow: hidden; cursor: pointer; transition: background-color .22s var(--ease); }
-[data-testid="stSidebar"] [data-testid="stRadioOption"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
-  border-radius: 0 3px 3px 0; background: var(--signal); transform: scaleY(0); transition: transform .28s var(--ease); }
-[data-testid="stSidebar"] [data-testid="stRadioOption"]:hover { background: rgba(244, 241, 234, .06); }
-[data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:checked) { background: var(--ink-2); }
-[data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:checked)::before { transform: scaleY(1); }
-[data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:checked) p { color: var(--paper); }
-[data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:focus-visible) { outline: 2px solid var(--agent-on-ink); outline-offset: 1px; }
-[data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div > div:first-child:not([data-testid]) { display: none; }
-[data-testid="stSidebar"] [data-testid="stRadioOption"] p { font-size: 15px; font-weight: 450; color: #C9CCD2; }
-[data-testid="stSidebar"] [data-testid="stRadioOption"] p span[role="img"] { margin-right: 6px; opacity: .85; }
-[data-testid="stSidebar"] hr { border-top: 1px solid #2A2F37; margin: var(--s2) 0; }
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"] { color: #8D929B; font-size: 12px; }
-[data-testid="stSidebar"] .stButton button { background: transparent; color: var(--paper); border: 1px solid #3A3F47; }
-[data-testid="stSidebar"] .stButton button:hover { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+/* ---- Sidebar: light frosted glass ------------------------------------------ */
+[data-testid="stSidebar"] { background: rgba(255, 255, 255, .72) !important; -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  border-right: 1px solid var(--sep); }
+[data-testid="stSidebarContent"] { display: flex; flex-direction: column; position: relative; background: transparent; }
+[data-testid="stSidebarHeader"] { position: absolute; top: 12px; right: 8px; width: auto; height: auto; min-height: 0; padding: 0; margin: 0; z-index: 3; }
+[data-testid="stSidebarHeader"] [data-testid="stLogoSpacer"] { display: none; }
+[data-testid="stSidebarUserContent"], [data-testid="stSidebarUserContent"] > div,
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] { display: contents; }
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:nth-child(1) { order: 0; padding: 28px 24px 8px; }
+[data-testid="stSidebarNav"] { order: 1; padding: 0 12px; max-height: none; }
+[data-testid="stSidebarNavSeparator"] { display: none; }
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:nth-child(2) { order: 2; margin-top: auto; padding: 16px 24px 4px; }
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] > [data-testid="stElementContainer"]:nth-child(n+3) { order: 3; padding: 0 16px 20px; }
+[data-testid="stSidebarNavItems"] { gap: 2px; padding: 0; }
+[data-testid="stSidebarNavLink"] { border-radius: 10px; padding: 9px 12px; gap: 10px; color: var(--text); transition: background-color .2s var(--ease); }
+[data-testid="stSidebarNavLink"] p { font-size: 15px; font-weight: 500; letter-spacing: -.01em; color: var(--text); }
+[data-testid="stSidebarNavLink"] span, [data-testid="stSidebarNavLink"] p { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+[data-testid="stSidebarNavLink"]:hover { background: rgba(0, 0, 0, .045); }
+[data-testid="stSidebarNavLink"][aria-current="page"] { background: var(--fill); }
+[data-testid="stSidebarNavLink"][aria-current="page"] p { font-weight: 600; }
+[data-testid="stSidebarNavLink"] [data-testid="stIconMaterial"] { color: var(--text-2); font-size: 22px; }
+[data-testid="stSidebarNavLink"][aria-current="page"] [data-testid="stIconMaterial"] { color: var(--text); }
+[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] { background: transparent; color: var(--text-2); justify-content: flex-start; padding: 8px 12px; min-height: 0; font-size: 15px; font-weight: 500; }
+[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] > div, [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] span { justify-content: flex-start; width: auto; }
+[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"]:hover { background: rgba(0, 0, 0, .045); color: var(--text); transform: none; box-shadow: none; }
 
-.aura-brandbar { display: flex; align-items: center; gap: 12px; margin: 0 0 var(--s3); }
-.aura-mark { width: 34px; height: 34px; flex: 0 0 34px; } .aura-mark-lg { width: 40px; height: 40px; flex-basis: 40px; }
-.aura-brandword { font-family: var(--font-display); font-size: 30px; letter-spacing: .02em; color: var(--paper); line-height: 1; }
-.aura-id { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 4px 18px; margin: 0 0 var(--s2); border-bottom: 1px solid #2A2F37; }
-.aura-avatar { flex: 0 0 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
-  background: var(--paper); color: var(--ink); font-family: var(--font-display); font-size: 19px; letter-spacing: .01em; }
-.aura-id-name { font-weight: 550; color: var(--paper); line-height: 1.25; overflow-wrap: anywhere; font-size: 14.5px; }
-.aura-id-meta { flex: 1 0 100%; font-family: var(--font-mono); font-size: 11px; color: #A8ADB6; overflow-wrap: anywhere; }
-.aura-role { display: inline-block; margin-top: 8px; padding: 2px 8px; border-radius: 999px; border: 1px solid #4A505A;
-  font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--paper); }
+.aura-brandbar { display: flex; align-items: center; gap: 10px; }
+.aura-mark { width: 30px; height: 30px; flex: 0 0 30px; border-radius: 8px; }
+.aura-brandword { font-size: 19px; font-weight: 600; letter-spacing: .04em; color: var(--text); line-height: 1; }
+.aura-id { display: flex; align-items: center; gap: 12px; padding-top: 14px; border-top: 1px solid var(--sep); }
+.aura-avatar { flex: 0 0 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--fill); color: var(--text-2);
+  font-size: 14px; font-weight: 600; letter-spacing: 0; }
+.aura-id-name { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.25; overflow-wrap: anywhere; }
+.aura-id-meta { font-size: 13px; color: var(--text-2); line-height: 1.3; }
 
-/* ---- Cards: surface, hairline, 16px radius; soft lift on hover ----------- */
-[class*="st-key-card_"] { background: var(--surface) !important; border: 1px solid var(--hairline) !important; border-radius: var(--radius) !important;
-  box-shadow: none !important; padding: var(--s3) !important; transition: transform .28s var(--ease), box-shadow .28s var(--ease), border-color .28s var(--ease); }
-[class*="st-key-card_"]:not(:has(form, [data-testid="stDataFrame"], [data-testid="stDataFrameResizable"], iframe, canvas)):hover {
-  transform: translateY(-2px); box-shadow: var(--lift) !important; border-color: var(--hairline-2) !important; }
+/* ---- Surfaces: white, 18px radius, soft shadow, no hairline noise ----------- */
+[class*="st-key-card_"] { background: var(--surface) !important; border: 1px solid var(--hair) !important; border-radius: var(--radius) !important;
+  box-shadow: var(--shadow) !important; padding: 28px !important; gap: 16px !important;
+  transition: transform .2s ease-out, box-shadow .2s ease-out; }
+[class*="st-key-card_"]:not(:has(form, [data-testid="stDataFrame"], [data-testid="stDataFrameResizable"], iframe, canvas, button)):hover {
+  transform: translateY(-1px); box-shadow: var(--shadow-hover) !important; }
 [class*="st-key-card_"] [data-testid="stForm"], [class*="st-key-gate_"] [data-testid="stForm"] { background: transparent; border: 0; padding: 0; box-shadow: none; }
 /* Cards in a row share one height. */
 [data-testid="stColumn"] > [data-testid="stVerticalBlock"]:has(> [data-testid="stLayoutWrapper"]:only-child) { height: 100%; }
 [data-testid="stColumn"] > [data-testid="stVerticalBlock"] > [data-testid="stLayoutWrapper"]:only-child { flex: 1 1 auto; display: flex; flex-direction: column; }
 [data-testid="stLayoutWrapper"]:only-child > [class*="st-key-"] { flex: 1 1 auto; }
-[class*="st-key-kpin"] > [data-testid="stElementContainer"], [class*="st-key-kpisig_"] > [data-testid="stElementContainer"] { flex: 1 1 auto; }
 [data-testid="stForm"] { border: 0 !important; padding: 0 !important; background: transparent; }
-[data-testid="stMetric"] [data-testid="stMetric"] { border: 0; }
 
-/* ---- KPI numerals: Geist, tabular, tight tracking, sized to fit ---------- */
-[data-testid="stMetric"] { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); box-shadow: none;
-  padding: var(--s3) !important; container-type: inline-size; height: 100%; min-height: 150px; position: relative;
-  transition: transform .28s var(--ease), box-shadow .28s var(--ease), border-color .28s var(--ease); }
-[data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: var(--lift); border-color: var(--hairline-2); }
-[data-testid="stMetric"] > div { gap: var(--s2); height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
-[data-testid="stMetricLabel"] { color: var(--ink-2); }
-[data-testid="stMetricLabel"] p, [data-testid="stMetricLabel"] { font-family: var(--font-ui); font-size: 11.5px !important; font-weight: 500 !important;
-  letter-spacing: .08em; text-transform: uppercase; line-height: 1.35; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+/* ---- Figures: a few numbers that earn their place, in one quiet card -------- */
+[class*="st-key-kpis_"] { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--hair); padding: 26px 8px; }
+[class*="st-key-kpis_"] [data-testid="stHorizontalBlock"] { gap: 0; }
+[class*="st-key-kpis_"] [data-testid="stColumn"] { padding: 0 28px; min-width: 0; }
+[class*="st-key-kpis_"] [data-testid="stColumn"] + [data-testid="stColumn"] { border-left: 1px solid var(--sep); }
+[data-testid="stMetric"] { background: transparent; border: 0; box-shadow: none; padding: 0 !important; min-height: 0; }
+[data-testid="stMetric"] > div { gap: 6px; }
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p { color: var(--text-2); font-size: 15px !important; font-weight: 400 !important; letter-spacing: -.01em;
+  line-height: 1.3; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; text-transform: none; }
 [data-testid="stMetricLabel"] > div { align-items: flex-start; gap: 8px; min-width: 0; }
-[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] * { overflow-wrap: normal !important; word-break: normal !important; hyphens: none; }
 [data-testid="stMetricLabel"] [data-testid="stTooltipIcon"], [data-testid="stMetricLabel"] svg { flex: 0 0 auto; width: 15px; height: 15px; }
-[class*="st-key-kpis_c5"] [data-testid="stMetric"], [class*="st-key-kpis_c6"] [data-testid="stMetric"] { padding: 18px 16px !important; min-height: 132px; }
-[class*="st-key-kpis_c5"] [data-testid="stMetricLabel"] p, [class*="st-key-kpis_c6"] [data-testid="stMetricLabel"] p { font-size: 10.5px !important; letter-spacing: .05em; }
-[data-testid="stMetricLabel"] [data-testid="stMetricIcon"], [data-testid="stMetricLabel"] > div > span:first-child { display: none; }
-[data-testid="stMetricValue"], [data-testid="stMetricValue"] * { font-family: var(--font-ui) !important; font-weight: 500 !important; font-size: 48px; line-height: 1;
-  letter-spacing: -.045em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: normal !important; overflow: visible !important;
-  text-overflow: clip !important; overflow-wrap: anywhere; }
-[data-testid="stMetricDelta"] { font-family: var(--font-mono); font-size: 12px; }
-/*KPI*/
-[class*="st-key-kpisig_"] [data-testid="stMetric"] { border-color: #F3B9A0; background: linear-gradient(180deg, #FFF6F1 0%, var(--surface) 70%); }
-[class*="st-key-kpisig_"] [data-testid="stMetricValue"] * { color: var(--signal-ink); }
-[class*="st-key-kpisig_"] [data-testid="stMetric"]::before, [class*="st-key-kpisig_"] [data-testid="stMetric"]::after { content: ""; position: absolute; top: 18px; right: 18px; width: 9px; height: 9px;
-  border-radius: 50%; background: var(--signal); }
-[class*="st-key-kpisig_"] [data-testid="stMetric"]::before { animation: aura-ping 1.9s var(--ease) infinite; opacity: .5; }
-[class*="st-key-kpis_"] [data-testid="stColumn"] > [data-testid="stVerticalBlock"],
-[class*="st-key-kpin"], [class*="st-key-kpisig_"], [class*="st-key-kpin"] > [data-testid="stElementContainer"], [class*="st-key-kpisig_"] > [data-testid="stElementContainer"] { height: 100%; }
+[data-testid="stMetricLabel"] [data-testid="stMetricIcon"], [data-testid="stMetricLabel"] > div > span:first-child:not([data-testid]) { display: none; }
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] * { font-family: var(--font) !important; font-weight: 600 !important; font-size: 34px; line-height: 1.1;
+  letter-spacing: -.022em; color: var(--text); font-variant-numeric: tabular-nums; white-space: normal !important; overflow: visible !important;
+  text-overflow: clip !important; overflow-wrap: break-word; word-break: normal; }
+[data-testid="stMetricDelta"] { font-size: 13px; }
 
-/* ---- Needs-you gate banner and the decision gate ------------------------- */
-.aura-gate { display: flex; gap: 16px; align-items: flex-start; padding: var(--s3); border-radius: var(--radius);
-  background: var(--surface); border: 1px solid var(--hairline); position: relative; }
-.aura-gate::before, [class*="st-key-gate_"]::before { content: ""; position: absolute; left: -1px; top: 18px; bottom: 18px; width: 4px; border-radius: 0 4px 4px 0; background: var(--signal); }
-.aura-gate-title { font-family: var(--font-display); font-size: 26px; line-height: 1.1; color: var(--ink); letter-spacing: -.01em; }
-.aura-gate-text { color: var(--ink-2); margin-top: 6px; max-width: 70ch; }
-.aura-pulse { position: relative; flex: 0 0 10px; width: 10px; height: 10px; margin-top: 9px; border-radius: 50%; background: var(--signal); display: inline-block; }
-.aura-pulse::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--signal); animation: aura-ping 1.9s var(--ease) infinite; }
+/* ---- Notices, empty states, insight ------------------------------------------ */
+.aura-gate, .aura-insight { display: flex; gap: 14px; align-items: flex-start; padding: 20px 24px; border-radius: var(--radius); background: var(--surface);
+  border: 1px solid var(--hair); box-shadow: var(--shadow); }
+.aura-gate-title, .aura-insight-title { font-size: 17px; font-weight: 600; line-height: 1.3; color: var(--text); letter-spacing: -.011em; }
+.aura-gate-text, .aura-insight-text { color: var(--text-2); font-size: 15px; margin-top: 2px; max-width: 70ch; line-height: 1.45; }
+.aura-dotmark { flex: 0 0 8px; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; background: var(--orange); display: inline-block; }
+.aura-dotmark.gray { background: var(--text-3); }
+.aura-empty { padding: 48px 24px; text-align: center; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--hair); }
+.aura-empty-title { font-size: 17px; font-weight: 600; color: var(--text); }
+.aura-empty-hint { color: var(--text-2); font-size: 15px; margin: 4px auto 0; max-width: 52ch; }
 
-[class*="st-key-gate_"] { position: relative; background: var(--surface) !important; border: 1px solid var(--hairline) !important;
-  border-radius: var(--radius) !important; box-shadow: 0 18px 40px -22px rgba(255, 90, 31, .45) !important; padding: var(--s4) !important; }
-.aura-decision-head { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: flex-end; justify-content: space-between; margin-bottom: var(--s2); }
-.aura-decision-title { font-family: var(--font-display); font-size: 40px; line-height: 1; letter-spacing: -.02em; color: var(--ink); margin: 0; }
-.aura-decision-title em { color: var(--signal-ink); }
-.aura-ref { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); line-height: 1.6; min-width: 0; max-width: 100%; }
-.aura-ref b { font-weight: 500; color: var(--ink); letter-spacing: .08em; text-transform: uppercase; font-size: 11px; margin-right: 8px; }
-.aura-ref .hash { display: block; overflow-wrap: anywhere; word-break: break-all; background: #EFEBE1; padding: 8px 10px; border-radius: 8px; margin-top: 4px; color: var(--ink); }
+/* ---- Status: a small dot and a word -------------------------------------------- */
+.aura-status { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: var(--text-2); white-space: nowrap; letter-spacing: -.01em; }
+.aura-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: 0 0 8px; }
+.aura-status.green i { background: var(--green); } .aura-status.orange i { background: var(--orange); }
+.aura-status.red i { background: var(--red); } .aura-status.blue i { background: var(--blue); }
+.stMarkdownBadge { background: transparent !important; border-radius: 0 !important; padding: 0 !important; margin-right: 14px; font-family: var(--font); font-size: 15px !important;
+  font-weight: 500; letter-spacing: -.01em; display: inline-block !important; white-space: nowrap; }
+.stMarkdownBadge::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; margin-right: 7px; vertical-align: 1px; }
+.stMarkdownBadge span[role="img"] { display: none; }
 
-/* ---- Empty state --------------------------------------------------------- */
-.aura-empty { padding: var(--s6) var(--s3); border: 1px dashed var(--hairline-2); border-radius: var(--radius); background: transparent; }
-.aura-empty-kicker { font-family: var(--font-mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
-.aura-empty-title { font-family: var(--font-display); font-size: 26px; line-height: 1.15; margin-top: 8px; color: var(--ink); }
-.aura-empty-hint { color: var(--ink-2); margin-top: 6px; max-width: 60ch; }
+/* ---- Provenance: quiet, with a small sparkle ------------------------------------- */
+.aura-prov { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); line-height: 1.4; margin: 0; }
+.aura-prov::before { content: ""; width: 14px; height: 14px; flex: 0 0 14px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 4.9 2.9 8.4 10 10-7.100 1.600-9.400 5.100-10 10-.6-4.900-2.900-8.400-10-10 7.100-1.600 9.400-5.100 10-10z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2c.6 4.9 2.9 8.4 10 10-7.100 1.600-9.400 5.100-10 10-.6-4.900-2.900-8.400-10-10 7.100-1.600 9.400-5.100 10-10z'/%3E%3C/svg%3E") center / contain no-repeat; }
+.aura-prov-note { color: var(--text-3); }
+.aura-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; color: var(--text-2); margin: 2px 0; }
 
-/* ---- Chips: citations, signals, agent provenance -------------------------- */
-.aura-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
-.aura-claim { margin: 8px 0 2px; line-height: 1.5; color: var(--ink); }
-.aura-chip { display: inline-flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 12px; background: var(--agent-tint);
-  border: 1px solid #CBD6FF; max-width: 100%; }
-.aura-chip-k { font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--agent-ink); }
-.aura-chip-v { color: var(--ink); font-size: 14px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.aura-signals { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
-.aura-signal { display: inline-block; padding: 3px 10px; border-radius: 999px; background: transparent; border: 1px solid var(--hairline-2); font-size: 12.5px; color: var(--ink-2); }
-.aura-agent { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px 3px 8px; border-radius: 999px; background: var(--agent-tint);
-  border: 1px solid #CBD6FF; color: var(--agent-ink); font-family: var(--font-mono); font-size: 11px; line-height: 1.4; white-space: normal; }
-.aura-agent::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--agent); flex: 0 0 6px; }
-.aura-agent b { font-weight: 600; letter-spacing: .1em; text-transform: uppercase; font-size: 10px; }
-.aura-agent span { color: var(--ink-2); overflow-wrap: anywhere; }
-.aura-band { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-.aura-band.low { background: var(--low); } .aura-band.medium { background: var(--medium); } .aura-band.high { background: var(--high); }
-.aura-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); margin: 4px 0; }
+/* ---- Evidence and signals: grouped rows, never chips ------------------------------ */
+.aura-claim { margin: 12px 0 4px; line-height: 1.47; color: var(--text); }
+.aura-chips { display: block; margin: 8px 0 4px; background: var(--bg); border-radius: 12px; overflow: hidden; }
+.aura-chip { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 10px 16px; font-size: 15px; max-width: 100%; }
+.aura-chip + .aura-chip { border-top: 1px solid var(--sep); }
+.aura-chip-k { color: var(--text-2); overflow-wrap: anywhere; }
+.aura-chip-v { color: var(--text); font-weight: 500; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.aura-signals { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 2px 0 4px; }
+.aura-signal { font-size: 15px; color: var(--text-2); }
 
-/* ---- Agent pipeline stepper: a line that draws, nodes that light cobalt --- */
-.aura-flow { --p: 0; position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 10px; margin: var(--s3) 0 var(--s1); padding-top: 4px; }
-.aura-flow::before, .aura-flow::after { content: ""; position: absolute; top: 15px; left: 5%; right: 5%; height: 2px; border-radius: 2px; }
-.aura-flow::before { background: var(--hairline-2); }
-.aura-flow::after { background: var(--agent); transform-origin: left center; transform: scaleX(var(--p)); right: 5%; width: 90%; left: 5%; animation: aura-draw .9s var(--ease) .15s backwards; }
-.aura-node { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 0 2px; min-width: 0; }
-.aura-pin { position: relative; width: 24px; height: 24px; border-radius: 50%; background: var(--paper); border: 2px solid var(--hairline-2); display: grid; place-items: center;
-  transition: background-color .3s var(--ease), border-color .3s var(--ease); }
-.aura-node.done .aura-pin { background: var(--agent); border-color: var(--agent); animation: aura-light .36s var(--ease) calc(.15s + var(--i, 0) * 70ms) backwards; }
-.aura-node.done .aura-pin::after { content: ""; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: translateY(-1px) rotate(45deg); }
-.aura-node.running .aura-pin { border-color: var(--agent); }
-.aura-node.running .aura-pin::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--agent); }
-.aura-node.waiting .aura-pin { border-color: var(--signal); background: var(--signal-tint); }
-.aura-node.waiting .aura-pin::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--signal); animation: aura-ping 1.9s var(--ease) infinite; }
-.aura-node.failed .aura-pin { border-color: var(--high); background: var(--high-tint); }
-.aura-node.failed .aura-pin::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--high); }
-.aura-node.gate .aura-pin { border-radius: 7px; }
-.aura-node-body { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
-.aura-node-name { font-size: 11.5px; font-weight: 550; color: var(--ink); line-height: 1.25; overflow-wrap: break-word; }
-.aura-node-state:empty { display: none; }
-.aura-node-state { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); letter-spacing: .04em; text-transform: uppercase; }
-.aura-node.done .aura-node-state { color: var(--agent-ink); }
-.aura-node.waiting .aura-node-state { color: var(--signal-ink); }
-.aura-node.failed .aura-node-state { color: var(--high); }
-.aura-node-note { font-size: 11px; color: var(--ink-3); line-height: 1.3; }
-.aura-subs { display: grid; gap: 2px; }
-.aura-sub { font-size: 11px; color: var(--ink-2); display: flex; gap: 5px; align-items: center; justify-content: center; }
-.aura-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hairline-2); display: inline-block; flex: 0 0 7px; }
-.aura-dot.green { background: var(--low); } .aura-dot.blue { background: var(--agent); }
-.aura-dot.orange { background: var(--signal); } .aura-dot.red { background: var(--high); }
-.aura-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); margin: var(--s2) 0 0; letter-spacing: .04em; }
-.aura-legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 0; background: var(--hairline-2); }
-.aura-legend .done::before { background: var(--agent); } .aura-legend .waiting::before { background: var(--signal); }
-.aura-legend .failed::before { background: var(--high); }
+/* ---- Inset grouped lists: rows separated by hairlines inside one rounded card ------ */
+.aura-list, [class*="st-key-list_"] { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--hair); overflow: hidden; gap: 0 !important; }
+.aura-list.flat { background: var(--bg); box-shadow: none; border: 0; border-radius: 14px; }
+.aura-item { display: flex; align-items: center; gap: 16px; padding: 16px 24px; position: relative; min-width: 0; }
+.aura-item + .aura-item::before, [class*="st-key-list_"] [data-testid="stLayoutWrapper"] + [data-testid="stLayoutWrapper"] .aura-item::before {
+  content: ""; position: absolute; top: 0; left: 24px; right: 0; height: 1px; background: var(--sep); }
+.aura-item-main { flex: 1 1 auto; min-width: 0; }
+.aura-item-title { font-size: 17px; font-weight: 500; color: var(--text); letter-spacing: -.011em; line-height: 1.3; overflow-wrap: anywhere; }
+.aura-item-sub { font-size: 15px; color: var(--text-2); line-height: 1.4; margin-top: 2px; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.aura-item-end { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; color: var(--text-2); font-size: 15px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.aura-chev { width: 8px; height: 14px; background: #C7C7CC; flex: 0 0 8px;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 14'%3E%3Cpath d='M1 1l6 6-6 6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 14'%3E%3Cpath d='M1 1l6 6-6 6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat; }
+.aura-item.kv { justify-content: space-between; gap: 24px; }
+.aura-item.kv .k { color: var(--text-2); font-size: 15px; }
+.aura-item.kv .v { color: var(--text); font-size: 17px; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.aura-bar { width: 96px; height: 4px; border-radius: 4px; background: var(--fill); overflow: hidden; flex: 0 0 96px; }
+.aura-bar > i { display: block; height: 100%; background: var(--blue); border-radius: 4px; }
+/* A whole row is one tap target: the button sits invisibly on top of it. */
+[class*="st-key-row_"] { position: relative; gap: 0 !important; transition: background-color .2s ease-out; }
+[class*="st-key-row_"]:hover { background: #FAFAFC; }
+[class*="st-key-row_"] [data-testid="stElementContainer"]:has(button) { position: absolute; inset: 0; z-index: 2; width: 100% !important; height: 100% !important; }
+[class*="st-key-row_"] .stButton, [class*="st-key-row_"] .stButton > div { width: 100%; height: 100%; }
+[class*="st-key-row_"] button { width: 100%; height: 100%; opacity: 0; cursor: pointer; border-radius: 0; }
+[class*="st-key-row_"]:has(button:focus-visible) { outline: 2px solid var(--blue); outline-offset: -2px; }
 
-/* ---- Native widgets ------------------------------------------------------- */
-.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button, [data-testid^="stBaseButton"] {
-  font-family: var(--font-ui); font-weight: 500; font-size: 14.5px; min-height: 44px; border-radius: 999px; padding: 0 22px;
-  transition: transform .22s var(--ease), background-color .22s var(--ease), color .22s var(--ease), box-shadow .22s var(--ease), border-color .22s var(--ease); }
-[data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-secondaryFormSubmit"] { background: transparent; border: 1px solid var(--ink); color: var(--ink); }
-[data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-secondaryFormSubmit"]:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] { background: var(--signal); color: var(--ink); border: 1px solid var(--signal); font-weight: 600; }
-[data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover { background: #FF6D38; color: var(--ink); border-color: #FF6D38;
-  transform: translateY(-1px); box-shadow: 0 12px 24px -10px rgba(255, 90, 31, .65); }
-[data-testid^="stBaseButton"]:active { transform: scale(.98); }
-[data-testid="stBaseButton-secondary"]:disabled, [data-testid="stBaseButton-primary"]:disabled { opacity: .45; }
-[data-testid="stBaseButton-borderless"], [data-testid="stBaseButton-tertiary"] { background: transparent; border: 0; color: var(--ink-2); }
+/* ---- The next decision: one calm card ------------------------------------------------ */
+.aura-feature-kicker { font-size: 15px; font-weight: 500; color: var(--text-2); margin: 0 0 6px; }
+.aura-feature-title { font-size: 28px; font-weight: 600; letter-spacing: -.02em; line-height: 1.14; color: var(--text); margin: 0; overflow-wrap: anywhere; }
+.aura-feature-text { font-size: 17px; color: var(--text-2); line-height: 1.47; margin: 10px 0 0; max-width: 60ch;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.aura-feature-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 14px 0 4px; font-size: 15px; color: var(--text-2); }
+[class*="st-key-card_next"] { padding: 32px !important; gap: 20px !important; }
 
-[data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"], [data-baseweb="select"] > div { background: var(--surface) !important; border-radius: 12px !important;
-  border: 1px solid var(--hairline-2) !important; transition: border-color .2s var(--ease), box-shadow .2s var(--ease); }
-[data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within, [data-baseweb="select"] > div:focus-within { border-color: var(--ink) !important;
-  box-shadow: 0 0 0 3px rgba(43, 89, 255, .16); }
-[data-baseweb="input"] input, [data-baseweb="textarea"] textarea { font-family: var(--font-ui); font-size: 15px; }
-[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+/* ---- The sheet: approve this plan? ------------------------------------------------------ */
+[class*="st-key-gate_"] { background: var(--surface) !important; border: 1px solid var(--hair) !important; border-radius: 24px !important;
+  box-shadow: var(--shadow-sheet) !important; padding: 40px 44px !important; gap: 16px !important; }
+.aura-sheet-title { font-size: 28px; font-weight: 600; letter-spacing: -.02em; line-height: 1.14; color: var(--text); margin: 0; }
+.aura-sheet-sub { font-size: 17px; color: var(--text-2); margin: 4px 0 0; }
+.aura-sheet-h { font-size: 15px; font-weight: 600; color: var(--text-2); margin: 24px 0 8px; letter-spacing: -.01em; }
+.aura-sheet-p { font-size: 17px; color: var(--text); line-height: 1.5; margin: 14px 0 0; overflow-wrap: anywhere; max-width: 64ch; }
+.aura-ref { font-size: 13px; color: var(--text-3); line-height: 1.5; margin: 4px 0 0; overflow-wrap: anywhere; }
+.aura-ref .hash { font-family: var(--mono); font-size: 12px; }
+[class*="st-key-gate_"] [data-testid="stForm"] { max-width: none; }
+[class*="st-key-danger"] button { background: transparent !important; color: var(--red-text) !important; box-shadow: none !important; }
+[class*="st-key-danger"] button:hover { background: rgba(255, 59, 48, .08) !important; transform: none !important; }
+
+/* ---- Controls ---------------------------------------------------------------------------- */
+[data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"], [data-testid="stBaseButton-tertiary"],
+[data-testid="stBaseButton-secondaryFormSubmit"], [data-testid="stBaseButton-primaryFormSubmit"], [data-testid="stBaseButton-tertiaryFormSubmit"] {
+  font-family: var(--font); font-weight: 500; font-size: 17px; letter-spacing: -.011em; min-height: 48px; height: auto; border-radius: 980px; padding: 12px 22px; border: 0;
+  transition: transform .2s ease-out, background-color .2s ease-out, color .2s ease-out, box-shadow .2s ease-out; }
+[data-testid="stBaseButton-secondary"] p, [data-testid="stBaseButton-primary"] p, [data-testid="stBaseButton-tertiary"] p,
+[data-testid="stBaseButton-secondaryFormSubmit"] p, [data-testid="stBaseButton-primaryFormSubmit"] p, [data-testid="stBaseButton-tertiaryFormSubmit"] p {
+  font-size: 17px; font-weight: 500; line-height: 1.3; white-space: normal; overflow: visible; text-overflow: clip; }
+[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] { background: var(--blue); color: #fff; }
+[data-testid="stBaseButton-primary"] p, [data-testid="stBaseButton-primaryFormSubmit"] p { color: #fff; }
+[data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover { background: var(--blue-hover); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0, 113, 227, .28); }
+[data-testid="stBaseButton-primary"]:active, [data-testid="stBaseButton-primaryFormSubmit"]:active { background: var(--blue-press); transform: scale(.98); box-shadow: none; }
+[data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-secondaryFormSubmit"] { background: var(--fill); color: var(--text); }
+[data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-secondaryFormSubmit"]:hover { background: var(--fill-hover); color: var(--text); transform: translateY(-1px); }
+[data-testid="stBaseButton-secondary"]:active, [data-testid="stBaseButton-secondaryFormSubmit"]:active { transform: scale(.98); }
+[data-testid="stBaseButton-tertiary"], [data-testid="stBaseButton-tertiaryFormSubmit"] { background: transparent; color: var(--blue); }
+[data-testid="stBaseButton-tertiary"]:hover, [data-testid="stBaseButton-tertiaryFormSubmit"]:hover { background: var(--blue-tint); color: var(--blue); }
+[data-testid="stBaseButton-secondary"]:disabled, [data-testid="stBaseButton-primary"]:disabled, [data-testid="stBaseButton-tertiary"]:disabled,
+[data-testid="stBaseButton-secondaryFormSubmit"]:disabled, [data-testid="stBaseButton-primaryFormSubmit"]:disabled { opacity: .4; transform: none; box-shadow: none; }
+
+[data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"], [data-baseweb="select"] > div,
+[data-testid="stTextInputRootElement"], [data-testid="stTextAreaRootElement"], [data-testid="stNumberInputContainer"], [data-testid="stDateInputField"], [data-testid="stTimeInputField"] {
+  background: var(--surface) !important; border-radius: 12px !important; border: 1px solid var(--field) !important; transition: border-color .2s ease-out, box-shadow .2s ease-out; }
+[data-testid="stTextInputRootElement"] [data-baseweb], [data-testid="stTextAreaRootElement"] [data-baseweb], [data-testid="stNumberInputContainer"] [data-baseweb] { border: 0 !important; box-shadow: none !important; background: transparent !important; }
+[data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within, [data-baseweb="select"] > div:focus-within, [data-testid="stTextInputRootElement"]:focus-within,
+[data-testid="stTextAreaRootElement"]:focus-within, [data-testid="stNumberInputContainer"]:focus-within, [data-testid="stDateInputField"]:focus-within { border-color: var(--blue) !important;
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, .18) !important; }
+[data-testid="stExpanderIcon"], [data-testid="stCaptionContainer"] span[role="img"], [data-testid="stCaptionContainer"] [data-testid="stIconMaterial"],
+[data-testid="stMain"] [data-testid^="stBaseButton"] [data-testid="stIconMaterial"], [data-testid="stHeaderActionElements"] { display: none !important; }
+[data-baseweb="input"] input, [data-baseweb="textarea"] textarea { font-family: var(--font); font-size: 17px; letter-spacing: -.011em; }
+[data-baseweb="input"] input { min-height: 28px; }
+[data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p { font-size: 15px; font-weight: 500; color: var(--text-2); letter-spacing: -.01em; }
 [data-testid="stSelectbox"] [data-baseweb="select"] div[value], [data-testid="stSelectbox"] [data-baseweb="select"] span { white-space: normal; overflow-wrap: anywhere; }
-[data-testid="stSelectbox"] [data-baseweb="select"] > div { min-height: 44px; height: auto; }
+[data-testid="stSelectbox"] [data-baseweb="select"] > div { min-height: 48px; height: auto; }
 [data-testid="stSelectbox"] [data-baseweb="select"] > div > div:first-child { padding-top: 4px; padding-bottom: 4px; }
+[data-baseweb="popover"] [role="listbox"], [data-baseweb="menu"] { border-radius: 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, .14); border: 1px solid var(--hair); }
 
-[data-testid="stSegmentedControl"] button, [data-testid="stButtonGroup"] button { border-radius: 999px !important; border: 1px solid var(--hairline-2) !important; background: transparent !important;
-  color: var(--ink-2) !important; font-weight: 500; min-height: 40px; padding: 0 14px; transition: background-color .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease); }
-[data-testid="stSegmentedControl"] button:hover, [data-testid="stButtonGroup"] button:hover { border-color: var(--ink) !important; color: var(--ink) !important; }
-[data-testid="stSegmentedControl"] button[aria-checked="true"], [data-testid="stSegmentedControl"] button[kind*="Active"], [data-testid="stButtonGroup"] button[aria-checked="true"],
-[data-testid="stButtonGroup"] button[aria-pressed="true"], [data-testid="stButtonGroup"] button[data-testid*="Active"] { background: var(--ink) !important; color: var(--paper) !important; border-color: var(--ink) !important; }
-[data-testid="stSegmentedControl"] [role="group"], [data-testid="stButtonGroup"] > div { flex-wrap: wrap; gap: 8px; }
+/* Segmented controls, iOS style: a grey track, a white raised thumb. */
+[data-testid="stButtonGroup"] [role="radiogroup"], [data-testid="stButtonGroup"] [role="group"] { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; background: rgba(118, 118, 128, .12); border-radius: 10px; max-width: 100%; }
+[data-testid="stButtonGroup"] button { border: 0 !important; border-radius: 8px !important; background: transparent !important; color: var(--text) !important; box-shadow: none !important;
+  min-height: 34px; padding: 4px 16px; font-size: 15px; font-weight: 500; letter-spacing: -.01em; transition: background-color .2s ease-out, box-shadow .2s ease-out; }
+[data-testid="stButtonGroup"] button p { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: visible; text-overflow: clip; }
+[data-testid="stButtonGroup"] button:hover { background: rgba(0, 0, 0, .04) !important; }
+[data-testid="stButtonGroup"] button[aria-checked="true"], [data-testid="stButtonGroup"] button[data-selected="true"], [data-testid="stButtonGroup"] button[aria-pressed="true"],
+[data-testid="stButtonGroup"] button[kind*="Active"], [data-testid="stButtonGroup"] button[data-testid*="Active"] { background: var(--surface) !important; font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 3px 8px rgba(0, 0, 0, .06) !important; }
+[data-testid="stButtonGroup"] [data-testid="stMarkdownContainer"] p { white-space: nowrap; }
 
-[data-testid="stMain"] [data-testid="stRadio"] [role="radiogroup"] { gap: 8px 20px; }
-[data-testid="stCheckbox"] label, [data-testid="stToggle"] label { font-size: 14.5px; }
+[data-testid="stMain"] [data-testid="stRadio"] [role="radiogroup"] { gap: 8px 24px; }
+[data-testid="stCheckbox"] label, [data-testid="stToggle"] label { font-size: 17px; }
 
-[data-testid="stExpander"] details { background: var(--surface); border: 1px solid var(--hairline); border-radius: 14px; overflow: hidden; }
-[data-testid="stExpander"] details > summary { padding: 14px 18px; font-weight: 500; transition: background-color .2s var(--ease); }
-[data-testid="stExpander"] details > summary:hover { background: #F6F3EC; }
-[data-testid="stExpander"] details > summary p { overflow-wrap: anywhere; white-space: normal; }
-[data-testid="stExpanderDetails"] { padding: 4px 18px 18px; }
+[data-testid="stExpander"] details { background: var(--surface); border: 1px solid var(--hair); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+[data-testid="stExpander"] details > summary { position: relative; padding: 16px 48px 16px 20px; font-weight: 500; font-size: 17px; list-style: none; transition: background-color .2s ease-out; }
+[data-testid="stExpander"] details > summary svg, [data-testid="stExpander"] details > summary [data-testid="stExpanderToggleIcon"] { display: none !important; }
+[data-testid="stExpander"] details > summary > span { gap: 0 !important; }
+[data-testid="stExpander"] details > summary::after { content: ""; position: absolute; right: 24px; top: 50%; width: 7px; height: 7px; border-right: 2px solid var(--text-3); border-bottom: 2px solid var(--text-3);
+  transform: translateY(-70%) rotate(45deg); transition: transform .2s ease-out; }
+[data-testid="stExpander"] details[open] > summary::after { transform: translateY(-30%) rotate(-135deg); }
+[data-testid="stExpander"] details > summary:hover { background: #FAFAFC; }
+[data-testid="stExpander"] details > summary p { overflow-wrap: anywhere; white-space: normal; font-size: 17px; font-weight: 500; }
+[data-testid="stExpanderDetails"] { padding: 4px 20px 20px; }
+[class*="st-key-gate_"] [data-testid="stExpander"] details { box-shadow: none; background: var(--bg); border: 0; }
+[class*="st-key-gate_"] [data-testid="stExpander"] details > summary:hover { background: #EDEDF0; }
 
-[data-testid="stAlert"] { background: var(--surface) !important; border: 1px solid var(--hairline) !important; border-radius: 14px !important; color: var(--ink) !important; }
-[data-testid="stAlert"] [data-testid="stAlertContainer"] { background: transparent; border-left: 3px solid var(--ink-2); border-radius: 0; padding: 14px 18px; }
-[data-testid="stAlert"] p { color: var(--ink); }
-[data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) [data-testid="stAlertContainer"] { border-left-color: var(--agent); }
-[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-testid="stAlertContainer"] { border-left-color: var(--low); }
-[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stAlertContainer"] { border-left-color: var(--medium); }
-[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) [data-testid="stAlertContainer"] { border-left-color: var(--high); }
+[data-testid="stAlert"] { background: var(--surface) !important; border: 1px solid var(--hair) !important; border-radius: 14px !important; box-shadow: var(--shadow); color: var(--text) !important; }
+[data-testid="stAlert"] [data-testid="stAlertContainer"] { background: transparent; padding: 16px 20px; }
+[data-testid="stAlert"] p { color: var(--text); font-size: 15px; }
+[data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) [data-testid="stIconMaterial"], [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) svg { color: var(--text-2); fill: var(--text-2); }
+[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-testid="stIconMaterial"] { color: var(--green-text); }
+[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-testid="stIconMaterial"] { color: var(--orange-text); }
+[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) [data-testid="stIconMaterial"] { color: var(--red-text); }
 
-[data-testid="stProgress"] [role="progressbar"] { height: 6px; border-radius: 999px; background: var(--hairline); }
-[data-testid="stProgress"] [role="progressbar"] > div { background: var(--ink); border-radius: 999px; }
-[data-testid="stProgress"] p { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+[data-testid="stProgress"] [role="progressbar"] { height: 4px; border-radius: 999px; background: var(--fill); }
+[data-testid="stProgress"] [role="progressbar"] > div { background: var(--blue); border-radius: 999px; }
+[data-testid="stProgress"] p { font-size: 15px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 
-[data-testid="stDataFrame"], [data-testid="stDataFrameResizable"] { border: 1px solid var(--hairline); border-radius: 12px; overflow: hidden; background: var(--surface); }
+[data-testid="stDataFrame"], [data-testid="stDataFrameResizable"] { border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
 [data-testid="stArrowVegaLiteChart"], [data-testid="stVegaLiteChart"] { background: transparent; }
 [data-testid="stElementToolbar"] { top: -4px; }
-[data-testid="stCode"] pre, [data-testid="stCode"] { background: #EFEBE1 !important; border-radius: 10px; }
-[data-testid="stToast"], [data-testid="stToastContainer"] [data-baseweb="toast"] { border-radius: 14px; border: 1px solid var(--hairline); }
-[data-testid="stPopover"] button { border-radius: 999px; }
-[data-testid="stSpinner"] { font-family: var(--font-mono); font-size: 13px; }
-
-/* Forms keep a readable measure. */
+[data-testid="stCode"] pre, [data-testid="stCode"] { background: var(--bg) !important; border-radius: 10px; }
+[data-testid="stToast"], [data-testid="stToastContainer"] [data-baseweb="toast"] { border-radius: 14px; border: 1px solid var(--hair); box-shadow: 0 12px 40px rgba(0, 0, 0, .14); }
+[data-testid="stPopover"] button { border-radius: 980px; }
+[data-testid="stSpinner"] { font-size: 15px; color: var(--text-2); }
 [data-testid="stMain"] [data-testid="stForm"] { max-width: 860px; }
 [data-testid="stMain"] [data-testid="stExpanderDetails"] [data-testid="stForm"] { max-width: none; }
-
-/* ---- More native widgets ---------------------------------------------------- */
-[data-baseweb="tag"] { background: #EFEBE1 !important; color: var(--ink) !important; border-radius: 999px !important; border: 1px solid var(--hairline-2); height: auto !important; padding: 2px 4px 2px 10px; }
-[data-baseweb="tag"] span { color: var(--ink) !important; white-space: normal !important; max-width: none !important; font-size: 13px; }
-[data-baseweb="tag"] svg { fill: var(--ink-2); }
-.stButton button, .stDownloadButton button, [data-testid="stFormSubmitButton"] button { height: auto; padding-top: 10px; padding-bottom: 10px; }
-.stButton button p, .stDownloadButton button p, [data-testid="stFormSubmitButton"] button p { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; }
+[data-baseweb="tag"] { background: var(--fill) !important; color: var(--text) !important; border-radius: 999px !important; border: 0; height: auto !important; padding: 2px 4px 2px 10px; }
+[data-baseweb="tag"] span { color: var(--text) !important; white-space: normal !important; max-width: none !important; font-size: 15px; }
+[data-baseweb="tag"] svg { fill: var(--text-2); }
 [data-testid="stElementContainer"]:has([data-testid="stVegaLiteChart"]) [data-testid="stElementToolbar"],
 [data-testid="stElementContainer"]:has([data-testid="stArrowVegaLiteChart"]) [data-testid="stElementToolbar"] { display: none; }
 [data-testid="stVegaLiteChart"] canvas, [data-testid="stVegaLiteChart"] svg { max-width: 100%; }
-.aura-insight { display: flex; gap: 16px; align-items: flex-start; padding: var(--s3); border: 1px dashed var(--hairline-2); border-radius: var(--radius); }
-.aura-insight-title { font-family: var(--font-display); font-size: 24px; line-height: 1.15; color: var(--ink); }
-.aura-insight-text { color: var(--ink-2); margin-top: 6px; max-width: 70ch; }
-.aura-group { display: flex; align-items: baseline; gap: 12px; margin: var(--s3) 0 var(--s1); font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); }
-.aura-group b { font-family: var(--font-display); font-size: 28px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.aura-group { display: flex; align-items: baseline; gap: 12px; margin: 24px 0 8px; font-size: 15px; color: var(--text-2); }
+.aura-group b { font-size: 22px; font-weight: 600; letter-spacing: -.018em; color: var(--text); }
 
-/* ---- Tabs: underline that draws in ---------------------------------------- */
-[data-baseweb="tab-list"] { gap: 28px; border-bottom: 1px solid var(--hairline); background: transparent; flex-wrap: wrap; row-gap: 0; }
+/* ---- Tabs: quiet text, a thin underline ------------------------------------------------------ */
+[data-baseweb="tab-list"] { gap: 28px; border-bottom: 1px solid var(--sep); background: transparent; flex-wrap: wrap; row-gap: 0; }
 [data-baseweb="tab-border"], [data-baseweb="tab-highlight"] { display: none; }
 [data-baseweb="tab"] { position: relative; background: transparent !important; padding: 12px 0 !important; margin: 0; height: auto; }
-[data-baseweb="tab"] p, [data-baseweb="tab"] { font-family: var(--font-ui); font-size: 14.5px; font-weight: 500; color: var(--ink-3); transition: color .2s var(--ease); }
-[data-baseweb="tab"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--ink); transform: scaleX(0);
-  transform-origin: left center; transition: transform .32s var(--ease), opacity .32s var(--ease); }
-[data-baseweb="tab"]:hover { color: var(--ink); }
-[data-baseweb="tab"]:hover::after { transform: scaleX(1); opacity: .28; }
-[data-baseweb="tab"][aria-selected="true"], [data-baseweb="tab"][aria-selected="true"] p { color: var(--ink); }
-[data-baseweb="tab"][aria-selected="true"]::after { transform: scaleX(1); opacity: 1; }
-[data-baseweb="tab-panel"] { padding-top: var(--s3); }
+[data-baseweb="tab"] p, [data-baseweb="tab"] { font-size: 15px; font-weight: 500; color: var(--text-2); transition: color .2s ease-out; }
+[data-baseweb="tab"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--text); opacity: 0; transition: opacity .2s ease-out; }
+[data-baseweb="tab"]:hover { color: var(--text); }
+[data-baseweb="tab"][aria-selected="true"], [data-baseweb="tab"][aria-selected="true"] p { color: var(--text); font-weight: 600; }
+[data-baseweb="tab"][aria-selected="true"]::after { opacity: 1; }
+[data-baseweb="tab-panel"] { padding-top: 24px; }
 
-/* ---- Streamlit badges (status, risk) ---------------------------------------- */
-[data-testid="stMarkdownContainer"] span[class*="Badge"], .stMarkdownBadge { border-radius: 999px; font-family: var(--font-ui); font-size: 12.5px; font-weight: 500; letter-spacing: .01em; }
+/* ---- Agent pipeline: a quiet stepper ---------------------------------------------------------- */
+.aura-flow { --p: 0; position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; margin: 24px 0 8px; padding: 24px 12px;
+  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--hair); }
+.aura-flow::before, .aura-flow::after { content: ""; position: absolute; top: 35px; left: 6%; right: 6%; height: 2px; border-radius: 2px; }
+.aura-flow::before { background: var(--fill); }
+.aura-flow::after { background: var(--text); transform-origin: left center; transform: scaleX(var(--p)); width: 88%; right: auto; }
+.aura-node { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 0 2px; min-width: 0; }
+.aura-pin { position: relative; width: 22px; height: 22px; border-radius: 50%; background: var(--surface); border: 2px solid #D1D1D6; display: grid; place-items: center; }
+.aura-node.done .aura-pin { background: var(--text); border-color: var(--text); }
+.aura-node.done .aura-pin::after { content: ""; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: translateY(-1px) rotate(45deg); }
+.aura-node.running .aura-pin { border-color: var(--blue); }
+.aura-node.running .aura-pin::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
+.aura-node.waiting .aura-pin { border-color: var(--orange); }
+.aura-node.waiting .aura-pin::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
+.aura-node.failed .aura-pin { border-color: var(--red); }
+.aura-node.failed .aura-pin::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+.aura-node.gate .aura-pin { border-radius: 7px; }
+.aura-node-body { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+.aura-node-name { font-size: 11.5px; font-weight: 600; color: var(--text); line-height: 1.25; overflow-wrap: normal; word-break: normal; hyphens: manual; max-width: 100%; letter-spacing: -.01em; }
+.aura-node-state:empty { display: none; }
+.aura-node-state { font-size: 13px; color: var(--text-2); }
+.aura-node.failed .aura-node-state { color: var(--red-text); }
+.aura-node-note { font-size: 12px; color: var(--text-3); line-height: 1.3; }
+.aura-subs { display: grid; gap: 2px; }
+.aura-sub { font-size: 12px; color: var(--text-2); display: flex; gap: 5px; align-items: center; justify-content: center; }
+.aura-dot { width: 7px; height: 7px; border-radius: 50%; background: #D1D1D6; display: inline-block; flex: 0 0 7px; }
+.aura-dot.green { background: var(--green); } .aura-dot.blue { background: var(--blue); }
+.aura-dot.orange { background: var(--orange); } .aura-dot.red { background: var(--red); }
+.aura-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 13px; color: var(--text-2); margin: 8px 0 0; }
+.aura-legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: #D1D1D6; }
+.aura-legend .done::before { background: var(--text); } .aura-legend .waiting::before { background: var(--orange); }
+.aura-legend .failed::before { background: var(--red); }
 
-/* ---- Sign-in: split screen ---------------------------------------------------- */
-.st-key-login_shell { display: grid !important; grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr); gap: 0 !important; min-height: 100dvh; align-items: stretch; }
-.st-key-login_shell > [data-testid="stElementContainer"], .st-key-login_shell > [data-testid="stLayoutWrapper"] { min-width: 0; }
-.st-key-login_shell > [data-testid="stElementContainer"]:first-child { height: 100%; }
-.st-key-login_panel { max-width: 480px; width: 100%; margin: 0 auto; padding: var(--s12) var(--s4) var(--s8); justify-content: center; min-height: 100dvh; gap: var(--s2) !important; }
-.st-key-login_panel [data-testid="stCaptionContainer"] { color: var(--ink-3); }
-.st-key-login_panel h2 { margin-bottom: 4px !important; }
-.st-key-login_panel [data-testid="stBaseButton-primaryFormSubmit"] { min-height: 52px; font-size: 15.5px; justify-content: center; }
-.st-key-login_panel [data-testid="stBaseButton-primaryFormSubmit"] p::after { content: ""; display: inline-block; width: 28px; height: 28px; margin-left: 12px; border-radius: 50%;
-  background: var(--ink) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8h10M9 4l4 4-4 4' fill='none' stroke='%23F4F1EA' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px no-repeat;
-  transition: transform .25s var(--ease); vertical-align: middle; }
-.st-key-login_panel [data-testid="stBaseButton-primaryFormSubmit"]:hover p::after { transform: translateX(3px); }
-.st-key-login_panel .aura-eyebrow { margin-bottom: 20px !important; }
-.aura-hero { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; gap: var(--s6); min-height: 100dvh; height: 100%;
-  padding: var(--s8) clamp(32px, 5vw, 72px) var(--s5); color: var(--paper); background: var(--ink); box-sizing: border-box; }
-.aura-hero::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .05;
-  background: repeating-linear-gradient(0deg, var(--paper) 0 1px, transparent 1px 64px), repeating-linear-gradient(90deg, var(--paper) 0 1px, transparent 1px 64px); }
-.aura-hero::after { content: ""; position: absolute; width: 560px; height: 560px; right: -200px; top: -220px; border-radius: 50%; pointer-events: none;
-  background: radial-gradient(closest-side, rgba(43, 89, 255, .28), transparent); }
-.aura-hero > * { position: relative; z-index: 1; }
-.aura-hero-top { display: flex; align-items: center; gap: 14px; }
-.aura-hero-word { font-family: var(--font-display); font-size: 34px; letter-spacing: .04em; line-height: 1; }
-.aura-hero-eyebrow { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase; color: #A8ADB6; margin: 0 0 var(--s3); }
-.aura-hero-title { font-family: var(--font-display); font-size: clamp(44px, 6.2vw, 92px); line-height: .96; letter-spacing: -.03em; margin: 0; color: var(--paper); }
-.aura-hero-title em { font-style: italic; }
-.aura-hero-sub { color: #B9BDC5; font-size: 16.5px; line-height: 1.55; max-width: 46ch; margin: var(--s3) 0 0; }
-.aura-signal-line.still { display: none; }
-@media (prefers-reduced-motion: reduce) { .aura-signal-line.anim { display: none; } .aura-signal-line.still { display: block; } }
-.aura-signal-line { display: block; width: 100%; max-width: 620px; height: auto; margin-top: var(--s5); overflow: visible; }
-.aura-hero-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: var(--s5); font-family: var(--font-mono); font-size: 12px; color: #C9CCD2; }
-.aura-hero-flow .n { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; border: 1px solid #3A3F47; white-space: nowrap; }
-.aura-hero-flow .n.agent i { color: var(--agent-on-ink); }
-.aura-hero-flow .n.gate { border-color: rgba(255, 90, 31, .55); color: var(--paper); }
-.aura-hero-flow .n.gate i { color: var(--signal); }
-.aura-hero-flow .n.publish i { color: #5CC28E; }
-.aura-hero-flow .n i { font-style: normal; color: #6C717A; letter-spacing: .06em; }
-.aura-hero-foot { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; color: #8D929B; }
+/* ---- Sign-in: a calm, centred card ---------------------------------------------------------------- */
+.st-key-login_shell { display: flex !important; flex-direction: column; align-items: center; justify-content: center; min-height: 100dvh; padding: 40px 16px; background: var(--bg); gap: 0 !important; }
+.st-key-login_shell > [data-testid="stLayoutWrapper"], .st-key-login_shell > [data-testid="stElementContainer"] { width: 100%; max-width: 480px; }
+.st-key-login_panel { width: 100%; background: var(--surface); border-radius: 24px; box-shadow: var(--shadow-sheet); border: 1px solid var(--hair); padding: 48px 40px 36px; gap: 20px !important; }
+.aura-login-head { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; margin-bottom: 4px; }
+.aura-login-head .aura-mark { width: 52px; height: 52px; flex-basis: 52px; border-radius: 13px; margin-bottom: 10px; }
+.aura-login-word { font-size: 30px; font-weight: 600; letter-spacing: .03em; color: var(--text); line-height: 1.1; margin: 0; }
+.aura-login-tag { font-size: 17px; color: var(--text-2); margin: 0; }
+.st-key-login_panel [data-testid="stButtonGroup"], .st-key-login_panel [data-testid="stButtonGroup"] > div, .st-key-login_panel [data-testid="stElementContainer"]:has([data-testid="stButtonGroup"]) { width: 100% !important; }
+.st-key-login_panel [data-testid="stButtonGroup"] [role="radiogroup"] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+.st-key-login_panel [data-testid="stButtonGroup"] button { width: 100%; justify-content: center; padding: 4px 6px; }
+.st-key-login_panel [data-testid="stButtonGroup"] button p { font-size: 14px; overflow: visible; text-overflow: clip; }
+.st-key-login_panel [data-testid="stButtonGroup"] button { min-height: 38px; }
+.st-key-login_panel [data-baseweb="input"], .st-key-login_panel [data-baseweb="base-input"], .st-key-login_panel [data-testid="stTextInputRootElement"] { min-height: 50px; border-radius: 14px !important; }
+.st-key-login_panel [data-baseweb="input"] input { min-height: 36px; padding-top: 8px; padding-bottom: 8px; }
+.st-key-login_panel [data-testid="stBaseButton-primaryFormSubmit"] { width: 100%; min-height: 52px; justify-content: center; }
+.st-key-login_panel [data-testid="stCaptionContainer"] { text-align: center; color: var(--text-3); }
 
-/* ---- Motion ----------------------------------------------------------------------- */
-@keyframes aura-rise { from { opacity: 0; transform: translateY(12px); } }
+/* ---- Motion: content fades in over 250ms; hover lifts 1px; nothing bounces ----------------------------- */
 @keyframes aura-fade { from { opacity: 0; } }
-@keyframes aura-ping { 0% { transform: scale(1); opacity: .55; } 80%, 100% { transform: scale(3); opacity: 0; } }
-@keyframes aura-ring { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(3.4); opacity: 0; } }
-@keyframes aura-trace { from { stroke-dashoffset: 1; } }
-@keyframes aura-draw { from { transform: scaleX(0); } }
-@keyframes aura-light { from { transform: scale(.6); background: var(--paper); } }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > * { animation: aura-rise .38s var(--ease) backwards; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(2) { animation-delay: .04s; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(3) { animation-delay: .08s; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(4) { animation-delay: .12s; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(5) { animation-delay: .16s; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(6) { animation-delay: .2s; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(7) { animation-delay: .24s; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(8) { animation-delay: .28s; }
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > *:nth-child(n+9) { animation-delay: .32s; }
-[data-testid="stColumn"] > [data-testid="stVerticalBlock"] > * { animation: aura-rise .38s var(--ease) backwards; }
-[data-testid="stColumn"]:nth-child(2) > [data-testid="stVerticalBlock"] > * { animation-delay: .06s; }
-[data-testid="stColumn"]:nth-child(3) > [data-testid="stVerticalBlock"] > * { animation-delay: .12s; }
-[data-testid="stColumn"]:nth-child(4) > [data-testid="stVerticalBlock"] > * { animation-delay: .18s; }
-[data-testid="stColumn"]:nth-child(5) > [data-testid="stVerticalBlock"] > * { animation-delay: .24s; }
-[data-testid="stColumn"]:nth-child(n+6) > [data-testid="stVerticalBlock"] > * { animation-delay: .3s; }
+[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] > * { animation: aura-fade .25s ease-out backwards; }
 
-/* ---- Small screens: content first, tidy stacking ------------------------------------- */
-@media (max-width: 880px) {
-  .st-key-login_shell { grid-template-columns: 1fr; min-height: 0; }
-  .st-key-login_panel { min-height: 0; padding: var(--s4) var(--s3) var(--s6); justify-content: flex-start; }
-  .aura-hero { min-height: 0; height: auto; gap: 0; padding: 20px 24px 22px; }
-  .aura-hero-eyebrow, .aura-hero-sub, .aura-hero-flow, .aura-hero-foot { display: none; }
-  .aura-hero .aura-signal-line { display: none !important; }
-  .aura-hero::after { display: none; }
-  .aura-hero-word { font-size: 26px; }
-  .aura-hero-top { margin-bottom: 14px; }
-  .aura-hero-title { font-size: 30px; line-height: 1; }
-}
+/* ---- Small screens ----------------------------------------------------------------------------------------- */
+@media (max-width: 880px) { [data-testid="stMainBlockContainer"] { padding: 56px 24px 96px; } }
 @media (max-width: 640px) {
-  [data-testid="stMainBlockContainer"] { padding: 56px 20px 64px; }
-  h3 { font-size: 24px !important; margin-top: var(--s4) !important; }
-  .aura-subtitle { font-size: 15.5px; }
-  .aura-rule { margin: var(--s3) 0 var(--s1); }
-  [class*="st-key-kpis_"] [data-testid="stHorizontalBlock"] { flex-direction: row !important; flex-wrap: wrap !important; gap: 12px !important; }
-  [class*="st-key-kpis_"] [data-testid="stColumn"] { flex: 1 1 calc(50% - 6px) !important; min-width: calc(50% - 6px) !important; width: calc(50% - 6px) !important; }
-  [data-testid="stMetric"] { padding: 16px !important; }
-  [class*="st-key-card_"] { padding: var(--s2) !important; }
-  [class*="st-key-gate_"] { padding: var(--s3) var(--s2) !important; }
-  .aura-decision-title { font-size: 32px; }
-  .aura-gate { padding: var(--s2); }
-  /* The pipeline reads top to bottom on a phone: vertical line, nodes as rows. */
-  .aura-flow { grid-auto-flow: row; grid-auto-columns: 1fr; gap: 14px; padding-left: 2px; }
-  .aura-flow::before, .aura-flow::after { top: 12px; bottom: 12px; left: 13px; right: auto; width: 2px; height: auto; }
-  .aura-flow::after { transform: scaleY(var(--p)); transform-origin: top center; width: 2px; animation-name: aura-draw-y; }
+  [data-testid="stMainBlockContainer"] { padding: 56px 16px 80px; }
+  h1 { font-size: 30px !important; }
+  h3 { font-size: 22px !important; margin-top: 24px !important; }
+  [data-testid="stButtonGroup"] button { padding: 4px 10px; }
+  [class*="st-key-card_"] { padding: 20px !important; }
+  [class*="st-key-card_next"] { padding: 24px !important; }
+  [class*="st-key-gate_"] { padding: 24px 20px !important; border-radius: 20px !important; }
+  .aura-feature-title, .aura-sheet-title { font-size: 24px; }
+  .aura-item { padding: 14px 16px; gap: 12px; }
+  .aura-item-end .aura-status { display: none; }
+  .aura-item-end .aura-bar { display: none; }
+  [class*="st-key-kpis_"] { padding: 18px 4px; }
+  [class*="st-key-kpis_"] [data-testid="stHorizontalBlock"] { flex-direction: row !important; flex-wrap: wrap !important; row-gap: 18px; }
+  [class*="st-key-kpis_"] [data-testid="stColumn"] { flex: 1 1 50% !important; min-width: 50% !important; width: 50% !important; padding: 0 16px; border-left: 0 !important; }
+  [data-testid="stMetricValue"], [data-testid="stMetricValue"] * { font-size: 28px; }
+  .st-key-login_shell { padding: 16px 12px; justify-content: flex-start; }
+  .st-key-login_panel [data-testid="stButtonGroup"] [role="radiogroup"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .st-key-login_panel { padding: 32px 22px 28px; border-radius: 22px; }
+  .aura-flow { grid-auto-flow: row; grid-auto-columns: 1fr; gap: 14px; padding: 20px; }
+  .aura-flow::before, .aura-flow::after { top: 30px; bottom: 30px; left: 30px; right: auto; width: 2px; height: auto; }
+  .aura-flow::after { transform: scaleY(var(--p)); transform-origin: top center; width: 2px; }
   .aura-node { flex-direction: row; align-items: flex-start; text-align: left; gap: 12px; }
-  .aura-node > .aura-pin { flex: 0 0 24px; margin-top: 0; }
-  .aura-node-body { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+  .aura-node > .aura-pin { flex: 0 0 22px; }
+  .aura-node-body { align-items: flex-start; }
   .aura-sub { justify-content: flex-start; }
 }
-@keyframes aura-draw-y { from { transform: scaleY(0); } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
 </style>
 """
 
-
-def _kpi_rules() -> str:
-    """Numerals shrink with the length of the value so a figure never clips (#17)."""
-    rules = []
-    for chars in range(1, 17):
-        size = round(135 / chars, 1)
-        rules.append(
-            f'[class*="st-key-kpin{chars}_"] [data-testid="stMetricValue"], '
-            f'[class*="st-key-kpin{chars}_"] [data-testid="stMetricValue"] *, '
-            f'[class*="st-key-kpisig_n{chars}_"] [data-testid="stMetricValue"], '
-            f'[class*="st-key-kpisig_n{chars}_"] [data-testid="stMetricValue"] * '
-            f"{{ font-size: clamp(15px, {size}cqi, 52px); }}"
-        )
-    return "\n".join(rules)
-
-
-STYLES = CSS.replace("/*KPI*/", _kpi_rules())
+STYLES = CSS
 _KPI_SEQ = {"n": 0}
 
 
@@ -487,22 +481,22 @@ def inject_styles() -> None:
 
 
 def _svg_img(svg: str, *, css: str, alt: str = "") -> str:
-    """Inline SVG is sanitised away by st.html, so graphics travel as data-URI images.
-    Animation lives inside the SVG's own stylesheet, which runs in an image context."""
+    """Inline SVG is sanitised away by st.html, so graphics travel as data-URI images."""
     data = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     return f'<img class="{css}" alt="{esc(alt)}" src="data:image/svg+xml;base64,{data}" />'
 
 
 MARK_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
-    '<path d="M9 52 L32 14 L55 52" fill="none" stroke="#F4F1EA" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>'
-    '<circle cx="32" cy="14" r="6.5" fill="#FF5A1F"/></svg>'
+    '<rect width="64" height="64" rx="15" fill="#1D1D1F"/>'
+    '<path d="M17 47 L32 21 L47 47" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<circle cx="32" cy="17" r="5.5" fill="#0071E3"/></svg>'
 )
 
 
 def brand() -> None:
     st.sidebar.html(
-        f'<div class="aura-brandbar">{_svg_img(MARK_SVG, css="aura-mark")}<span class="aura-brandword">Aura</span></div>'
+        f'<div class="aura-brandbar">{_svg_img(MARK_SVG, css="aura-mark", alt="AURA")}<span class="aura-brandword">AURA</span></div>'
     )
 
 
@@ -518,39 +512,37 @@ def hide_sidebar() -> None:
     )
 
 
+TITLES = {"dr", "prof", "mr", "ms", "mrs", "shri", "smt"}
+
+
 def initials(name: Any) -> str:
     parts = [p for p in str(name or "").replace(".", " ").split() if p[:1].isalpha()]
     if not parts:
         return "A"
-    if parts[0].lower() in {"dr", "prof", "mr", "ms", "mrs"} and len(parts) > 1:
+    if parts[0].lower() in TITLES and len(parts) > 1:
         parts = parts[1:]
     letters = parts[0][:1] + (parts[-1][:1] if len(parts) > 1 else "")
     return letters.upper()
 
 
+def first_name(name: Any, fallback: str = "there") -> str:
+    """The first given name, skipping a title such as Dr or Prof."""
+    parts = [p for p in str(name or "").replace(".", " ").split() if p[:1].isalpha()]
+    if parts and parts[0].lower() in TITLES and len(parts) > 1:
+        parts = parts[1:]
+    return parts[0].title() if parts else fallback
+
+
+def greeting() -> str:
+    """Good morning, afternoon or evening, in the college's time zone."""
+    hour = datetime.now(ZoneInfo("Asia/Kolkata")).hour
+    return "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
+
+
 def identity_card(name: Any, role_label: str, detail: Any) -> None:
     st.sidebar.html(
-        f"""<div class="aura-id"><div class="aura-avatar" aria-hidden="true">{esc(initials(name))}</div>
-        <div><div class="aura-id-name">{esc(name)}</div><span class="aura-role">{esc(role_label)}</span></div>
-        <div class="aura-id-meta">{esc(detail)}</div></div>"""
-    )
-
-
-def _title_markdown(title: str, em: str | None) -> str:
-    """Escaped title with one italic word (the last one unless named)."""
-    text = str(title or "")
-    word = (em or "").strip()
-    if not word:
-        tokens = text.split()
-        word = tokens[-1] if tokens and len(tokens) > 1 else ""
-    core = word.strip(".,;:!?()\"'")
-    index = text.rfind(core) if core else -1
-    if index < 0:
-        return _md_escape(text)
-    return (
-        _md_escape(text[:index])
-        + f"*{_md_escape(core)}*"
-        + _md_escape(text[index + len(core) :])
+        f"""<div class="aura-id" title="{esc(detail)}"><div class="aura-avatar" aria-hidden="true">{esc(initials(name))}</div>
+        <div><div class="aura-id-name">{esc(name)}</div><div class="aura-id-meta">{esc(role_label)}</div></div></div>"""
     )
 
 
@@ -560,13 +552,11 @@ def page_header(
     eyebrow: str | None = None,
     em: str | None = None,
 ) -> None:
-    """Role eyebrow (mono), serif title with one italic word, one-line subtitle, hairline."""
-    if eyebrow:
-        st.html(f'<p class="aura-eyebrow">{esc(eyebrow)}</p>')
-    st.title(_title_markdown(title, em), anchor=False)
+    """A large title and one secondary line. ``eyebrow`` and ``em`` are accepted for
+    compatibility and ignored: the page title says where you are."""
+    st.title(_md_escape(title), anchor=False)
     if subtitle:
         st.html(f'<p class="aura-subtitle">{esc(subtitle)}</p>')
-    st.html('<hr class="aura-rule" />')
 
 
 def section(title: str, caption: str | None = None, icon: str | None = None) -> None:
@@ -582,71 +572,79 @@ def card(key: str, *, height: Any = "content"):
 
 
 def kpi_row(items: Sequence[dict[str, Any]]) -> None:
-    """items: {label, value, icon?, help?, delta?, delta_color?, chart?, signal?}
+    """A few figures in one quiet card. items: {label, value, help?, delta?, delta_color?, chart?}.
 
-    ``signal`` marks a KPI that is waiting on a human: vermilion numeral and a pulsing dot
-    while its value is above zero."""
+    Only show a figure that tells the reader something; ``icon`` and ``signal`` are
+    accepted for compatibility and ignored."""
     if not items:
         return
     _KPI_SEQ["n"] += 1
-    # Numerals in one row share one size, set by the longest figure; words size themselves.
-    figure = re.compile(r"^[\d\s.,%₹/—-]+(of[\d\s.,%₹/—-]+)?$")
-    figure_len = max(
-        (len(str(i["value"])) for i in items if figure.match(str(i["value"]))), default=1
-    )
     with st.container(key=f"kpis_c{len(items)}_{_KPI_SEQ['n']}"):
         cols = st.columns(len(items))
         for col, item in zip(cols, items):
             with col:
-                _KPI_SEQ["n"] += 1
-                text = str(item["value"])
-                chars = max(1, min(16, figure_len if figure.match(text) else len(text)))
-                waiting = bool(item.get("signal")) and text not in {"0", "", "None"}
-                prefix = "kpisig_n" if waiting else "kpin"
-                with st.container(key=f"{prefix}{chars}_{_KPI_SEQ['n']}"):
-                    st.metric(
-                        item["label"],
-                        item["value"],
-                        delta=item.get("delta"),
-                        delta_color=item.get("delta_color", "normal"),
-                        help=item.get("help"),
-                        icon=item.get("icon"),
-                        border=True,
-                        chart_data=item.get("chart"),
-                        chart_type=item.get("chart_type", "area"),
-                    )
+                st.metric(
+                    item["label"],
+                    item["value"],
+                    delta=item.get("delta"),
+                    delta_color=item.get("delta_color", "normal"),
+                    help=item.get("help"),
+                    border=False,
+                    chart_data=item.get("chart"),
+                    chart_type=item.get("chart_type", "area"),
+                )
+
+
+def kpi_row_nonzero(items: Sequence[dict[str, Any]]) -> None:
+    """Like kpi_row, but the first figure always shows and a zero elsewhere is left out."""
+    keep = [i for n, i in enumerate(items) if n == 0 or str(i.get("value")) not in {"0", "—", ""}]
+    kpi_row(keep)
+
+
+def status_html(label: Any, tone: str = "gray") -> str:
+    """A small status dot and a word. Escaped markup."""
+    dot = DOT_TONE.get(tone, "gray")
+    return f'<span class="aura-status {dot}"><i></i>{esc(label)}</span>'
 
 
 def badge_md(label: Any, tone: str = "gray", icon: str = "") -> str:
+    """Streamlit badge, restyled to a dot and a word. ``icon`` is accepted and ignored."""
     tone = tone if tone in TONES else "gray"
-    text = _md_safe(label)
-    return f":{tone}-badge[{icon + ' ' if icon else ''}{text}]"
+    return f":{tone}-badge[{_md_safe(label)}]"
 
 
 def status_md(code: Any) -> str:
-    return badge_md(
-        labels.status_label(code), labels.status_tone(code), labels.status_icon(code)
-    )
+    return badge_md(labels.status_label(code), labels.status_tone(code))
 
 
 def risk_md(band: Any, score: Any = None) -> str:
-    label, tone, icon = labels.RISK_BANDS.get(
+    label, tone, _icon = labels.RISK_BANDS.get(
         str(band or "not evaluated"), (labels.humanize(band), "gray", "")
     )
     suffix = f" · {score}" if score is not None else ""
-    return badge_md(f"{label}{suffix}", tone, icon)
+    return badge_md(f"{label}{suffix}", tone)
 
 
 def status_badge(code: Any) -> None:
     st.markdown(status_md(code))
 
 
+def provenance(note: str = "Drafted by AI · checked by your mentor", extra: str = "") -> str:
+    """The quiet AI provenance line. Escaped markup."""
+    more = f' <span class="aura-prov-note">· {esc(extra)}</span>' if extra else ""
+    return f'<p class="aura-prov">{esc(note)}{more}</p>'
+
+
+def provenance_caption(note: str = "Drafted by AI · checked by your mentor", extra: str = "") -> None:
+    st.html(provenance(note, extra))
+
+
 def agent_chip(model: Any = None, label: str = "agent") -> str:
-    """Cobalt provenance chip for anything an AI produced. Returns escaped markup."""
+    """Quiet provenance line for anything an AI produced. The model name stays in the
+    tooltip; it is shown in full behind "How this was made". Returns escaped markup."""
     full = str(model or "").strip()
-    name = full.split(";")[0].strip()
-    inner = f"<b>{esc(label)}</b>" + (f"<span>{esc(name)}</span>" if name else "")
-    return f'<span class="aura-agent" title="{esc(full) or "Produced by an AI model"}">{inner}</span>'
+    text = "Scored by an AI judge" if label == "judge" else "Drafted by AI"
+    return f'<span class="aura-prov" title="{esc(full) or "Produced by an AI model"}">{esc(text)}</span>'
 
 
 def judge_scores_text(judge: Any) -> str:
@@ -661,7 +659,7 @@ def judge_scores_text(judge: Any) -> str:
 
 
 def judge_chip(judge: Any) -> str:
-    """Cobalt chip with the judge's compact score; the tooltip carries the reasons."""
+    """Quiet line with the judge's compact score; the tooltip carries the reasons."""
     if not isinstance(judge, dict):
         return ""
     if judge.get("status") != "scored":
@@ -676,7 +674,7 @@ def judge_chip(judge: Any) -> str:
 
 
 def judge_chip_block(judge: Any) -> None:
-    """The mentor's compact judge line under the draft's agent chip."""
+    """The mentor's compact judge line."""
     chip = judge_chip(judge)
     if not chip:
         return
@@ -691,7 +689,8 @@ def judge_chip_block(judge: Any) -> None:
             note = "lowest: " + ", ".join(labels.humanize(n) for n in judge["low"])
         if judge.get("injected") or (isinstance(previous, dict) and previous.get("injected")):
             note = (note + " · " if note else "") + "a score was injected for testing"
-    extra = f'<span class="aura-plain-muted">{esc(note)}</span>' if note else ""
+    score = judge_scores_text(judge) if isinstance(judge, dict) else ""
+    extra = f'<span class="aura-plain-muted">{esc(" · ".join(p for p in (score, note) if p))}</span>'
     st.html(f'<div class="aura-meta">{chip}{extra}</div>')
 
 
@@ -702,26 +701,37 @@ def agent_chip_block(model: Any = None, label: str = "agent", note: str = "") ->
 
 def gate_banner(text: str, title: str = "Human gate") -> None:
     st.html(
-        f"""<div class="aura-gate" role="note"><span class="aura-pulse" aria-hidden="true"></span>
+        f"""<div class="aura-gate" role="note"><span class="aura-dotmark" aria-hidden="true"></span>
         <div><div class="aura-gate-title">{esc(title)}</div><div class="aura-gate-text">{esc(text)}</div></div></div>"""
     )
 
 
+def sheet_header(title: str, subtitle: str = "") -> None:
+    sub = f'<p class="aura-sheet-sub">{esc(subtitle)}</p>' if subtitle else ""
+    st.html(f'<div><p class="aura-sheet-title" role="heading" aria-level="2">{esc(title)}</p>{sub}</div>')
+
+
+def sheet_heading(text: str) -> None:
+    st.html(f'<p class="aura-sheet-h">{esc(text)}</p>')
+
+
+def sheet_paragraph(text: Any) -> None:
+    st.html(f'<p class="aura-sheet-p">{esc(text)}</p>')
+
+
 def decision_head(version: Any, content_hash: Any) -> None:
-    """Head of the mentor decision gate: serif title, exact version and hash in mono."""
+    """Version and content hash of the draft being decided, in small tertiary text."""
+    digest = str(content_hash or "")
+    short = digest[:16] + ("…" if len(digest) > 16 else "")
     st.html(
-        f"""<div class="aura-decision-head"><div>
-        <p class="aura-eyebrow plain"><span class="aura-pulse" style="margin:0 10px 0 0" aria-hidden="true"></span>Awaiting your decision</p>
-        <p class="aura-decision-title">Your <em>decision</em></p></div>
-        <div class="aura-ref"><b>Version</b>{esc(version)}<span class="hash"><b>Hash</b>{esc(content_hash)}</span></div></div>"""
+        f'<p class="aura-ref">Version {esc(version)} · hash <span class="hash" title="{esc(digest)}">{esc(short)}</span></p>'
     )
 
 
 def empty_state(title: str, hint: str = "", icon: str = "") -> None:
     """Quiet empty state. ``icon`` is accepted for compatibility and ignored: no emoji."""
     st.html(
-        f"""<div class="aura-empty"><div class="aura-empty-kicker">Nothing here yet</div>
-        <div class="aura-empty-title">{esc(title)}</div>
+        f"""<div class="aura-empty"><div class="aura-empty-title">{esc(title)}</div>
         {f'<div class="aura-empty-hint">{esc(hint)}</div>' if hint else ""}</div>"""
     )
 
@@ -746,7 +756,7 @@ def claim_chips(
     signals: Iterable[dict[str, Any]] | None,
     policy: dict[str, Any] | None,
 ) -> str:
-    """packet-v2 citation chips: metric (and course), cited value and threshold.
+    """packet-v2 evidence rows: metric (and course), cited value and threshold.
     Focusable, with the evidence path on hover. Every value is escaped."""
     chips = []
     signals = list(signals or [])
@@ -765,8 +775,8 @@ def claim_chips(
         )
         heading = f"{name} · {course}" if course else name
         chips.append(
-            f'<span class="aura-chip" tabindex="0" title="{esc(heading)}: {esc(text)} ({esc(path)})">'
-            f'<span class="aura-chip-k">{esc(heading)}</span><span class="aura-chip-v">{esc(text)}</span></span>'
+            f'<div class="aura-chip" tabindex="0" title="{esc(heading)}: {esc(text)} ({esc(path)})">'
+            f'<span class="aura-chip-k">{esc(heading)}</span><span class="aura-chip-v">{esc(text)}</span></div>'
         )
     return f'<div class="aura-chips">{"".join(chips)}</div>' if chips else ""
 
@@ -784,6 +794,92 @@ def html_block(markup: str) -> None:
     st.html(markup)
 
 
+# ---------------------------------------------------------------------------
+# Lists: inset grouped rows. Rows are dicts:
+#   title, sub (optional, two lines at most), status (label, tone) (optional),
+#   end (optional secondary text), bar (optional 0-100 progress), chevron (bool)
+# ---------------------------------------------------------------------------
+def _item_html(row: dict[str, Any], *, chevron: bool = False) -> str:
+    status = row.get("status")
+    pieces = []
+    if row.get("bar") is not None:
+        pct = max(0.0, min(100.0, float(row["bar"])))
+        pieces.append(f'<span class="aura-bar" aria-hidden="true"><i style="width:{pct:.0f}%"></i></span>')
+    if status:
+        pieces.append(status_html(status[0], status[1]))
+    if row.get("end") not in (None, ""):
+        pieces.append(f'<span>{esc(row["end"])}</span>')
+    if chevron:
+        pieces.append('<span class="aura-chev" aria-hidden="true"></span>')
+    sub = f'<div class="aura-item-sub">{esc(row["sub"])}</div>' if row.get("sub") else ""
+    return (
+        f'<div class="aura-item"><div class="aura-item-main"><div class="aura-item-title">{esc(row.get("title"))}</div>{sub}</div>'
+        f'<div class="aura-item-end">{"".join(pieces)}</div></div>'
+    )
+
+
+def inset_list(rows: Sequence[dict[str, Any]], *, flat: bool = False) -> None:
+    """A read-only inset grouped list: hairline rows inside one rounded card."""
+    if not rows:
+        return
+    body = "".join(_item_html(row) for row in rows)
+    st.html(f'<div class="aura-list{" flat" if flat else ""}">{body}</div>')
+
+
+def detail_list(pairs: Sequence[tuple[str, Any]]) -> None:
+    """Label and value rows in one inset card (a profile, a receipt)."""
+    rows = "".join(
+        f'<div class="aura-item kv"><span class="k">{esc(label)}</span><span class="v">{esc(shown)}</span></div>'
+        for label, shown in pairs
+        if shown not in (None, "")
+    )
+    if rows:
+        st.html(f'<div class="aura-list">{rows}</div>')
+
+
+def row_list(key: str, rows: Sequence[dict[str, Any]]) -> int | None:
+    """An inset list whose rows can be tapped. Returns the index of the tapped row, if any.
+
+    Each row is a keyed container; an invisible button covers it so the whole row is the target."""
+    tapped: int | None = None
+    if not rows:
+        return None
+    with st.container(key=f"list_{key}"):
+        for index, row in enumerate(rows):
+            with st.container(key=f"row_{key}_{index}"):
+                st.html(_item_html(row, chevron=True))
+                if st.button(
+                    str(row.get("action") or f"Open {row.get('title', '')}"),
+                    key=f"rowbtn_{key}_{index}",
+                ):
+                    tapped = index
+    return tapped
+
+
+def feature_card(
+    key: str,
+    *,
+    kicker: str,
+    title: str,
+    text: str = "",
+    status: tuple[str, str] | None = None,
+    meta: Sequence[str] = (),
+    action: str | None = None,
+) -> bool:
+    """One calm card for the single most important thing. Returns True when the action is pressed."""
+    pieces = [status_html(status[0], status[1])] if status else []
+    pieces += [f"<span>{esc(m)}</span>" for m in meta if m]
+    with st.container(key=f"card_{key}"):
+        st.html(
+            f'<div><p class="aura-feature-kicker">{esc(kicker)}</p>'
+            f'<p class="aura-feature-title" role="heading" aria-level="2">{esc(title)}</p>'
+            + (f'<p class="aura-feature-text">{esc(text)}</p>' if text else "")
+            + (f'<div class="aura-feature-meta">{"".join(pieces)}</div>' if pieces else "")
+            + "</div>"
+        )
+        return bool(action and st.button(action, type="primary", key=f"btn_{key}"))
+
+
 _STATE_DEFAULT = {"text": "Not reached"}
 
 
@@ -798,7 +894,7 @@ def _state(state: dict[str, Any] | None) -> tuple[str, str, str]:
     return text, tone, f" ×{visits}" if visits > 1 else ""
 
 
-# node state -> stepper class. "done" lights the node cobalt.
+# node state -> stepper class. "done" fills the node.
 _STEP_CLASS = {
     "green": "done",
     "blue": "running",
@@ -937,7 +1033,7 @@ def pipeline_stepper(
 def insight(title: str, text: str) -> None:
     """A quiet note that says why something is not shown (instead of an empty chart)."""
     st.html(
-        f"""<div class="aura-insight"><span class="aura-pulse" style="background:var(--ink-3)" aria-hidden="true"></span>
+        f"""<div class="aura-insight"><span class="aura-dotmark gray" aria-hidden="true"></span>
         <div><div class="aura-insight-title">{esc(title)}</div><div class="aura-insight-text">{esc(text)}</div></div></div>"""
     )
 
@@ -958,100 +1054,51 @@ def tech_details(
 
 
 # ---------------------------------------------------------------------------
-# Sign-in: a split screen. Ink hero on the left, the form on the right.
+# Sign-in: a calm card on the page colour.
 # ---------------------------------------------------------------------------
-_SIGNAL_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 150">
-<style>
-.grid{stroke:#F4F1EA;stroke-opacity:.18;stroke-width:1;stroke-dasharray:2 5}
-.lab{fill:#8D929B;font:10px ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase}
-.trace{fill:none;stroke:#F4F1EA;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0;animation:t 2.4s cubic-bezier(.65,0,.35,1) .5s backwards}
-.dot{fill:#FF5A1F;animation:f .4s ease-out 2.7s backwards}
-.ring{fill:none;stroke:#FF5A1F;stroke-width:1.5;transform-box:fill-box;transform-origin:center;animation:r 2.2s ease-out 2.9s infinite}
-@keyframes t{from{stroke-dashoffset:1}}
-@keyframes f{from{opacity:0}}
-@keyframes r{0%{transform:scale(1);opacity:.8}100%{transform:scale(3.4);opacity:0}}
-@media (prefers-reduced-motion:reduce){*{animation:none!important}}
-</style>
-<line class="grid" x1="0" y1="96" x2="600" y2="96"/>
-<text class="lab" x="0" y="86">threshold</text>
-<path class="trace" pathLength="1" d="M0 58 C34 52 58 70 96 62 S150 46 190 56 S244 74 286 70 S340 62 372 82 S430 112 478 120 S548 128 580 132"/>
-<circle class="ring" cx="580" cy="132" r="8"/>
-<circle class="dot" cx="580" cy="132" r="6"/>
-</svg>"""
-
-
-_SIGNAL_STILL = (
-    _SIGNAL_SVG.split("<style>")[0]
-    + "<style>.grid{stroke:#F4F1EA;stroke-opacity:.18;stroke-width:1;stroke-dasharray:2 5}"
-    ".lab{fill:#8D929B;font:10px ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase}"
-    ".trace{fill:none;stroke:#F4F1EA;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round}"
-    ".dot{fill:#FF5A1F}.ring{fill:none;stroke:#FF5A1F;stroke-width:1.5;opacity:.5}</style>"
-    + _SIGNAL_SVG.split("</style>")[1]
-)
-
-
-def brand_panel() -> None:
-    flow = [
-        ("Coordinator", ""),
-        ("4 data agents", "agent"),
-        ("Risk + draft", "agent"),
-        ("Mentor gate", "gate"),
-        ("Publish", "publish"),
-    ]
-    steps = "".join(
-        f'<span class="n {role}"><i>{index:02d}</i>{esc(name)}</span>'
-        for index, (name, role) in enumerate(flow, start=1)
-    )
+def login_head() -> None:
     st.html(
-        f"""<section class="aura-hero">
-        <div class="aura-hero-top">{_svg_img(MARK_SVG, css="aura-mark aura-mark-lg")}<span class="aura-hero-word">Aura</span></div>
-        <div>
-          <p class="aura-hero-eyebrow">Student success and early warning</p>
-          <p class="aura-hero-title" role="heading" aria-level="2">Every student, <em>seen early.</em></p>
-          <p class="aura-hero-sub">Attendance, coursework, internship and placement signals in one evidence-backed view.
-          Agents draft and flag; nothing reaches a student or family until their mentor approves it.</p>
-          {_svg_img(_SIGNAL_SVG, css="aura-signal-line anim", alt="A line charting a student's attendance drifting below a threshold, with the moment a mentor is asked highlighted")}
-          {_svg_img(_SIGNAL_STILL, css="aura-signal-line still", alt="")}
-          <div class="aura-hero-flow" role="list" aria-label="How a review moves through AURA">{steps}</div>
-        </div>
-        <div class="aura-hero-foot">Chapter 11 capstone / governed agentic runtime</div>
-        </section>"""
+        f"""<div class="aura-login-head">{_svg_img(MARK_SVG, css="aura-mark", alt="")}
+        <p class="aura-login-word" role="heading" aria-level="1">AURA</p>
+        <p class="aura-login-tag">Every student, seen early.</p></div>"""
     )
 
 
 # ---------------------------------------------------------------------------
-# Charts (Altair): paper, hairline gridlines, ink axes, risk-band colours.
+# Charts (Altair): minimal. Faint horizontal guides, one accent series, grey labels.
 # ---------------------------------------------------------------------------
 RISK_DOMAIN = ["low", "medium", "high"]
-RISK_RANGE = ["#2F9E6F", "#E5A200", "#E5484D"]
-SERIES_RANGE = ["#2B59FF", "#2F9E6F", "#E5A200", "#E5484D", "#0E1116", "#8A8F98"]
+RISK_RANGE = ["#34C759", "#FF9F0A", "#FF3B30"]
+SERIES_RANGE = ["#0071E3", "#86868B", "#34C759", "#FF9F0A", "#FF3B30", "#1D1D1F"]
 
 
 def style_chart(chart: Any, *, height: int | None = None) -> Any:
-    """Apply the Signal chart look to an Altair chart (presentation only)."""
-    chart = chart.configure(background="#FBFAF6", padding={"left": 8, "right": 12, "top": 8, "bottom": 4})
+    """Apply the AURA chart look to an Altair chart (presentation only)."""
+    chart = chart.configure(background="#FFFFFF", padding={"left": 8, "right": 12, "top": 12, "bottom": 4})
     chart = chart.configure_view(stroke=None)
     chart = chart.configure_axis(
-        gridColor="#E2DDD2",
+        grid=True,
+        gridColor="rgba(0,0,0,0.07)",
         gridWidth=1,
-        domainColor="#0E1116",
-        tickColor="#0E1116",
-        labelColor="#3A3F47",
-        titleColor="#3A3F47",
-        labelFont="Geist Mono, ui-monospace, monospace",
-        titleFont="Geist, system-ui, sans-serif",
-        labelFontSize=11,
-        titleFontSize=11,
-        titleFontWeight=500,
-        labelPadding=6,
-    )
-    chart = chart.configure_legend(
-        labelColor="#3A3F47",
-        titleColor="#3A3F47",
-        labelFont="Geist, system-ui, sans-serif",
-        titleFont="Geist, system-ui, sans-serif",
+        domain=False,
+        ticks=False,
+        labelColor="#6E6E73",
+        titleColor="#6E6E73",
+        labelFont="Inter, -apple-system, system-ui, sans-serif",
+        titleFont="Inter, -apple-system, system-ui, sans-serif",
         labelFontSize=12,
-        titleFontSize=11,
+        titleFontSize=12,
+        titleFontWeight=500,
+        labelPadding=8,
+    )
+    chart = chart.configure_axisX(grid=False)
+    chart = chart.configure_legend(
+        labelColor="#6E6E73",
+        titleColor="#6E6E73",
+        labelFont="Inter, -apple-system, system-ui, sans-serif",
+        titleFont="Inter, -apple-system, system-ui, sans-serif",
+        labelFontSize=12,
+        titleFontSize=12,
         orient="bottom",
         symbolType="circle",
         columns=0,
