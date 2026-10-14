@@ -30634,6 +30634,12 @@ function budgetFor(endpoint, env = process.env) {
     };
   return { tpm: Number.POSITIVE_INFINITY, rpm: Number.POSITIVE_INFINITY };
 }
+function executionConcurrency(planConcurrency, endpoints = modelEndpoints("draft")) {
+  const budgeted = endpoints.some(
+    (e) => e.remote && Number.isFinite(budgetFor(e).tpm)
+  );
+  return budgeted ? 1 : planConcurrency;
+}
 var ModelLimiter = class {
   constructor(now = Date.now) {
     this.now = now;
@@ -33481,6 +33487,7 @@ async function publishDraft(actor, job, plan) {
 async function executePlan(actor, planId, options = {}) {
   requireRole(actor, "faculty");
   const start = performance.now();
+  const batchSize = options.concurrency === void 0 && executionConcurrency(4) === 1 ? 1 : 4;
   const initial = await withCoreTransaction(async (client) => {
     const plan = await getPlan(client, actor, planId);
     if (plan.paused)
@@ -33520,7 +33527,7 @@ async function executePlan(actor, planId, options = {}) {
         { code: "LEASE_EXPIRED", reasons: [] }
       );
     const jobs = await client.query(
-      "SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4",
+      `SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT ${batchSize}`,
       [plan.id, plan.generation_id]
     );
     const attestation = await client.query(
@@ -33549,7 +33556,7 @@ async function executePlan(actor, planId, options = {}) {
   });
   const results = await parallelMap(
     initial.jobs,
-    options.concurrency ?? initial.plan.body.budget.concurrency,
+    options.concurrency ?? executionConcurrency(initial.plan.body.budget.concurrency),
     async ({ id }) => {
       const job = await withCoreTransaction(async (client) => {
         const plan = await getPlan(client, actor, planId, true);

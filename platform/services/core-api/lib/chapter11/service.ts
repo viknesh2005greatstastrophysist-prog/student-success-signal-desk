@@ -40,7 +40,7 @@ import {
   type Reference,
   type PolicyGuard,
 } from "./engine";
-import { configuredComposer, modelEndpoints, type ChainOptions, type Endpoint } from "./provider";
+import { configuredComposer, executionConcurrency, modelEndpoints, type ChainOptions, type Endpoint } from "./provider";
 import {
   primedComposer,
   runInvestigation,
@@ -1142,6 +1142,8 @@ export async function executePlan(
 ) {
   requireRole(actor, "faculty");
   const start = performance.now();
+  // a budgeted remote model runs one review per request: its tokens-per-minute window cannot serve more (E2E log #33)
+  const batchSize = options.concurrency === undefined && executionConcurrency(4) === 1 ? 1 : 4;
   const initial = await withCoreTransaction(async (client) => {
     const plan = await getPlan(client, actor, planId);
     if (plan.paused)
@@ -1190,7 +1192,7 @@ export async function executePlan(
         { code: "LEASE_EXPIRED", reasons: [] },
       );
     const jobs = await client.query<{ id: string }>(
-      "SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4",
+      `SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT ${batchSize}`,
       [plan.id, plan.generation_id],
     );
     const attestation = await client.query(
@@ -1220,7 +1222,7 @@ export async function executePlan(
   });
   const results = await parallelMap(
     initial.jobs,
-    options.concurrency ?? initial.plan.body.budget.concurrency,
+    options.concurrency ?? executionConcurrency(initial.plan.body.budget.concurrency),
     async ({ id }): Promise<ExecutionResult> => {
       const job = await withCoreTransaction(async (client) => {
         const plan = await getPlan(client, actor, planId, true);

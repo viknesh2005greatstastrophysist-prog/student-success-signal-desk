@@ -251,6 +251,22 @@ export function budgetFor(endpoint: Endpoint, env = process.env): Budget {
     };
   return { tpm: Number.POSITIVE_INFINITY, rpm: Number.POSITIVE_INFINITY };
 }
+/** How many reviews of one plan run at the same time. A remote model has a shared
+ * tokens-per-minute budget and the limiter refuses (it does not queue) a call that
+ * would wait longer than `maxWaitMs`: four reviews started together spend the window
+ * on their investigators, every draft is then refused, and each retry repeats it
+ * (E2E log #33). With a budgeted remote model the reviews run one at a time instead,
+ * and the next retry picks up whichever did not fit. Local models keep the plan's
+ * own budget. */
+export function executionConcurrency(
+  planConcurrency: number,
+  endpoints: Endpoint[] = modelEndpoints("draft"),
+): number {
+  const budgeted = endpoints.some(
+    (e) => e.remote && Number.isFinite(budgetFor(e).tpm),
+  );
+  return budgeted ? 1 : planConcurrency;
+}
 export class ModelLimiter {
   private window = new Map<string, Array<{ at: number; tokens: number }>>();
   private daily = new Map<
