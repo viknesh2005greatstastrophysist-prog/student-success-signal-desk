@@ -140,6 +140,8 @@ AGENT_NODES = {
     "RiskAnalysisAgent": ("Risk analysis", "agent"),
     "HistoryRetriever": ("History retrieval", "agent"),
     "RecommendationAgent": ("Recommendation", "agent"),
+    "InvestigatorAgent": ("Investigator", "agent"),
+    "PlannerAgent": ("Planner", "coordinator"),
     "AcademicSpecialist": ("Academic specialist", "agent"),
     "AttendanceSpecialist": ("Attendance specialist", "agent"),
     "WellbeingReferralSpecialist": ("Wellbeing-referral specialist", "agent"),

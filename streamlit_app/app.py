@@ -1659,6 +1659,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             with st.expander("Planned steps", icon=":material/format_list_numbered:"):
                 for number, step in enumerate(steps, 1):
                     st.markdown(f"{number}. {ui._md_safe(step)}")
+        render_planner_trace(body)
         ui.tech_details(
             [
                 ("Plan reference", selected_plan.get("id")),
@@ -1731,7 +1732,8 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     "Revision feedback",
                     value=body.get("feedback", ""),
                     max_chars=1000,
-                    help="Use the fields above to adjust the review. Notes help focus the planned steps and reference retrieval.",
+                    help="Use the fields above to adjust the review. With AI model review, the planner also reads plain-English feedback "
+                    "(for example: leave out final-years, focus on attendance). Notes help focus the planned steps and reference retrieval.",
                 )
                 revise = st.form_submit_button("Save revised plan", type="primary")
             if revise:
@@ -2219,6 +2221,57 @@ def check_line(name: str, result: Any) -> str:
     return f":gray[:material/remove_circle_outline:] {label} · not recorded for this version"
 
 
+def render_planner_trace(body: dict[str, Any]) -> None:
+    """How the planner agent read the request: tool calls, turns, provider, fallback."""
+    agent = body.get("agent")
+    if not isinstance(agent, dict):
+        return
+    with st.expander("How the planner read this request", icon=":material/psychology:"):
+        rows = agent_rows(agent, "Planner", "Rule-based parser (tools not used)")
+        source = agent.get("questionSource")
+        if source:
+            rows.append(
+                {
+                    "Step": "Questions came from",
+                    "Detail": {
+                        "model": "the planner model, about this request",
+                        "model+rules": "the planner model, topped up by the standard rule questions",
+                        "rules": "the standard rule questions (the model path was not used)",
+                    }.get(str(source), labels.humanize(source)),
+                }
+            )
+        criteria = body.get("filter")
+        names = {
+            "allMine": "all my mentees",
+            "semesterMin": "from semester",
+            "semesterMax": "up to semester",
+            "attendanceBelowPct": "attendance below (%)",
+            "markBelowPct": "marks below (%)",
+        }
+        if isinstance(criteria, dict) and criteria:
+            rows.append(
+                {
+                    "Step": "Student criteria",
+                    "Detail": ", ".join(
+                        names.get(str(k), labels.humanize(k))
+                        + ("" if v is True else f" {v}")
+                        for k, v in criteria.items()
+                    ),
+                }
+            )
+        dataframe(rows)
+        render_tool_calls(agent)
+        understood = body.get("agentSteps") or []
+        if understood:
+            st.markdown("**What the planner understood**")
+            for number, step in enumerate(understood, 1):
+                st.markdown(f"{number}. {ui._md_safe(step)}")
+        st.caption(
+            "The planner only drafts. It resolves students from your own scope on the server, "
+            "and you decide when the plan is locked and run."
+        )
+
+
 def provenance_rows(validation: dict[str, Any], mode: Any, model_id: Any) -> list[dict[str, str]]:
     """Plain-text rows describing how a draft was produced (mentor/governance only)."""
     prov = validation.get("provenance") if isinstance(validation, dict) else None
@@ -2247,12 +2300,106 @@ def provenance_rows(validation: dict[str, Any], mode: Any, model_id: Any) -> lis
         rows.append({"Step": "Egress audit hash", "Detail": f"{str(item.get('payloadHash', ''))[:16]}… · {item.get('bytes', '?')} bytes · {len(item.get('fields') or [])} fields"})
     for item in blocked:
         rows.append({"Step": "Privacy guard", "Detail": f"Refused: {labels.humanize(item.get('category'))}"})
+    rows.extend(agent_rows(prov.get("agent")))
     return rows
+
+
+def _tool_arguments(raw: Any) -> str:
+    """Aliased tool arguments as short key=value text (plain text, no markup)."""
+    if not isinstance(raw, dict):
+        return "—"
+    parts = []
+    for key, value in list(raw.items())[:6]:
+        if isinstance(value, (str, int, float, bool)):
+            parts.append(f"{str(key)[:24]}={str(value)[:40]}")
+    return ", ".join(parts) or "—"
+
+
+def agent_rows(
+    agent: Any,
+    label: str = "Investigator",
+    fallback_text: str = "Standard evidence set (tools not used)",
+) -> list[dict[str, str]]:
+    """Summary rows for an agent loop: turns, tool calls, provider and any fallback."""
+    if not isinstance(agent, dict):
+        return []
+    calls = [c for c in agent.get("toolCalls") or [] if isinstance(c, dict)]
+    ok = sum(1 for c in calls if c.get("status") == "ok")
+    stopped = len(calls) - ok
+    used_tools = agent.get("mode") == "tools"
+    budget = agent.get("budget") or {}
+    rows = [
+        {
+            "Step": label,
+            "Detail": (
+                f"{'Used tools' if used_tools else fallback_text} · "
+                f"{agent.get('turns', 0)} of {budget.get('maxTurns', 2)} tool turns · "
+                f"{ok} of {budget.get('maxToolCalls', 4)} tool calls ran"
+                + (f", {stopped} refused" if stopped else "")
+            ),
+        }
+    ]
+    if agent.get("provider"):
+        rows.append(
+            {
+                "Step": "Agent provider",
+                "Detail": f"{labels.provider_label(agent.get('provider'))} · {agent.get('model') or 'model not recorded'}",
+            }
+        )
+    if agent.get("evidenceValues"):
+        rows.append(
+            {
+                "Step": "Evidence added",
+                "Detail": f"{agent['evidenceValues']} tool values appended to the evidence snapshot",
+            }
+        )
+    reason = agent.get("fallbackReason") or agent.get("skippedReason")
+    if reason:
+        rows.append({"Step": "Agent fallback", "Detail": str(reason)})
+    return rows
+
+
+def tool_call_rows(agent: Any) -> list[dict[str, Any]]:
+    if not isinstance(agent, dict):
+        return []
+    return [
+        {
+            "#": call.get("seq"),
+            "Turn": call.get("turn"),
+            "Tool": str(call.get("tool", "")),
+            "Arguments": _tool_arguments(call.get("args")),
+            "Outcome": "Ran"
+            if call.get("status") == "ok"
+            else f"Refused · {labels.humanize(call.get('code'))}"
+            if call.get("status") == "refused"
+            else f"Failed · {labels.humanize(call.get('code'))}",
+            "Result size (bytes)": call.get("resultBytes"),
+            "Result hash": str(call.get("resultHash") or "")[:12] or "—",
+        }
+        for call in agent.get("toolCalls") or []
+        if isinstance(call, dict)
+    ]
+
+
+def render_tool_calls(agent: Any) -> None:
+    """Tool calls the agent made (name, aliased arguments, result size), refused ones included."""
+    if not isinstance(agent, dict):
+        return
+    rows = tool_call_rows(agent)
+    if rows:
+        dataframe(rows)
+        st.caption(
+            "Arguments are aliases and numbers only. Results are stored as a hash and a size; "
+            "the numbers they returned sit in the evidence snapshot under their own paths."
+        )
+    elif agent.get("mode") == "tools":
+        st.caption(":material/search_off: The agent asked for no look-ups beyond the standard evidence.")
 
 
 def render_draft_provenance(selected: dict[str, Any], validation: dict[str, Any]) -> None:
     with st.expander("How this draft was produced", icon=":material/route:"):
         dataframe(provenance_rows(validation, selected.get("mode"), selected.get("model_id")))
+        render_tool_calls(((validation or {}).get("provenance") or {}).get("agent"))
         st.caption(
             "Remote models receive anonymised numbers only (case alias, values, thresholds, course aliases); "
             "aliases are restored on the server after validation."
@@ -3540,6 +3687,11 @@ def render_agent_graph(review: dict[str, Any]) -> None:
                     selected_job.get("mode"),
                     None,
                 )
+            )
+            render_tool_calls(
+                (validation.get("provenance") or {}).get("agent")
+                if isinstance(validation, dict)
+                else None
             )
     if trace:
         with st.expander("Node timings", icon=":material/timer:"):

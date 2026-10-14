@@ -429,6 +429,11 @@ def pipeline_stepper(trace: dict[str, Any] | None) -> None:
         _node("EvidenceValidator", trace.get("EvidenceValidator")),
         _node("RiskAnalysisAgent", trace.get("RiskAnalysisAgent")),
         _node("HistoryRetriever", trace.get("HistoryRetriever")),
+        *(
+            [_node("InvestigatorAgent", trace.get("InvestigatorAgent"))]
+            if trace.get("InvestigatorAgent")
+            else []
+        ),
         _node(
             "RecommendationAgent",
             trace.get("RecommendationAgent"),

@@ -539,7 +539,7 @@ export const DRAFT_RULES = [
   "You write a short, specific draft for the assigned mentor of one student, identified only by a case alias.",
   "Return JSON with `rationale` (2 to 5 sentences) and `actions` (1 to 4, codes from `catalogue` only).",
   "Each rationale sentence names a concrete driver with its value and threshold, for example \"Attendance in course-2 is 58% against the 75% minimum.\", and lists the evidence refs it relies on (ev-N) in `citations`.",
-  "Every number you write must be a cited value or threshold; rounding to whole numbers is fine. Cite every signal at least once.",
+  "Every number you write must be a cited value or threshold; rounding to whole numbers is fine. Cite every signal at least once. List at most six evidence refs per sentence or action: pick the most relevant ones.",
   "For each action write a personalisation of one or two sentences tied to the cited evidence, one to three talking points phrased as open questions for the mentor, dueInDays from 1 to 14, and citations.",
   "Refer to courses only by their course-N alias. Do not mention names, dates or identifiers.",
   "Never diagnose, label, speculate about causes, predict failure, promise outcomes, contact anyone or change records.",

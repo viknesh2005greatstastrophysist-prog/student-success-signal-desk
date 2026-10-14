@@ -128,6 +128,9 @@ test("tools return only counts and aliases; the model never sees an id, name or 
 test("an out-of-scope student or policy cannot enter a plan, whatever the model returns", async () => {
   const s = scope();
   const stranger = s.students.find((x) => x.mentorId === OTHER_MENTOR)!;
+  const mine = new Set(s.students.filter((x) => x.mentorId === MENTOR).map((x) => x.id));
+  const aliases = buildPlannerAliases(s);
+  const leaveOut = Object.entries(aliases.students).find(([, id]) => mine.has(id))![0];
   const { outcome, requests } = await plan(
     "review all my mentees",
     scriptedPlanner(({ policyAlias }) => ({
@@ -135,17 +138,16 @@ test("an out-of-scope student or policy cannot enter a plan, whatever the model 
       policy: policyAlias,
       allMine: true,
       // an unknown alias, a real foreign uuid and a malformed alias
-      filter: { exclude: ["stu-999", stranger.id, "stu-1"] },
+      filter: { exclude: ["stu-999", stranger.id, leaveOut] },
       questions: [`Is ${stranger.id} included in the meeting?`, "Which semester range should the review cover?"],
     })),
-    { scope: s },
+    { scope: s, aliases },
   );
   const r = outcome.resolution!;
-  const mine = new Set(s.students.filter((x) => x.mentorId === MENTOR).map((x) => x.id));
   assert.ok(r.studentIds!.length > 0);
   assert.ok(r.studentIds!.every((id) => mine.has(id)), "only the policy owner's own students");
   assert.ok(!r.studentIds!.includes(stranger.id));
-  assert.equal(r.studentIds!.length, mine.size - 1, "stu-1 was left out; unknown aliases were ignored");
+  assert.equal(r.studentIds!.length, mine.size - 1, "the excluded alias was left out; unknown ones were ignored");
   assert.ok(r.ignored.includes("exclude"));
   // a question carrying an internal id is dropped, the clean one kept
   assert.deepEqual(r.questions, ["Which semester range should the review cover?"]);

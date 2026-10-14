@@ -1,4 +1,4 @@
-# Work status — 14 October 2026, 11:45 IST
+# Work status — 14 October 2026, 13:00 IST
 
 Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes.
 
@@ -7,7 +7,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 | Item | State |
 |---|---|
 | Branch | `streamlit-college-project` |
-| HEAD | Packet-v2 replay fix and table-count test fix on top of Phase 0.8 (`333d0a2`) and `631a651` (Brief 11 + status) — pushed to `origin/streamlit-college-project` once all checks below passed. |
+| HEAD | Brief 12 (investigator + planner on one agent loop): `1aceac0` (loop + investigator), `9892467` (planner), plus the Streamlit/bundle/docs commit on top of `babab7f` — pushed to `origin/streamlit-college-project` once all checks below passed. |
 | Hosted Streamlit (aura-college-workspace.streamlit.app) | Deployed from `5f7db7e` (Briefs 1–9). Does not yet have Brief 17. Private app; owner sign-in required. |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
@@ -16,7 +16,14 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 `gh auth switch --user viknesh2005greatstastrophysist-prog && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project && gh auth switch --user vikneshwaranmarimuthu-cmyk`.
 Streamlit Cloud redeploys from the branch on every push. Codex's subscription ended 14 Oct; Claude implements under a strict usage cap (one agent at a time).
 
-## Verification at HEAD (run 14 Oct 11:45 IST, replay and table-count fixes)
+## Verification at HEAD (run 14 Oct 13:00 IST, Brief 12)
+
+- Core `tsc --noEmit` and eslint clean; Core tests 124: 116 pass, 0 fail, 8 skipped (opt-in DB suites). New: `chapter11-agent-loop.test.ts` (budget, canonical call ids, no tool support, planted name blocked, allowlist), `chapter11-investigator.test.ts` (tools, scope, citations, fallback, skip), `chapter11-planner.test.ts` (three vague requests, scope, feedback, fallbacks, no lock/execute), gated `chapter11-agents-database.test.ts`.
+- Opt-in DB suites on the LOCAL Postgres (127.0.0.1:55432) in disposable schemas `aura_core_test_ch11_agent`, `_reg` and `_e2e`, all dropped afterwards (nothing run against hosted Neon): `chapter11-agents-database.test.ts` and `chapter11-database.test.ts` pass. Fifteen older `aura_core_test_*` schemas from earlier sessions are still in that database; they are not from this work.
+- `npm run check:engine` passes after `node scripts/build-streamlit-engine.mjs`. `verify_ui.py` (6 logins, 21 pages), `verify_chapter11_planning.py`, `verify_draft_v2.py` and the new offline `verify_agent_trace.py` pass.
+- Real Groq completion calls spent for Brief 12: 6 (fictional case: 3 planner, 3 investigator). Gemini: 0. See the ledger row for what the live check found. Student 021 (checked read-only after the verify runs): the latest case is still awaiting_faculty with no decision and no support plan; the one historical rejection is unchanged.
+
+## Verification before Brief 12 (run 14 Oct 11:45 IST, replay and table-count fixes)
 
 - Core `tsc --noEmit` clean; Core tests 104: 97 pass, 0 fail, 7 skipped (opt-in DB suites). New: two `chapter11-packet-v2.test.ts` unit tests for `verifyReplay` (v2 and v1 packets match; tampered packet, tampered snapshot and re-recorded hashes all report a mismatch).
 - Root cause of the failing replay: `replayAgentRun` revalidated stored Chapter 11 packets with the v1-only `validatePacket`, which rejects every packet-v2 draft (Brief 11). The check is now `verifyReplay`, which dispatches by packet version through `validateAnyPacket` and still compares the input and output hashes and re-derives the risk analysis.
@@ -49,10 +56,11 @@ Streamlit Cloud redeploys from the branch on every push. Codex's subscription en
 |---|---|---|
 | 1–9 (lab-manual gaps) | `docs/CHAPTER11_GAP_BRIEFS.md` | Done by Codex, commits `be3d47d`..`5f7db7e`; ledger in `docs/CHAPTER11_GAP_IMPLEMENTATION.md` |
 | 10 (real case + real mentor sign-off) | same | **Owner action.** Not started. Never simulate. |
-| 11 (grounded drafting + egress + specialists) | `docs/CHAPTER11_AGENTIC_BRIEFS.md`, audit Phase 1 | **Done locally by Claude (14 Oct).** Ledger row in `docs/CHAPTER11_GAP_IMPLEMENTATION.md`. Next: 12 (tool-using investigator + planner), 16-lite; 14 deferred. |
+| 11 (grounded drafting + egress + specialists) | `docs/CHAPTER11_AGENTIC_BRIEFS.md`, audit Phase 1 | **Done locally by Claude (14 Oct).** Ledger row in `docs/CHAPTER11_GAP_IMPLEMENTATION.md`. |
+| 12 + 13 (tool-using investigator + planner, one agent loop) | same, audit Phase 1 | **Done locally by Claude (14 Oct), pushed after verification.** Ledger row 12. Next: 16-lite; 14 deferred. Re-run one live Groq check after the prompt fixes (see the ledger row) before relying on the investigator in a demo. |
 | 17 (visual redesign) | `docs/STREAMLIT_DESIGN_BRIEF.md` | Done by Claude in `6b34843`. Codex's "before" captures are in `runtime/streamlit-project/design/before/`; "after" captures in `.../design/after/` (git-ignored). |
 
-The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Remaining order: Brief 12 → Brief 16-lite → Sonnet hygiene batch (0.3, 0.4, 0.6) → 0.5 / 0.2 only if budget remains. Brief 14 deferred.
+The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Remaining order: Brief 16-lite → Sonnet hygiene batch (0.3, 0.4, 0.6) → 0.5 / 0.2 only if budget remains. Brief 14 deferred.
 
 ## Standing decisions (owner)
 
