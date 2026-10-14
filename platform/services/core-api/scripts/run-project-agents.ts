@@ -13,6 +13,7 @@ const folder=new URL("../../../../runtime/project-final/",import.meta.url),cohor
 // Brief 11: every case going to mentor review gets its own grounded draft;
 // cross-student profile reuse is retired (see lib/chapter11/project-composer.ts).
 const provider=configuredComposer();
+if(!provider)throw new Error("No AI model is configured. Every review runs on AI: set GROQ_API_KEY or CH11_MODEL and CH11_MODEL_BASE_URL first.");
 const report:{plans:Array<{id:string;students:number;statuses:Record<string,number>}>;model:unknown;studentCount:number;cycle:string;realMentorApprovalClaimed:boolean}={plans:[],model:{configured:!!provider},studentCount:cohort.students.length,cycle:process.argv.includes("--final-cycle")?"final":"initial",realMentorApprovalClaimed:false};
 try{
   for(const mentor of cohort.staff.filter(s=>s.role==="faculty")){
@@ -27,11 +28,11 @@ try{
     for(let start=0;start<students.length;start+=50){
       const selected=students.slice(start,start+50).map(s=>s.id),request=process.argv.includes("--final-cycle")?`Academic support review · ${mentor.name} · Group ${Math.floor(start/50)+1}`:`Project cohort review ${mentor.email}:${start}`;
       const previous=await withCoreTransaction(async c=>(await c.query<{id:string;revision:number;status:string}>("SELECT id,revision,status FROM ch11_plans WHERE generation_id=$1 AND created_by=$2 AND body->>'request'=$3",[cohort.generation,actor.personId,request])).rows[0]);
-      const plan=previous??await savePlan(actor,{request,studentIds:selected,domain:"academic",policyId:policy.id,feedback:"Use scoped evidence, preserve supplied-report unknowns and require mentor review.",mode:provider?"model":"deterministic"});
+      const plan=previous??await savePlan(actor,{request,studentIds:selected,domain:"academic",policyId:policy.id,feedback:"Use scoped evidence, preserve supplied-report unknowns and require mentor review."});
       if(plan.status!=="locked")await lockPlan(actor,plan.id,plan.revision);
       let statuses:Record<string,number>={};
       for(let round=0;round<20;round++){
-        await executePlan(actor,plan.id,{concurrency:4,...(provider?{composer:provider}:{})});
+        await executePlan(actor,plan.id,{concurrency:4,composer:provider});
         const output=await exportPlan(actor,plan.id);statuses={};
         for(const job of output.jobs){const status=String(job.status);statuses[status]=(statuses[status]??0)+1;}
         if(statuses.failed || statuses.blocked)throw new Error("Project cohort contains unresolved failed/blocked jobs; inspect stored failure reasons");
@@ -41,6 +42,6 @@ try{
       report.plans.push({id:plan.id,students:selected.length,statuses});console.log(JSON.stringify({planCompleted:report.plans.length,students:selected.length,statuses}));
     }
   }
-  report.model=provider?{modelId:provider.modelId,method:"per-case grounded packet-v2 drafts (no cross-student profile reuse)"}:{configured:false,method:"deterministic baseline"};
+  report.model={modelId:provider.modelId,method:"per-case grounded packet-v2 drafts (no cross-student profile reuse)"};
   await writeFile(new URL("agent-execution.json",folder),JSON.stringify(report,null,2)+"\n",{mode:0o600});console.log(JSON.stringify({completedStudents:cohort.students.length,model:report.model,realMentorApprovalClaimed:false}));
 }finally{await closePool();}

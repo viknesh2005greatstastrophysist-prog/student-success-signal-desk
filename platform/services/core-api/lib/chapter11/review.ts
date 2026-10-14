@@ -65,13 +65,14 @@ export async function editDraft(
       };
       domain: (typeof domainNames)[number];
       run_id: string;
+      run_mode: string;
       artifact_id: string;
       artifact_version: number;
       student_id: string;
       department_id: string;
       policy_guard: PolicyGuard;
     }>(
-      `SELECT c.revision,c.status,e.evidence,p.body->>'domain' AS domain,r.id AS run_id,a.id AS artifact_id,a.artifact_version,c.student_id,p.department_id,jsonb_build_object('version',COALESCE(pa.policy_version,''),'facultyApproved',COALESCE(pa.approved_role='faculty',false)) AS policy_guard
+      `SELECT c.revision,c.status,e.evidence,p.body->>'domain' AS domain,r.id AS run_id,r.mode AS run_mode,a.id AS artifact_id,a.artifact_version,c.student_id,p.department_id,jsonb_build_object('version',COALESCE(pa.policy_version,''),'facultyApproved',COALESCE(pa.approved_role='faculty',false)) AS policy_guard
        FROM support_cases c JOIN evidence_snapshots e ON e.support_case_id=c.id JOIN agent_runs r ON r.evidence_snapshot_id=e.id
        JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN ch11_jobs j ON j.support_case_id=c.id JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN ch11_policy_attestations pa ON pa.policy_id=(p.body->>'policyId')::uuid AND pa.generation_id=c.generation_id
        WHERE c.id=$1 AND c.generation_id=$2 AND (($4='hod' AND p.department_id=$5) OR ($4='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=c.student_id AND m.faculty_person_id=$3))) ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`,
@@ -80,6 +81,11 @@ export async function editDraft(
     if (!result.rowCount)
       throw new NotFoundError("Assigned Chapter 11 draft not found");
     const current = result.rows[0]!;
+    if (current.run_mode !== "model")
+      throw new ConflictError(
+        "LEGACY_DRAFT_READ_ONLY",
+        "This draft was written by the retired rule-based path. It stays viewable, but only AI-written drafts can be edited or decided.",
+      );
     if (
       current.status !== "awaiting_faculty" ||
       current.revision !== input.expectedRevision ||
@@ -277,7 +283,7 @@ export async function reviewQueue(actor: ActorContext) {
       [generation, actor.personId, actor.role, actor.departmentId],
     );
     const drafts = await client.query(
-      `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,a.validation,r.mode,r.model_id,person.display_name,
+      `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
       jsonb_build_object('academic',es.evidence->'academic'->'values','lms',es.evidence->'lms'->'values','internship',es.evidence->'internship'->'values','placement',es.evidence->'placement'->'values') AS evidence_values,
       es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy
       FROM ch11_jobs j JOIN support_cases c ON c.id=j.support_case_id JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
@@ -294,10 +300,35 @@ export async function reviewQueue(actor: ActorContext) {
       `SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`,
       [generation, plans.rows.map((row) => row.id)],
     );
+    // Drafts written by the retired rule-based path leave the active queue but
+    // stay on record, read-only, so nothing disappears (and none is decided).
+    const active = drafts.rows.filter((row) => row.mode === "model");
+    const legacy = drafts.rows.filter((row) => row.mode !== "model");
+    // Individual risk scores, signals and evidence values are visible only to the
+    // student's assigned mentor (E2E log #8). The department head sees who is
+    // waiting on a mentor and the draft's state, never its evidence.
+    const shape = <T extends Record<string, unknown>>(rows: T[]): T[] =>
+      actor.role === "faculty"
+        ? rows
+        : rows.map(
+            (row) =>
+              ({
+                id: row.id,
+                student_id: row.student_id,
+                display_name: row.display_name,
+                register_number: row.register_number,
+                revision: row.revision,
+                status: row.status,
+                mode: row.mode,
+                model_id: row.model_id,
+                drafted_at: row.drafted_at,
+              }) as unknown as T,
+          );
     return {
       versions: versions.rows,
       plans: plans.rows,
-      drafts: drafts.rows,
+      drafts: shape(active),
+      legacyDrafts: shape(legacy),
       interventionLog: log.rows,
     };
   });

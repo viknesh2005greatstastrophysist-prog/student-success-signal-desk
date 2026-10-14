@@ -14,7 +14,6 @@ import {
 } from "../security";
 import { hashJson } from "../support-commands";
 import {
-  applyPlanningFeedback,
   compose,
   DataBlocked,
   demoPolicy,
@@ -49,6 +48,7 @@ import {
   type ToolEvidence,
 } from "./investigator";
 import { createInvestigationBackend } from "./investigation-backend";
+import { AiUnavailableError, unavailableReasons } from "./unavailable";
 import type { AgentRunSummary, GenerationContext } from "./engine";
 import { courseValueKey, type EgressAudit, type GuardRoster } from "./egress";
 import { readApprovedCollegeSource } from "../college-normalized";
@@ -328,9 +328,13 @@ async function persistPlan(
   expectedRevision: number | undefined,
   commandId: string,
 ) {
-  requireRole(actor, "faculty", "hod", "governance");
+  // Plan commands belong to the assigned mentor. The department head and the
+  // AI-activity (governance) roles observe plans but never create or revise them.
+  requireRole(actor, "faculty");
   z.string().uuid().parse(commandId);
-  const input = applyPlanningFeedback(parsed);
+  // Every review runs on the AI model; the legacy value is only ever read.
+  const input: PlanInput = { ...parsed, mode: "model" };
+  delete input.scopeChoice;
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     let department = actor.departmentId;
@@ -459,7 +463,7 @@ export async function lockPlan(
   id: string,
   expectedRevision: number,
 ) {
-  requireRole(actor, "faculty", "hod", "governance");
+  requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
     const plan = await getPlan(client, actor, id, true);
     if (plan.status === "locked") return plan;
@@ -883,9 +887,21 @@ export async function recordPlannerAudit(
   actor: ActorContext,
   planId: string,
   summary: AgentRunSummary,
+  /** set when no model answered: the audited reason the mentor is asked to retry */
+  failure?: { code: string; reasons: string[] },
 ) {
   await withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
+    if (failure)
+      await audit(
+        client,
+        generation,
+        actor,
+        planId,
+        "planner.unavailable",
+        { role: summary.role },
+        failure,
+      );
     for (const row of toolAuditRows(summary))
       await audit(client, generation, actor, planId, row.event.replace("agent.", "planner."), row.input, row.output);
     for (const row of summary.egress)
@@ -1124,7 +1140,7 @@ export async function executePlan(
     investigation?: { endpoints?: Endpoint[]; chain?: ChainOptions };
   } = {},
 ) {
-  requireRole(actor, "faculty", "hod", "governance");
+  requireRole(actor, "faculty");
   const start = performance.now();
   const initial = await withCoreTransaction(async (client) => {
     const plan = await getPlan(client, actor, planId);
@@ -1273,10 +1289,8 @@ export async function executePlan(
             RecommendationAgent: async () => {
               await ensureReviewRunning(actor, planId);
               if (job.checkpoint.risk!.flagged && !job.checkpoint.composed) {
-                const provider =
-                  initial.plan.body.mode === "model"
-                    ? (options.composer ?? configuredComposer())
-                    : undefined;
+                // Every review runs on an AI model; none configured is "AI unavailable".
+                const provider = options.composer ?? configuredComposer();
                 const baseContext: GenerationContext = {
                   evidence: job.checkpoint.evidence!,
                   risk: job.checkpoint.risk!,
@@ -1334,13 +1348,12 @@ export async function executePlan(
                     composer = primedComposer(provider, outcome);
                 }
                 const composed = await compose(context, composer, runNode);
-                if (initial.plan.body.mode === "model" && !provider) {
-                  composed.validation.providerError = "MODEL_NOT_CONFIGURED";
-                  composed.validation.fallback = true;
-                  composed.validation.escalated = true;
-                  composed.validation.valid = false;
-                }
                 await recordEgress(actor, job, composed.validation.provenance);
+                if (composed.unavailable)
+                  throw new AiUnavailableError(
+                    "No AI model answered, so no draft was made. Retry the review when a model is available.",
+                    unavailableReasons(composed.validation.provenance),
+                  );
                 await saveCheckpoint(actor, job, "publish", {
                   ...job.checkpoint,
                   composed,
@@ -1440,14 +1453,17 @@ export async function executePlan(
                 ? "INJECTED_STOP"
                 : "EXECUTION_FAILED";
         heartbeat.stop();
-        const reasons = error instanceof DataBlocked ? error.reasons : [];
+        const reasons =
+          error instanceof DataBlocked || error instanceof AiUnavailableError
+            ? error.reasons
+            : [];
         // The status change commits on its own; the audit row is best-effort in a
         // second transaction so an audit fault cannot leave the job 'running'.
         await persistThenAudit(
           () =>
             withCoreTransaction(async (client) => {
               const stopped = await client.query(
-                "UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3<>'PLAN_PAUSED' THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,checkpoint=$6::jsonb,attempts=CASE WHEN $3='PLAN_PAUSED' THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running' RETURNING id",
+                "UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3 NOT IN ('PLAN_PAUSED','AI_UNAVAILABLE') THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,checkpoint=$6::jsonb,attempts=CASE WHEN $3 IN ('PLAN_PAUSED','AI_UNAVAILABLE') THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running' RETURNING id",
                 [
                   job.id,
                   code === "PLAN_PAUSED"
@@ -1572,6 +1588,15 @@ export async function finalizeGraphCheckpoint(
   });
 }
 
+/** Smallest group whose average score a non-mentor role may see. */
+const MIN_GROUP = 3;
+function scopeTrend<T extends Record<string, unknown>>(row: T): T {
+  const out: Record<string, unknown> = { ...row };
+  for (const band of ["low", "medium", "high"])
+    if (Number(out[`count_${band}`] ?? 0) < MIN_GROUP) out[`average_${band}`] = null;
+  return out as T;
+}
+
 export async function overview(actor: ActorContext) {
   requireRole(actor, "faculty", "governance", "hod");
   return withCoreTransaction(async (client) => {
@@ -1593,7 +1618,7 @@ export async function overview(actor: ActorContext) {
       [generation, department, mentor],
     );
     const jobs = await client.query(
-      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.checkpoint->'composed'->'packet' AS offered_template,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC",
+      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' WHEN j.status='failed' AND j.error_code='AI_UNAVAILABLE' THEN 'ai_unavailable' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.stage,j.error_code,j.support_case_id,j.updated_at,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC",
       [generation, department, mentor],
     );
     const trends = await client.query(
@@ -1608,7 +1633,10 @@ export async function overview(actor: ActorContext) {
       count(*) FILTER (WHERE i.status='withdrawn')::int AS withdrawn,
       avg((j.checkpoint->'risk'->>'score')::numeric) FILTER (WHERE j.checkpoint->'risk'->>'band'='low')::float AS average_low,
       avg((j.checkpoint->'risk'->>'score')::numeric) FILTER (WHERE j.checkpoint->'risk'->>'band'='medium')::float AS average_medium,
-      avg((j.checkpoint->'risk'->>'score')::numeric) FILTER (WHERE j.checkpoint->'risk'->>'band'='high')::float AS average_high
+      avg((j.checkpoint->'risk'->>'score')::numeric) FILTER (WHERE j.checkpoint->'risk'->>'band'='high')::float AS average_high,
+      count(*) FILTER (WHERE j.checkpoint->'risk'->>'band'='low')::int AS count_low,
+      count(*) FILTER (WHERE j.checkpoint->'risk'->>'band'='medium')::int AS count_medium,
+      count(*) FILTER (WHERE j.checkpoint->'risk'->>'band'='high')::int AS count_high
       FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id
       LEFT JOIN support_cases c ON c.id=j.support_case_id
       LEFT JOIN faculty_decisions d ON d.support_case_id=c.id
@@ -1627,15 +1655,21 @@ export async function overview(actor: ActorContext) {
     const metrics = evaluationMetrics(
       jobs.rows.map((row) => ({ ...row, ...facts.get(row.id) })),
     );
+    // Individual risk scores belong to the student's assigned mentor (E2E log #8).
+    // Other roles get the review mechanics and department aggregates only: no
+    // per-student score, band or signals, and no band average over a handful of students.
+    const assignedMentor = actor.role === "faculty";
     return {
       graph: reviewGraph,
       metrics,
-      trends: trends.rows,
-      riskView: compositeRiskView(students.rows, jobs.rows),
+      trends: assignedMentor
+        ? trends.rows
+        : trends.rows.map((row) => scopeTrend(row)),
+      riskView: assignedMentor ? compositeRiskView(students.rows, jobs.rows) : [],
       students: students.rows,
       policies: policies.rows,
       plans: plans.rows,
-      jobs: jobs.rows,
+      jobs: assignedMentor ? jobs.rows : jobs.rows.map((row) => ({ ...row, risk: null })),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
@@ -1654,12 +1688,26 @@ export async function exportPlan(actor: ActorContext, id: string) {
       "SELECT * FROM ch11_events WHERE generation_id=$1 AND (subject_id=$2 OR subject_id IN (SELECT id FROM ch11_jobs WHERE plan_id=$2)) ORDER BY created_at,id",
       [plan.generation_id, id],
     );
+    // Only the assigned mentor receives the evidence and risk figures. The
+    // department head and AI-activity roles get the process record: states,
+    // node trace, timings and event hashes, without scores or evidence values.
+    const assignedMentor = actor.role === "faculty";
     return {
       schemaVersion: 1,
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
       plan,
-      jobs: jobs.rows,
-      events: events.rows,
+      jobs: assignedMentor
+        ? jobs.rows
+        : jobs.rows.map((job: { checkpoint?: Checkpoint }) => ({
+            ...job,
+            checkpoint: {
+              nodeTrace: job.checkpoint?.nodeTrace,
+              sourceTimings: job.checkpoint?.sourceTimings,
+            },
+          })),
+      events: assignedMentor
+        ? events.rows
+        : events.rows.map((event: Record<string, unknown>) => ({ ...event, detail: { redacted: true } })),
       exportedAt: new Date().toISOString(),
     };
   });
@@ -1680,7 +1728,7 @@ export async function setReviewPaused(
   id: string,
   raw: unknown,
 ) {
-  requireRole(actor, "hod", "faculty", "governance");
+  requireRole(actor, "faculty");
   const input = z
     .object({
       paused: z.boolean(),

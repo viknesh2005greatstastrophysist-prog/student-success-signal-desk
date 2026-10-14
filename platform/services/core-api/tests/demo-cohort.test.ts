@@ -9,6 +9,7 @@ import { experienceCommand } from "../lib/experience-commands";
 import { experienceStudent } from "../lib/experience-queries";
 import { lmsCourseDetail } from "../lib/lms-queries";
 import { readSource } from "../lib/chapter11/service";
+import { groundedComposer } from "./agent-fixtures";
 
 test("Additive demo cohort: three scoped mentors, populated records, durable edits and repeat-safe population", {skip:process.env.RUN_COHORT_DB_TESTS!=="1",timeout:600000}, async()=>{
   assert.match(process.env.CORE_DATABASE_SCHEMA ?? "",/^aura_core_test_cohort/);
@@ -16,7 +17,8 @@ test("Additive demo cohort: three scoped mentors, populated records, durable edi
     await migrateCoreDatabase();
     const seed=await resetSyntheticSeed("AURA-SYNTHETIC-SEED-V1","cohort-integration");
     await withCoreTransaction(c=>c.query("UPDATE registration_windows SET status='open',opens_at=now()-interval '1 day',closes_at=now()+interval '1 day'"));
-    const result=await populateDemoCohort(message=>console.log(message));
+    const composer=groundedComposer(); // every review runs on AI: a stub model stands in for the provider
+    const result=await populateDemoCohort(message=>console.log(message),{composer});
     assert.equal(result.generation,seed.generationId);
     assert.equal(result.students.length,10);
     assert.deepEqual(result.mentors.map(m=>m.students),[4,3,3]);
@@ -43,7 +45,7 @@ test("Additive demo cohort: three scoped mentors, populated records, durable edi
     await experienceCommand(ctx.mentors[0]!.actor,randomUUID(),{action:"save-followup",id:edit.id,expectedRevision:edit.revision,studentId:edit.student_id,dueOn:"2026-09-20",note:"Keep this manually edited mentor note when population is repeated.",shared:true,status:"planned",outcome:"",reason:"Verify later mentor work is preserved"});
     const counts=()=>withCoreTransaction(async c=>(await c.query("SELECT (SELECT count(*) FROM domain_events)::int AS events,(SELECT count(*) FROM ch11_events)::int AS reviews,(SELECT count(*) FROM lms_activity)::int AS activity,(SELECT count(*) FROM people)::int AS people,(SELECT count(*) FROM simulation_resets)::int AS resets")).rows[0]);
     const before=await counts();
-    assert.deepEqual(await populateDemoCohort(),result);
+    assert.deepEqual(await populateDemoCohort(undefined,{composer}),result);
     assert.deepEqual(await counts(),before);
     const after=await withCoreTransaction(async c=>(await c.query("SELECT note,revision FROM support_followups WHERE id=$1",[edit.id])).rows[0]);
     assert.equal(after.revision,1);

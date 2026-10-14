@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
 import { withCoreTransaction } from "../db";
@@ -16,16 +16,18 @@ import {
   loadGuardRoster,
   loadPlan,
   recordPlannerAudit,
-  savePlan,
   savePlannedPlan,
 } from "./service";
 import {
+  buildPlannerAliases,
   runPlanner,
+  scopeConflictQuestion,
   type PlannerCurrent,
   type PlannerPins,
   type PlanningScope,
 } from "./planner";
 import { modelEndpoints, type ChainOptions, type Endpoint } from "./provider";
+import { AiUnavailableError, unavailableReasons } from "./unavailable";
 
 const TERM = "2026-ODD";
 
@@ -33,7 +35,7 @@ const TERM = "2026-ODD";
  * aggregate figures, and the actor's approved policies. Nothing here leaves the
  * server except as counts, aliases and threshold numbers. */
 export async function loadPlanningScope(actor: ActorContext) {
-  requireRole(actor, "faculty", "hod", "governance");
+  requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     const department = actor.role === "governance" ? null : (actor.departmentId ?? null);
@@ -94,7 +96,7 @@ export async function loadPlanningScope(actor: ActorContext) {
 
 const trace = (
   summary: AgentRunSummary,
-  questionSource?: "model" | "rules" | "model+rules",
+  questionSource?: "model" | "model+rules",
 ) => {
   const visible = Object.fromEntries(
     Object.entries(summary).filter(([key]) => key !== "egress"),
@@ -105,12 +107,34 @@ const trace = (
   } as NonNullable<PlanInput["agent"]>;
 };
 
+/** Notes accumulate across revisions, one per line, so earlier answers stay in
+ * view of the planner. A client that resends the whole history is not doubled. */
+export function mergeNotes(prior: string, next: string): string {
+  const a = prior.trim(),
+    b = next.trim();
+  if (!a) return b;
+  if (!b || a.includes(b)) return a;
+  if (b.startsWith(a)) return b;
+  const lines = `${a}\n${b}`.split("\n");
+  while (lines.join("\n").length > 1000 && lines.length > 1) lines.shift();
+  return lines.join("\n").slice(-1000);
+}
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const unique = (texts: string[]) => [...new Set(texts)];
+
 /**
  * Free-text request (or natural-language feedback on an existing plan) to a
  * saved plan draft. A new plan goes through the normal create path; feedback
  * revises the SAME plan through the normal revise path (revision + 1, stale
- * and locked checks intact). The regex parser remains the labelled fallback
- * whenever the model path is unavailable. The planner never locks or executes.
+ * and locked checks intact). Every plan is drafted by the AI planner: when no
+ * model answers, nothing is saved and the mentor is asked to retry (there is
+ * no rule-based parser to fall back to). The planner never locks or executes.
+ * Only a mentor (faculty) may create or revise a plan.
+ *
+ * Scope: the mentor's explicit "Students in scope" selection is authoritative
+ * (see planner.ts). A conflict with the request text is stored on the plan and
+ * changes nothing until the mentor answers it with `scopeChoice`.
  */
 export async function planWithAgent(
   actor: ActorContext,
@@ -123,13 +147,11 @@ export async function planWithAgent(
     chain?: ChainOptions;
   } = {},
 ) {
-  requireRole(actor, "faculty", "hod", "governance");
+  requireRole(actor, "faculty");
   const commandId = options.commandId ?? randomUUID();
   z.string().uuid().parse(commandId);
   const input = withoutAgentFields(planInputSchema.parse(raw));
   const { id, expectedRevision } = options;
-  if (input.mode !== "model" || process.env.CH11_PLANNER === "off")
-    return savePlan(actor, raw, id, expectedRevision, commandId);
 
   let previous: Awaited<ReturnType<typeof loadPlan>> | undefined;
   if (id) {
@@ -145,10 +167,30 @@ export async function planWithAgent(
     );
     if (existing.rowCount) return loadPlan(actor, commandId);
   }
+  const before = previous?.body;
+
+  if (input.scopeChoice) {
+    if (!before?.scopeConflict || before.scopeConflict.resolution)
+      throw new ConflictError("NO_SCOPE_CONFLICT", "There is no open scope question on this plan");
+    return answerScopeConflict(actor, before, input.scopeChoice, id, expectedRevision, commandId);
+  }
+
+  // Same request, selection, focus, policy and no new note: nothing to re-plan.
+  // The saved resolution stays exactly as it was (deterministic, no model call).
+  const newNote = !!before && input.feedback !== "" && input.feedback !== before.feedback;
+  if (
+    previous &&
+    before?.agent &&
+    !newNote &&
+    input.request === before.request &&
+    (!input.studentIds || same(input.studentIds, before.studentIds)) &&
+    (!input.domain || input.domain === before.domain) &&
+    (!input.policyId || input.policyId === before.policyId)
+  )
+    return previous;
 
   const endpoints = options.endpoints ?? modelEndpoints("draft");
   const { scope, roster } = await loadPlanningScope(actor);
-  const before = previous?.body;
   const current: PlannerCurrent | undefined = before
     ? {
         domain: before.domain,
@@ -157,52 +199,97 @@ export async function planWithAgent(
         filter: before.filter,
       }
     : undefined;
-  // Fields the mentor changed by hand are fixed; unchanged ones stay open to
-  // the planner, because a revise form always re-sends the current values.
-  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  // Fields the mentor changed by hand are fixed. A student selection is the
+  // mentor's own whenever it was typed in or kept from an earlier mentor choice;
+  // only a set the planner itself resolved stays open when the form re-sends it.
+  const explicitSelection =
+    !!input.studentIds &&
+    (!same(input.studentIds, before?.studentIds) || before?.scope?.basis !== "criteria");
   const pins: PlannerPins = {
     ...(input.domain && !same(input.domain, before?.domain) ? { domain: input.domain } : {}),
     ...(input.policyId && !same(input.policyId, before?.policyId) ? { policyId: input.policyId } : {}),
-    ...(input.studentIds && !same(input.studentIds, before?.studentIds) ? { studentIds: input.studentIds } : {}),
+    ...(explicitSelection ? { studentIds: input.studentIds } : {}),
   };
+  const feedback = mergeNotes(before?.feedback ?? "", input.feedback);
+  // A new note answers the questions that were open: the planner treats them as resolved.
+  const conflictText = before?.scopeConflict ? scopeConflictQuestion(before.scopeConflict) : "";
+  const answered = unique([
+    ...(before?.answeredQuestions ?? []),
+    ...(newNote ? (before?.agentQuestions ?? []) : []).filter((q) => q !== conflictText),
+  ]).slice(-10);
+  const conflictKept =
+    before?.scopeConflict?.resolution === "kept" &&
+    before.request === input.request &&
+    same(pins.studentIds ?? before.studentIds, before.studentIds);
+  // Aliases depend only on the request, notes and mentor, so the same request
+  // always shows the model the same aliases (no per-run random salt).
+  const salt = createHash("sha256")
+    .update(`${actor.personId}|${input.request}|${feedback}`)
+    .digest("hex")
+    .slice(0, 8);
   const outcome = await runPlanner({
     request: input.request,
-    feedback: input.feedback,
+    feedback,
     scope,
     pins,
     current,
     endpoints,
     roster,
     options: options.chain,
+    aliases: buildPlannerAliases(scope, salt),
+    answered,
+    conflictKept,
   });
   const resolution = outcome.resolution;
-  let planned: PlanInput;
-  if (resolution) {
-    const complete = !!(resolution.studentIds && resolution.domain && resolution.policyId);
-    const modelAsked = resolution.questions.length;
-    planned = {
-      ...input,
-      ...(resolution.domain ? { domain: resolution.domain } : {}),
-      ...(resolution.policyId ? { policyId: resolution.policyId } : {}),
-      ...(resolution.studentIds ? { studentIds: resolution.studentIds } : {}),
-      ...(resolution.filter ? { filter: resolution.filter } : {}),
-      agentQuestions: resolution.questions,
-      agentSteps: resolution.steps,
-      agent: trace(
-        outcome.summary,
-        modelAsked >= 2 || (modelAsked > 0 && complete)
-          ? "model"
-          : modelAsked
-            ? "model+rules"
-            : complete
-              ? "model"
-              : "rules",
-      ),
-    };
-  } else {
-    // Labelled fallback: the mentor's own fields and the regex parser.
-    planned = { ...input, agent: trace(outcome.summary, "rules") };
+  if (!resolution) {
+    const reasons = unavailableReasons(outcome.summary);
+    try {
+      await recordPlannerAudit(actor, id ?? commandId, outcome.summary, { code: "AI_UNAVAILABLE", reasons });
+    } catch {
+      /* the mentor still gets the retry message */
+    }
+    if (outcome.summary.fallbackReason?.startsWith("EGRESS_BLOCKED"))
+      throw new ConflictError(
+        "EGRESS_BLOCKED",
+        "The privacy guard stopped this request because it names a student or contact. Describe the students without names or register numbers and save again.",
+      );
+    throw new AiUnavailableError(
+      `No AI model answered, so the plan was not saved. Nothing was drafted by rules. Retry in a moment.${
+        reasons.length ? ` (${reasons.slice(0, 3).join("; ")})` : ""
+      }`,
+      reasons,
+    );
   }
+  const complete = !!(resolution.studentIds && resolution.domain && resolution.policyId);
+  const modelAsked = resolution.questions.length;
+  const planned: PlanInput = {
+    ...input,
+    feedback,
+    mode: "model",
+    ...(resolution.domain ? { domain: resolution.domain } : {}),
+    ...(resolution.policyId ? { policyId: resolution.policyId } : {}),
+    ...(resolution.studentIds ? { studentIds: resolution.studentIds } : {}),
+    ...(resolution.filter ? { filter: resolution.filter } : {}),
+    agentQuestions: resolution.questions,
+    agentSteps: resolution.steps,
+    ...(answered.length ? { answeredQuestions: answered } : {}),
+    ...(resolution.scope ? { scope: resolution.scope } : {}),
+    ...(resolution.conflict
+      ? { scopeConflict: resolution.conflict }
+      : conflictKept && before?.scopeConflict
+        ? { scopeConflict: before.scopeConflict }
+        : {}),
+    agent: trace(
+      outcome.summary,
+      modelAsked >= 2 || (modelAsked > 0 && complete)
+        ? "model"
+        : modelAsked
+          ? "model+rules"
+          : complete
+            ? "model"
+            : "model+rules",
+    ),
+  };
   const saved = await savePlannedPlan(actor, planned, id, expectedRevision, commandId);
   try {
     await recordPlannerAudit(actor, saved.id, outcome.summary);
@@ -210,4 +297,55 @@ export async function planWithAgent(
     /* the plan is saved; a failed audit write must not discard it */
   }
   return saved;
+}
+
+/**
+ * The mentor's answer to a scope conflict. No model runs: "keep" leaves the
+ * selection exactly as chosen; "switch" adopts the set the request described,
+ * re-checked against the mentor's own scope. Only this call changes the scope.
+ */
+async function answerScopeConflict(
+  actor: ActorContext,
+  before: NonNullable<Awaited<ReturnType<typeof loadPlan>>["body"]>,
+  choice: "keep" | "switch",
+  id: string | undefined,
+  expectedRevision: number | undefined,
+  commandId: string,
+) {
+  const conflict = before.scopeConflict!;
+  let studentIds = before.studentIds;
+  if (choice === "switch") {
+    if (!conflict.impliedStudentIds)
+      throw new ConflictError(
+        "SCOPE_TOO_LARGE",
+        "The request describes more students than one review covers. Narrow the request instead.",
+      );
+    const { scope } = await loadPlanningScope(actor);
+    const inScope = new Set(scope.students.map((s) => s.id));
+    if (!conflict.impliedStudentIds.every((student) => inScope.has(student)))
+      throw new ConflictError("SCOPE_CHANGED", "The students the request describes changed. Revise the request.");
+    studentIds = conflict.impliedStudentIds;
+  }
+  const question = scopeConflictQuestion(conflict);
+  const planned: PlanInput = {
+    request: before.request,
+    feedback: before.feedback,
+    mode: "model",
+    ...(studentIds ? { studentIds } : {}),
+    ...(before.domain ? { domain: before.domain } : {}),
+    ...(before.policyId ? { policyId: before.policyId } : {}),
+    ...(before.filter ? { filter: before.filter } : {}),
+    ...(before.agentSteps ? { agentSteps: before.agentSteps } : {}),
+    ...(before.agent ? { agent: before.agent } : {}),
+    agentQuestions: (before.agentQuestions ?? []).filter((q) => q !== question),
+    ...(before.answeredQuestions ? { answeredQuestions: before.answeredQuestions } : {}),
+    // a set the mentor confirmed is theirs from here on: later requests that
+    // describe something else raise a conflict instead of replacing it
+    scope:
+      choice === "switch"
+        ? { basis: "selected", selected: studentIds?.length ?? 1 }
+        : (before.scope ?? { basis: "selected", selected: studentIds?.length ?? 1 }),
+    scopeConflict: { ...conflict, resolution: choice === "switch" ? "switched" : "kept" },
+  };
+  return savePlannedPlan(actor, planned, id, expectedRevision, commandId);
 }

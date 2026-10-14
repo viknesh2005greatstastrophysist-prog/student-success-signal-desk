@@ -135,12 +135,19 @@ test(
             [plan.id],
           )
         )[0]!;
-      // The composer never reaches a provider; a throwing generate forces the
-      // validated-fallback / needs-human path deterministically.
+      // The composers never reach a provider. A throwing generate is the AI
+      // outage (the case waits for a retry); a draft that never validates forces
+      // the repair-budget escalation to the human gate deterministically.
       const failingComposer = {
         modelId: "lease-test-fixture",
         async generate(): Promise<never> {
           throw new Error("model unavailable");
+        },
+      };
+      const invalidComposer = {
+        modelId: "invalid-draft-fixture",
+        async generate(): Promise<unknown> {
+          return { not: "a draft" };
         },
       };
 
@@ -190,7 +197,7 @@ test(
       const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
       const racingComposer = {
         modelId: "pause-race-fixture",
-        async generate(): Promise<never> {
+        async generate(): Promise<unknown> {
           if (!holder) {
             holder = await getPool().connect();
             await holder.query("BEGIN");
@@ -217,7 +224,7 @@ test(
               await lockHolder.query("COMMIT");
             })();
           }
-          throw new Error("model unavailable");
+          return { not: "a draft" };
         },
       };
       const raced = await executePlan(faculty, plan.id, {
@@ -242,7 +249,7 @@ test(
         reason: "Resume after the pause race",
       });
       const resumed = await executePlan(faculty, plan.id, {
-        composer: failingComposer,
+        composer: invalidComposer,
       });
       assert.equal(resumed.results[0]!.escalated, true);
       const escalated = await job();
@@ -255,10 +262,33 @@ test(
       }>("SELECT support_case_id FROM ch11_jobs WHERE plan_id=$1", [plan.id]);
       assert.equal(openedCase, null);
       assert.equal(
-        (await executePlan(faculty, plan.id, { composer: failingComposer }))
+        (await executePlan(faculty, plan.id, { composer: invalidComposer }))
           .results.length,
         0,
       );
+
+      // C1: when every model fails the job waits as "AI unavailable" instead of
+      // escalating: no escalation, no spent attempt, retryable, with an audit row.
+      await sql(
+        "UPDATE ch11_jobs SET status='queued',stage='collect',attempts=0,error_code=NULL,escalated_at=NULL,failure_diagnosis='{}'::jsonb,lease_until=NULL,lease_token=NULL,checkpoint='{}'::jsonb WHERE plan_id=$1",
+        [plan.id],
+      );
+      for (const round of [1, 2, 3, 4]) {
+        const down = await executePlan(faculty, plan.id, {
+          composer: failingComposer,
+        });
+        assert.equal(down.results[0]!.error, "AI_UNAVAILABLE", `round ${round}`);
+        const waiting = await job();
+        assert.equal(waiting.status, "failed");
+        assert.equal(waiting.error_code, "AI_UNAVAILABLE");
+        assert.equal(waiting.escalated_at, null, "never terminal");
+        assert.equal(waiting.attempts, 0, "an outage does not spend the attempt budget");
+      }
+      const unavailableEvents = await sql<{ code: string }>(
+        "SELECT detail->'output'->>'code' AS code FROM ch11_events WHERE subject_id=$1 AND event_type='execution.stopped'",
+        [(await job()).id],
+      );
+      assert.equal(unavailableEvents.filter((e) => e.code === "AI_UNAVAILABLE").length, 4);
     } finally {
       if (holder) {
         await holder.query("ROLLBACK").catch(() => undefined);

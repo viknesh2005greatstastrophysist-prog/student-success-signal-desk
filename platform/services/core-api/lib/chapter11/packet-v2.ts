@@ -289,7 +289,8 @@ function templateAction(code: ActionCode, risk: Risk) {
   }
 }
 
-/** Labelled deterministic fallback in packet-v2 form. */
+/** Grounded baseline in packet-v2 form: the anchor the model drafts from and
+ * the validators compare against. It is never published as a draft. */
 export function templateV2(
   v1: Packet,
   risk: Risk,

@@ -211,7 +211,7 @@ test("provider chain: Groq first with its own models, Gemini next, arbitrary rem
     assert.throws(() => modelEndpoints(), /loopback/);
     process.env.CH11_MODEL_BASE_URL = "http://127.0.0.1:11434/v1";
     process.env.CH11_MODEL = "local-qwen";
-    assert.deepEqual(modelEndpoints().map((e) => e.kind), ["local", "groq"]);
+    assert.deepEqual(modelEndpoints().map((e) => e.kind), ["groq", "local"], "Groq first, the laptop model last");
     process.env.CH11_GROQ_BASE_URL = "https://evil.example/openai/v1";
     assert.throws(() => modelEndpoints(), /official/);
   });
@@ -256,10 +256,14 @@ test("mock Groq 429 honours retry-after and falls back to the next provider with
     const composed = await compose({ ...context }, composer);
     assert.equal(composed.validation.provenance.fallbacks[0]!.provider, "groq");
     assert.ok(composed.validation.provenance.egress.length >= 1);
-    // When every provider refuses, the deterministic template is labelled.
+    // When every provider refuses, no draft is made: the case waits as AI unavailable.
     gemini.replies.splice(0, gemini.replies.length, { status: 429, headers: { "retry-after": "30" } });
     const exhausted = await compose({ ...context }, chainComposer(endpoints, { limiter: new ModelLimiter(), maxWaitMs: 0 })!);
-    assert.equal(exhausted.mode, "deterministic");
+    assert.equal(exhausted.unavailable, true);
+    assert.equal(exhausted.mode, "unavailable");
+    assert.equal(exhausted.validation.valid, false);
+    assert.equal(exhausted.validation.escalated, false);
+    assert.equal(exhausted.modelId, null);
     assert.equal(exhausted.validation.providerError, "MODEL_HTTP_429");
     assert.match(String(exhausted.validation.provenance.fallbackReason), /provider failed: MODEL_HTTP_429/);
   } finally {

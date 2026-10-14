@@ -4,7 +4,7 @@ import { getPool, withCoreTransaction } from "./db";
 import { getCurrentGeneration, writeCommandLedger } from "./command-ledger";
 import { experienceCommand, recordChange } from "./experience-commands";
 import { lmsCommand } from "./lms-commands";
-import { demoPolicy } from "./chapter11/engine";
+import { demoPolicy, type Composer } from "./chapter11/engine";
 import { approvePolicy, savePlan, lockPlan, executePlan, seedChapterSources } from "./chapter11/service";
 import { requireDemoInstitution } from "./security";
 
@@ -57,7 +57,10 @@ export async function demoCohortContext() {
 }
 
 /** Additive, resumable population. Each completed step is recorded once; later user edits are preserved. */
-export async function populateDemoCohort(report: (message: string) => void = () => {}) {
+/** Every review runs on an AI model, so the reviews step needs one: pass a composer
+ * (tests use a stub) or configure a provider. Without either the run stops with the
+ * "AI unavailable" reason instead of inventing rule-based drafts. */
+export async function populateDemoCohort(report: (message: string) => void = () => {}, options: { composer?: Composer } = {}) {
   requireDemoInstitution();
   const context = await demoCohortContext();
   const { generation, hod, students, mentors, courses } = context;
@@ -152,10 +155,10 @@ export async function populateDemoCohort(report: (message: string) => void = () 
     if(missingCareer)await seedChapterSources(context.governance);
     for(const [index,mentor] of mentors.entries()) {
       const policy=await approvePolicy(mentor.actor,{policy:demoPolicy,rationale:reason},key(generation,`policy:${mentor.email}`));
-      const plan=await savePlan(mentor.actor,{request:`Demo cohort: review ${mentor.name}'s students and identify who needs support`,studentIds:students.filter(s=>s.mentor===index).map(s=>s.studentId),domain:"academic",policyId:policy.id,mode:"deterministic"},undefined,undefined,key(generation,`plan:${mentor.email}`));
+      const plan=await savePlan(mentor.actor,{request:`Demo cohort: review ${mentor.name}'s students and identify who needs support`,studentIds:students.filter(s=>s.mentor===index).map(s=>s.studentId),domain:"academic",policyId:policy.id},undefined,undefined,key(generation,`plan:${mentor.email}`));
       if(plan.status!=="locked")await lockPlan(mentor.actor,plan.id,plan.revision);
       const pending=await withCoreTransaction(async c=>(await c.query("SELECT id FROM ch11_jobs WHERE plan_id=$1 AND status IN ('queued','blocked','failed','running')",[plan.id])).rowCount);
-      if(pending){const run=await executePlan(mentor.actor,plan.id);if(run.results.some(r=>"error" in r))throw new Error(`Review needs inspection: ${JSON.stringify(run.results)}`);}
+      if(pending){const run=await executePlan(mentor.actor,plan.id,options.composer?{composer:options.composer}:{});if(run.results.some(r=>"error" in r))throw new Error(`Review needs inspection: ${JSON.stringify(run.results)}`);}
     }
     report("Three cohort reviews processed; support suggestions await mentor decisions.");
     return await demoCohortReport();

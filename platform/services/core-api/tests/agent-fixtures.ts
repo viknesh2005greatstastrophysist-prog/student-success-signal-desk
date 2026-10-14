@@ -4,8 +4,10 @@ import {
   formatSkillV2,
   riskAnalysis,
   sourceNames,
+  type Composer,
   type Evidence,
   type GenerationContext,
+  type PacketV2,
 } from "../lib/chapter11/engine";
 import { courseValueKey } from "../lib/chapter11/egress";
 import type { InvestigationBackend } from "../lib/chapter11/investigator";
@@ -134,4 +136,39 @@ export const groqEndpoint = (base: string): Endpoint => ({
   key: "test-key",
   remote: true,
   extra: { reasoning_effort: "none" },
+});
+
+const invert = (m: Record<string, string>) =>
+  Object.fromEntries(Object.entries(m).map(([k, v]) => [v, k]));
+/** The grounded baseline in alias space, as a well-behaved model would write it.
+ * Needs the context's alias map, which compose() sets before it calls a provider. */
+export function goodDraft(c: GenerationContext): PacketV2 {
+  const aliases = c.aliases!;
+  const ev = invert(aliases.evidence);
+  const courses = invert(aliases.courses);
+  const text = (t: string) =>
+    Object.entries(courses).reduce((s, [code, alias]) => s.split(code).join(alias), t);
+  const out = structuredClone(c.baseline as PacketV2);
+  for (const r of out.rationale) {
+    r.text = text(r.text);
+    r.citations = r.citations.map((p) => ev[p]!);
+  }
+  for (const a of out.actions) {
+    a.personalisation = text(a.personalisation);
+    a.talkingPoints = a.talkingPoints.map(text);
+    a.citations = a.citations.map((p) => ev[p]!);
+  }
+  return out;
+}
+/** A stub model: no network, always returns a grounded, valid draft. */
+export const groundedComposer = (): Composer => ({
+  modelId: "STUB-GROUNDED",
+  generate: async (context) => goodDraft(context),
+});
+/** A stub model that is down: every call fails like an exhausted provider chain. */
+export const downComposer = (reason = "MODEL_HTTP_503"): Composer => ({
+  modelId: "STUB-DOWN",
+  generate: async () => {
+    throw new Error(reason);
+  },
 });

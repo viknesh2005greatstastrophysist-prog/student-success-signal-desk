@@ -79,7 +79,8 @@ export function evaluationMetrics(rows: MetricInput[]) {
       toolCalls: r.reduce((n, x) => n + x.toolCalls, 0),
       toolRefusals: r.reduce((n, x) => n + x.toolRefusals, 0),
       modelRuns: r.filter((x) => x.mode === "model").length,
-      ruleRuns: r.filter((x) => x.mode === "deterministic").length,
+      /** runs from the retired rule-based path; no new run can be rule-based */
+      legacyRuleRuns: r.filter((x) => x.mode === "deterministic").length,
       decidedRuns: decided.length,
       approveAsIsRate: approved.length
         ? approved.filter((x) => x.approveAsIs).length / approved.length

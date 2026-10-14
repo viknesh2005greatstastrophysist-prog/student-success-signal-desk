@@ -301,7 +301,7 @@ test("3 diagnostic language: a persistent fault escalates carrying an accurate d
   assert.equal(seen.length, 3, "one draft and two repairs, then the budget is spent");
   assert.equal(result.validation.escalated, true);
   assert.equal(result.validation.valid, false);
-  assert.equal(result.validation.selection.selected, "template-offered-for-human-review");
+  assert.equal(result.validation.selection.selected, "escalated-to-human");
   assert.equal(result.validation.provenance.fallbackReason, "validation failed after the repair budget");
   assert.deepEqual(result.validation.repairs.map((r) => r.diagnoses.map((d) => `${d.code}@${d.path}`)), [
     ["UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS@actions[0]"],

@@ -269,10 +269,10 @@ export async function decideSupportCase(
     }
     const result = await client.query<{
       case_id: string; student_id: string; department_id: string; status: string; revision: number;
-      artifact_id: string; content_hash: string; recommendation: Recommendation; assigned_faculty_person_id: string; artifact_validation:{valid?:boolean;chapter11?:boolean;policyVersion?:string;checks?:Record<string,boolean>}; source:string;
+      artifact_id: string; content_hash: string; recommendation: Recommendation; assigned_faculty_person_id: string; artifact_validation:{valid?:boolean;chapter11?:boolean;policyVersion?:string;checks?:Record<string,boolean>}; source:string; run_mode:string;
     }>(
       `SELECT support_case.id AS case_id, support_case.student_id, student.department_id, support_case.status, support_case.revision,
-              artifact.id AS artifact_id, artifact.content_hash, artifact.recommendation, artifact.validation AS artifact_validation, support_case.source,
+              artifact.id AS artifact_id, artifact.content_hash, artifact.recommendation, artifact.validation AS artifact_validation, support_case.source, run.mode AS run_mode,
               evidence.evidence->>'assignedFacultyPersonId' AS assigned_faculty_person_id
        FROM support_cases support_case
        JOIN student_profiles student ON student.id = support_case.student_id
@@ -288,6 +288,8 @@ export async function decideSupportCase(
     if (!result.rowCount) throw new NotFoundError("Assigned support case not found");
     const current = result.rows[0]!;
     if (current.status !== "awaiting_faculty") throw new ConflictError("CASE_NOT_AWAITING_DECISION", "This support case is no longer awaiting a decision");
+    // Chapter 11 drafts from the retired rule-based path stay viewable but are never decided.
+    if (current.source.startsWith("chapter11:") && current.run_mode !== "model") throw new ConflictError("LEGACY_DRAFT_READ_ONLY", "This draft was written by the retired rule-based path. It stays viewable, but only AI-written drafts can be decided.");
     if (current.assigned_faculty_person_id !== actor.personId) {
       throw new ConflictError("MENTOR_ASSIGNMENT_CHANGED", "This artifact was prepared for a different mentor; create a new review before deciding");
     }

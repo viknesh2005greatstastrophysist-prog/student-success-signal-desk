@@ -123,6 +123,29 @@ export const agentTraceSchema = z
     questionSource: z.enum(["model", "rules", "model+rules"]).optional(),
   })
   .strict();
+/** How the plan's student scope was set (server-set). `selected` is the
+ * mentor's own "Students in scope" choice, or a set the mentor confirmed, and
+ * is authoritative; `criteria` was resolved by the planner from the request text. */
+export const planScopeSchema = z
+  .object({
+    basis: z.enum(["selected", "criteria"]),
+    /** size of the mentor's selection */
+    selected: z.number().int().min(1).max(50).optional(),
+    /** selection size before the request's criteria narrowed it */
+    narrowedFrom: z.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+/** The request text describes a different or wider set than the mentor's
+ * selection. The scope stays as selected until the mentor confirms a change. */
+export const scopeConflictSchema = z
+  .object({
+    selected: z.number().int().min(1).max(50),
+    implied: z.number().int().min(1).max(5000),
+    /** absent when the implied set is larger than a review may cover */
+    impliedStudentIds: z.array(z.string().uuid()).min(1).max(50).optional(),
+    resolution: z.enum(["kept", "switched"]).optional(),
+  })
+  .strict();
 export const planInputSchema = z
   .object({
     request: z.string().trim().min(3).max(2000),
@@ -130,36 +153,22 @@ export const planInputSchema = z
     domain: z.enum(domainNames).optional(),
     policyId: z.string().uuid().optional(),
     feedback: z.string().trim().max(1000).default(""),
-    mode: z.enum(["deterministic", "model"]).default("deterministic"),
+    /** every review runs on the AI model; "deterministic" is only read from
+     * plans saved before the rule-based path was removed */
+    mode: z.enum(["deterministic", "model"]).default("model"),
+    /** the mentor's answer to a scope conflict shown on the plan */
+    scopeChoice: z.enum(["keep", "switch"]).optional(),
     /** server-set by the planner agent; stripped from every external save */
     filter: storedFilterSchema.optional(),
     agentQuestions: z.array(z.string().min(5).max(240)).max(5).optional(),
     agentSteps: z.array(z.string().min(5).max(200)).max(6).optional(),
     agent: agentTraceSchema.optional(),
+    answeredQuestions: z.array(z.string().min(5).max(240)).max(10).optional(),
+    scope: planScopeSchema.optional(),
+    scopeConflict: scopeConflictSchema.optional(),
   })
   .strict();
 export type PlanInput = z.infer<typeof planInputSchema>;
-/** Explicit feedback directives revise typed constraints; scope is rechecked by
- * savePlan. Other notes inform retrieval and steps without inventing answers. */
-export function applyPlanningFeedback(input: PlanInput): PlanInput {
-  const focus = input.feedback
-    .match(
-      /(?:^|\n)focus:\s*(academic|attendance|wellbeing-referral)\s*(?:$|\n)/i,
-    )?.[1]
-    ?.toLowerCase();
-  const students = input.feedback.match(/(?:^|\n)students:\s*([^\n]+)/i)?.[1];
-  const policy = input.feedback
-    .match(/(?:^|\n)policy:\s*([^\n]+)/i)?.[1]
-    ?.trim();
-  return planInputSchema.parse({
-    ...input,
-    ...(focus ? { domain: focus } : {}),
-    ...(students
-      ? { studentIds: students.split(",").map((id) => id.trim()) }
-      : {}),
-    ...(policy ? { policyId: policy } : {}),
-  });
-}
 /** Agent-only fields never arrive from a browser or an RPC body. */
 export function withoutAgentFields(input: PlanInput): PlanInput {
   const clean = { ...input };
@@ -167,10 +176,12 @@ export function withoutAgentFields(input: PlanInput): PlanInput {
   delete clean.agentQuestions;
   delete clean.agentSteps;
   delete clean.agent;
+  delete clean.answeredQuestions;
+  delete clean.scope;
+  delete clean.scopeConflict;
   return clean;
 }
-export function planSkill(raw: PlanInput) {
-  const input = applyPlanningFeedback(raw);
+export function planSkill(input: PlanInput) {
   const missing: string[] = [];
   if (!input.studentIds?.length)
     missing.push("Which students should this review cover?");
@@ -553,7 +564,8 @@ export type Diagnosis = {
   /** failing item inside the field, e.g. rationale[1] or actions[0].personalisation */
   path?: string;
 };
-/** packet-v2 template: the labelled deterministic fallback for v2 drafts. */
+/** packet-v2 baseline: the grounded anchor the model drafts from and the
+ * validators compare against. It is never published as a draft. */
 export function formatSkillV2(
   risk: Risk,
   domain: (typeof domainNames)[number],
@@ -939,7 +951,6 @@ export async function compose(
     );
   const baselineFields = context.baseline as unknown as Record<string, unknown>;
   let candidate: unknown = context.baseline;
-  let mode: "deterministic" | "model" = "deterministic";
   let providerError: string | null = null;
   let baselineRepair = false;
   const repairs: Array<{
@@ -976,7 +987,6 @@ export async function compose(
             provider.generate(context, undefined, undefined, meta),
           )
         : await provider.generate(context, undefined, undefined, meta);
-      mode = "model";
       modelAttempts.push({
         attempt: 0,
         inputHash: digest(context),
@@ -988,9 +998,12 @@ export async function compose(
       providerError = providerFailure(error);
     }
   }
+  // Every review runs on an AI model. When no model answered, nothing is
+  // drafted: the baseline stays a validator reference and is never published.
   let report = await runNode("PacketValidator", () => check(candidate));
   for (
     let attempt = 1;
+    !providerError &&
     validationRoute(report.valid, repairs.length) === "regenerate";
     attempt++
   ) {
@@ -1020,6 +1033,7 @@ export async function compose(
         });
       } catch (error) {
         providerError = providerFailure(error);
+        break;
       }
     }
     const current =
@@ -1055,22 +1069,36 @@ export async function compose(
     restoreFailures = after.failures;
   }
   const finalFailures = [...report.failures, ...restoreFailures];
+  // No model answered (none configured, or every provider failed): the case
+  // waits as "AI unavailable" for a retry. No draft exists in this state.
+  const unavailable = !provider || !!providerError;
   const needsHuman =
-    !!providerError ||
-    !report.valid ||
-    baselineRepair ||
-    restoreFailures.length > 0;
-  const offeredTemplate = check(context.baseline);
+    !unavailable &&
+    (!report.valid || baselineRepair || restoreFailures.length > 0);
   const calls = summariseCalls(metas);
+  const reason = unavailable
+    ? providerError
+      ? `provider failed: ${providerError}`
+      : "MODEL_NOT_CONFIGURED"
+    : baselineRepair
+      ? "a repair needed template fields"
+      : restoreFailures.length
+        ? "restored text failed validation"
+        : !report.valid
+          ? "validation failed after the repair budget"
+          : null;
   return {
-    packet: needsHuman
-      ? context.baseline
-      : v2
-        ? packetV2Schema.parse(restored)
-        : packetSchema.parse(candidate),
-    mode: needsHuman ? ("deterministic" as const) : mode,
+    unavailable,
+    /** a held-back reference for the validators; never a published draft */
+    packet:
+      unavailable || needsHuman
+        ? context.baseline
+        : v2
+          ? packetV2Schema.parse(restored)
+          : packetSchema.parse(candidate),
+    mode: unavailable ? ("unavailable" as const) : ("model" as const),
     modelId:
-      !needsHuman && mode === "model"
+      !unavailable && !needsHuman
         ? calls.model
           ? `${calls.provider}:${calls.model}`
           : provider!.modelId
@@ -1082,11 +1110,12 @@ export async function compose(
       diagnoses: finalFailures.length
         ? diagnoseFor(finalFailures, restoreFailures.length ? restored : candidate)
         : [],
-      valid: !needsHuman && report.valid,
+      valid: !unavailable && !needsHuman && report.valid,
       repairs,
-      fallback: needsHuman,
+      /** kept for older reports; no template is substituted any more */
+      fallback: false,
       escalated: needsHuman,
-      templateValid: offeredTemplate.valid,
+      unavailable,
       providerError,
       modelAttempts,
       packetSchema: v2 ? "packet-v2" : "packet-v1",
@@ -1098,26 +1127,16 @@ export async function compose(
           ? (context.baseline as PacketV2).specialist
           : context.domain,
         repairs: repairs.length,
-        fallbackReason: needsHuman
-          ? providerError
-            ? `provider failed: ${providerError}`
-            : baselineRepair
-              ? "a repair needed template fields"
-              : restoreFailures.length
-                ? "restored text failed validation"
-                : "validation failed after the repair budget"
-          : null,
+        fallbackReason: reason,
       },
       selection: {
-        candidates: provider
-          ? ["validated-baseline", "model-candidate"]
-          : ["validated-baseline"],
-        selected: needsHuman
-          ? "template-offered-for-human-review"
-          : mode === "model"
-            ? "model-candidate"
-            : "validated-baseline",
-        rule: "Require full trigger coverage, scope, advisor review and approved policy. Persistent faults or provider failures stop at a human gate; templates are never auto-advanced.",
+        candidates: provider ? ["model-candidate"] : [],
+        selected: unavailable
+          ? "none-ai-unavailable"
+          : needsHuman
+            ? "escalated-to-human"
+            : "model-candidate",
+        rule: "Require full trigger coverage, scope, advisor review and approved policy. Persistent faults stop at a human gate; when no model answers the case waits for a retry. No template draft is ever published.",
       },
     },
   };

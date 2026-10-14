@@ -124,7 +124,7 @@ for (const name of checkNames) {
     );
     assert.equal(
       result.validation.selection.selected,
-      "template-offered-for-human-review",
+      "escalated-to-human",
     );
   });
 }

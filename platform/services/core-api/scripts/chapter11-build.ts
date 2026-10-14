@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { collectSources, compose, demoPolicy, digest, domainNames, formatSkill, parallelMap, planInputSchema, planSkill, referenceLibrary, retrieve, riskAnalysis, sourceNames, validateEvidence, type Evidence } from "../lib/chapter11/engine";
+import { collectSources, compose, type Composer, demoPolicy, digest, domainNames, formatSkill, parallelMap, planInputSchema, planSkill, referenceLibrary, retrieve, riskAnalysis, sourceNames, validateEvidence, type Evidence } from "../lib/chapter11/engine";
 import { configuredComposer } from "../lib/chapter11/provider";
 
 // Reproducible, credential-free lab build. The authenticated portal journey
@@ -17,6 +17,9 @@ const fixtures = new Map(students.map((studentId, i) => [studentId, Object.fromE
   source, studentId, recordId: `SYNTHETIC-BUILD-${i}-${source}`, observedAt: generatedAt, semester: "2026-ODD", state: "present", synthetic: true,
   values: source === "academic" ? { attendancePct: i % 2 ? 90 : 65, markPct: i % 2 ? 80 : 55 } : source === "lms" ? { inactivityDays: i % 2 ? 2 : 9, overdueAssignments: i % 2 ? 0 : 2 } : source === "internship" ? { missedMilestones: 0 } : { missedActivities: 0 },
 }])) as unknown as Evidence]));
+// Benchmark only: a synthetic composer that echoes the baseline, so the parallel
+// collection timing and validators run with no AI call. Nothing it makes is a draft.
+const syntheticComposer: Composer = { modelId: "synthetic-echo", generate: async context => context.baseline };
 async function worker(studentId: string) {
   const evidence = await collectSources({ read: async (id, name) => {
     await new Promise(resolve => setTimeout(resolve, 20)); // Declared controlled I/O benchmark.
@@ -24,7 +27,7 @@ async function worker(studentId: string) {
   } }, studentId);
   validateEvidence(evidence, studentId, demoPolicy, generatedAt, "2026-ODD");
   const risk = riskAnalysis(evidence, demoPolicy);
-  const outputs = await Promise.all(domainNames.map(async domain => ({ domain, ...await compose({ evidence, risk, domain, baseline: formatSkill(risk, domain), references: retrieve(domain, [domain], referenceLibrary, "synthetic-department", studentId) }) })));
+  const outputs = await Promise.all(domainNames.map(async domain => ({ domain, ...await compose({ evidence, risk, domain, baseline: formatSkill(risk, domain), references: retrieve(domain, [domain], referenceLibrary, "synthetic-department", studentId) }, syntheticComposer) })));
   return { studentId, evidence, risk, outputs };
 }
 const start = performance.now();

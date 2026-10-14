@@ -245,7 +245,7 @@ test("Lab 10 and 11: targeted repair preserves good fields and validates before 
   assert.equal(output.packet.summary, baseline.summary);
   assert.equal(output.validation.repairs.length, 1);
 });
-test("Lab 10: provider outage and persistent invalid outputs use labelled deterministic fallback", async () => {
+test("Lab 10: a provider outage waits as AI unavailable; persistent invalid outputs escalate to a human; neither publishes a template", async () => {
   const evidence = fixture(),
     risk = riskAnalysis(evidence, demoPolicy),
     baseline = formatSkill(risk, "academic");
@@ -262,8 +262,17 @@ test("Lab 10: provider outage and persistent invalid outputs use labelled determ
       throw new Error("offline");
     },
   });
-  assert.equal(unavailable.mode, "deterministic");
+  assert.equal(unavailable.unavailable, true);
+  assert.equal(unavailable.mode, "unavailable");
+  assert.equal(unavailable.validation.valid, false);
+  assert.equal(unavailable.validation.escalated, false);
+  assert.equal(unavailable.modelId, null);
   assert.equal(unavailable.validation.providerError, "MODEL_UNAVAILABLE");
+  assert.equal(unavailable.validation.selection.selected, "none-ai-unavailable");
+  // no provider at all is the same state, with its own reason
+  const none = await compose(context);
+  assert.equal(none.unavailable, true);
+  assert.equal(none.validation.provenance.fallbackReason, "MODEL_NOT_CONFIGURED");
   const invalid = await compose(context, {
     modelId: "TEST-INVALID",
     generate: async () => ({
@@ -271,9 +280,12 @@ test("Lab 10: provider outage and persistent invalid outputs use labelled determ
       summary: "Automatically contact the student and diagnose depression",
     }),
   });
-  assert.equal(invalid.mode, "deterministic");
+  assert.equal(invalid.unavailable, false);
   assert.equal(invalid.validation.repairs.length, 2);
-  assert.equal(invalid.validation.fallback, true);
+  assert.equal(invalid.validation.escalated, true);
+  assert.equal(invalid.validation.valid, false);
+  assert.equal(invalid.validation.fallback, false, "no template is substituted");
+  assert.equal(invalid.modelId, null);
 });
 
 test("Malformed model text is audited and repaired; baseline substitutions never masquerade as model output", async () => {
@@ -299,8 +311,9 @@ test("Malformed model text is audited and repaired; baseline substitutions never
     modelId: "TEST-NOT-JSON",
     generate: async () => "not json",
   });
-  assert.equal(fallback.mode, "deterministic");
-  assert.equal(fallback.validation.fallback, true);
+  assert.equal(fallback.validation.escalated, true);
+  assert.equal(fallback.validation.valid, false);
+  assert.equal(fallback.modelId, null);
 });
 
 test("Model transport keeps the final answer separate from a local reasoning channel", () => {
@@ -385,27 +398,28 @@ test("Faculty policy controls every weight and career/overdue cutoff", () => {
   assert.equal(original.score, 100);
 });
 
-test("Explicit planning feedback changes typed scope, focus and steps", () => {
+test("Planning feedback is a note: it never changes the typed scope, focus or policy", () => {
   const selected = randomUUID(),
     policyId = randomUUID();
   const p = planSkill(
     planInputSchema.parse({
       request: "Review the cohort",
       domain: "academic",
-      feedback: `focus: attendance\nstudents: ${selected}\npolicy: ${policyId}`,
+      studentIds: [selected],
+      policyId,
+      feedback: `focus: attendance\nstudents: ${randomUUID()}\npolicy: ${randomUUID()}`,
     }),
   );
-  assert.equal(p.domain, "attendance");
+  // the old directive parser could replace the mentor's explicit selection from
+  // free text; the planner now reads feedback as language and the typed fields win
+  assert.equal(p.domain, "academic");
   assert.deepEqual(p.studentIds, [selected]);
   assert.equal(p.policyId, policyId);
   assert.equal(p.ready, true);
-  assert.ok(p.steps.some((s) => s.includes("attendance")));
-  assert.throws(() =>
-    planSkill(
-      planInputSchema.parse({
-        request: "Review",
-        feedback: "students: not-an-id",
-      }),
-    ),
+  assert.ok(p.steps.some((s) => s.includes("academic")));
+  assert.doesNotThrow(() =>
+    planSkill(planInputSchema.parse({ request: "Review", feedback: "students: not-an-id" })),
   );
+  // every plan is an AI-model review; the old mode value is only accepted on input
+  assert.equal(planInputSchema.parse({ request: "Review" }).mode, "model");
 });

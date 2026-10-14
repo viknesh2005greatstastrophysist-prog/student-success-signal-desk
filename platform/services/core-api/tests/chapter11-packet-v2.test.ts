@@ -213,10 +213,13 @@ test("a model number that is not in the evidence is repaired once, then a persis
     const failing = JSON.parse(JSON.parse(groq.requests[1]!.raw).messages[1].content).failing;
     assert.deepEqual(failing, ["rationale:UNSUPPORTED_NUMBER"]);
     const fallback = await compose(context(), chainComposer([{ kind: "groq", base: server.url("/bad"), model: "m", key: "T", remote: true, extra: {} }], { limiter: new ModelLimiter(), maxWaitMs: 0 })!);
-    assert.equal(fallback.mode, "deterministic");
-    assert.equal(fallback.validation.fallback, true);
-    assert.equal(fallback.validation.templateValid, true);
-    assert.equal((fallback.packet as PacketV2).schema, "packet-v2");
+    // a persistent fault stops at the human gate; no template is substituted or published
+    assert.equal(fallback.mode, "model");
+    assert.equal(fallback.unavailable, false);
+    assert.equal(fallback.validation.escalated, true);
+    assert.equal(fallback.validation.valid, false);
+    assert.equal(fallback.validation.fallback, false);
+    assert.equal(fallback.modelId, null);
     assert.equal(fallback.validation.provenance.fallbackReason, "validation failed after the repair budget");
   } finally {
     await server.close();

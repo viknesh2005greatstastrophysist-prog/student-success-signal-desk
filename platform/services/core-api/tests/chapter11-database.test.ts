@@ -24,6 +24,7 @@ import {
 } from "../lib/chapter11/service";
 import { demoPolicy } from "../lib/chapter11/engine";
 import { decideSupportCase, replayAgentRun } from "../lib/support-commands";
+import { groundedComposer } from "./agent-fixtures";
 import {
   editDraft,
   recordOutcome,
@@ -205,7 +206,10 @@ test(
           "Test evidence capture revision through a domain change and restart",
       });
       await closePool(); // New connections simulate a process restarting after its checkpoint committed.
-      const resumed = await executePlan(faculty, locked.id);
+      // every review runs on AI: a stub model stands in for the provider chain
+      const resumed = await executePlan(faculty, locked.id, {
+        composer: groundedComposer(),
+      });
       assert.equal(resumed.results[0]!.completed, true);
       assert.equal(resumed.alignment.planHash, locked.plan_hash);
       const exported = await exportPlan(faculty, locked.id);

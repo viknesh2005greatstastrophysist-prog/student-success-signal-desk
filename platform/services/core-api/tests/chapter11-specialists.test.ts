@@ -144,8 +144,10 @@ test("cross-student profile reuse is retired for mentor review and only runs as 
   assert.throws(() => projectProfileComposer(stub, undefined as never), /retired/);
   const dry = projectProfileComposer(stub, { bulkDryRun: true });
   assert.match(dry.composer.modelId, /bulk dry run, not for mentor review/);
+  // a mentor-review (packet-v2) context is refused, so nothing is drafted: AI unavailable
   const result = await compose(context(ACADEMIC_CASE, "academic"), dry.composer);
-  assert.equal(result.mode, "deterministic");
-  assert.equal(result.validation.fallback, true);
+  assert.equal(result.unavailable, true);
+  assert.equal(result.mode, "unavailable");
+  assert.equal(result.validation.valid, false);
   assert.equal(dry.stats.actualModelCalls, 0);
 });

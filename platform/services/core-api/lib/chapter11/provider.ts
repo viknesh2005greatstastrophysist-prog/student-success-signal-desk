@@ -98,7 +98,9 @@ export function restoreEvidenceCitations(
 }
 
 /* ------------------------------------------------------------------------ */
-/* Provider chain: local loopback -> Groq -> Gemini -> labelled deterministic */
+/* Provider chain: Groq -> Gemini -> local Qwen (the CH11_MODEL endpoint on the
+ * laptop). There is no rule-based step: when every model fails the work waits
+ * as "AI unavailable" and the reasons are audited. */
 /* ------------------------------------------------------------------------ */
 
 export type ProviderKind = "local" | "groq" | "gemini" | "configured";
@@ -216,7 +218,7 @@ export function modelEndpoints(
     ...(configured ? { [configured.kind]: configured } : {}),
     ...(groq ? { groq } : {}),
   };
-  const order = (env.CH11_PROVIDER_ORDER || "local,groq,gemini,configured")
+  const order = (env.CH11_PROVIDER_ORDER || "groq,gemini,configured,local")
     .split(",")
     .map((k) => k.trim()) as ProviderKind[];
   return [...new Set(order)].flatMap((k) => (byKind[k] ? [byKind[k]!] : []));
