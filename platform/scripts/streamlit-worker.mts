@@ -3,11 +3,7 @@ import { identityMode } from "../services/auth-server/lib/identity-mode";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 import { hashPassword, verifyPassword } from "better-auth/crypto";
-import {
-  actorContextSchema,
-  portalIdSchema,
-  portalAllowedRoles,
-} from "@aura/contracts";
+import { portalIdSchema } from "@aura/contracts";
 import {
   loadCoreConfig,
   quoteIdentifier,
@@ -56,6 +52,20 @@ import {
   loadPaymentReceipt,
   paymentAttemptInput,
 } from "../services/core-api/lib/payment-commands";
+import {
+  AccessError,
+  bindActorToPortal as bindWith,
+  type Query,
+} from "../services/core-api/lib/portal-session";
+import {
+  DEVICE_TOKENS_DDL,
+  findDeviceTokens,
+  isDeviceTokenShape,
+  issueDeviceToken,
+  purgeDeviceTokens,
+  redeemDeviceToken,
+  revokeDeviceTokens,
+} from "../services/core-api/lib/device-tokens";
 import { sourceNames } from "../services/core-api/lib/chapter11/engine";
 import { captureModelCredentials } from "../services/core-api/lib/chapter11/provider";
 
@@ -84,46 +94,16 @@ await withCoreTransaction(async (c) => {
       `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_login_attempts(email_hash text PRIMARY KEY,window_at timestamptz NOT NULL,attempts int NOT NULL)`,
       `DELETE FROM ${authSchema}.streamlit_sessions WHERE expires_at<now()`,
       `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '1 day'`,
+      // Remembered devices (Core migration 012): the deployed engine does not run the
+      // Core migrations, so the same idempotent statements run here, under a lock
+      // because up to three engine processes start together.
+      `SELECT pg_advisory_xact_lock(420043)`,
+      ...DEVICE_TOKENS_DDL,
     ].join(";\n"),
   );
+  await purgeDeviceTokens(c);
 });
 
-class AccessError extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly status = 403,
-  ) {
-    super(message);
-  }
-}
-type Query = Pick<import("pg").PoolClient, "query">;
-async function bindWith(c: Query, userId: string, portal: string) {
-  const result = await c.query(
-    `SELECT p.id AS person_id,p.display_name,p.email,r.role,r.department_id,sp.id AS student_id FROM institution_revisions ir JOIN people p ON p.generation_id=ir.current_generation_id JOIN role_assignments r ON r.generation_id=ir.current_generation_id AND r.person_id=p.id AND r.active LEFT JOIN student_profiles sp ON sp.generation_id=ir.current_generation_id AND sp.person_id=p.id WHERE ir.singleton AND p.external_subject=$1 LIMIT 2`,
-    [userId],
-  );
-  if (result.rowCount !== 1)
-    throw new AccessError(
-      "UNAUTHENTICATED",
-      "Account has no unique active college assignment",
-      401,
-    );
-  const row = result.rows[0]!;
-  const actor = actorContextSchema.parse({
-    subject: userId,
-    personId: row.person_id,
-    role: row.role,
-    departmentId: row.department_id ?? undefined,
-    studentId: row.student_id ?? undefined,
-  });
-  if (!portalAllowedRoles[portalIdSchema.parse(portal)].includes(actor.role))
-    throw new AccessError(
-      "PORTAL_DENIED",
-      "This account cannot enter the selected workspace",
-    );
-  return { ...actor, displayName: row.display_name, email: row.email };
-}
 async function login(raw: unknown) {
   const input = z
       .object({
@@ -131,6 +111,7 @@ async function login(raw: unknown) {
         password: z.string().min(1).max(1000),
         portal: portalIdSchema,
         source: z.string().max(100).default("server-local"),
+        remember: z.boolean().default(false),
       })
       .strict()
       .parse(raw),
@@ -198,20 +179,126 @@ async function login(raw: unknown) {
       401,
     );
   }
-  const token = randomBytes(32).toString("base64url"),
-    authId = randomUUID();
   // Binding the account to the workspace and storing the session share one
   // transaction and one statement for the two inserts (4 round trips, was 10).
-  // A refused workspace throws before anything is inserted, as before.
-  const actor = await withCoreTransaction(async (c) => {
-    const bound = await bindWith(c, user.id, input.portal);
-    await c.query(
-      `WITH s AS (INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3) RETURNING id) INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) SELECT $2,$3,$4,now()+interval '8 hours',s.id,$5 FROM s`,
-      [authId, sha(token), user.id, input.portal, sha(user.password)],
-    );
-    return bound;
+  // A refused workspace throws before anything is inserted, as before. With
+  // "keep me signed in" the same transaction also stores a remembered-device token.
+  const credentialHash = sha(user.password);
+  return withCoreTransaction(async (c) => {
+    const actor = await bindWith(c, user.id, input.portal);
+    const token = await openSession(c, user.id, input.portal, credentialHash);
+    return {
+      token,
+      actor,
+      ...(input.remember
+        ? { deviceToken: await issueDeviceToken(c, { userId: user.id, portal: input.portal, credentialHash }) }
+        : {}),
+    };
   });
-  return { token, actor };
+}
+// A workspace session: the opaque token goes to the browser's session state, only its
+// hash is stored (two inserts, one statement).
+async function openSession(c: Query, userId: string, portal: string, credentialHash: string) {
+  const token = randomBytes(32).toString("base64url"),
+    authId = randomUUID();
+  await c.query(
+    `WITH s AS (INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3) RETURNING id) INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) SELECT $2,$3,$4,now()+interval '8 hours',s.id,$5 FROM s`,
+    [authId, sha(token), userId, portal, credentialHash],
+  );
+  return token;
+}
+// The current password hash of each account (the credential a remembered device or a
+// session was issued under); an account without one is absent from the map.
+async function credentialHashes(c: Query, userIds: string[]) {
+  if (!userIds.length) return new Map<string, string>();
+  const rows = (
+    await c.query(
+      `SELECT "userId" AS user_id,encode(sha256(password::bytea),'hex') AS hash FROM ${authSchema}.account WHERE "providerId"='credential' AND "userId"=ANY($1)`,
+      [userIds],
+    )
+  ).rows;
+  return new Map<string, string>(rows.map((r) => [r.user_id as string, r.hash as string]));
+}
+const deviceTokensInput = z.partialRecord(portalIdSchema, z.string().refine(isDeviceTokenShape)).default({});
+const UNREMEMBERED = new AccessError(
+  "UNAUTHENTICATED",
+  "This device is no longer remembered. Sign in with your email and password.",
+  401,
+);
+// Remembered devices at the sign-in page. Reports which of the browser's tokens are
+// still good (with the account name, so the person can pick one) and which are dead
+// (the browser clears those cookies). With `auto`, the most recently used workspace is
+// opened in the same call: no form, no password.
+async function deviceResume(raw: unknown) {
+  const input = z
+    .object({ tokens: deviceTokensInput, auto: z.boolean().default(false) })
+    .strict()
+    .parse(raw);
+  return withCoreTransaction(async (c) => {
+    const found = await findDeviceTokens(c, input.tokens);
+    const hashes = await credentialHashes(c, [...new Set(found.map((f) => f.userId))]);
+    const usable = found.filter((f) => hashes.get(f.userId) === f.credentialHash);
+    const names = new Map<string, string>(
+      (!usable.length
+        ? []
+        : (
+        await c.query(
+          `SELECT external_subject,display_name FROM people WHERE external_subject=ANY($1) AND generation_id=(SELECT current_generation_id FROM institution_revisions WHERE singleton)`,
+          [usable.map((u) => u.userId)],
+        )
+      ).rows
+      ).map((r) => [r.external_subject as string, r.display_name as string]),
+    );
+    const remembered = usable.map((u) => ({
+      portal: u.portal,
+      displayName: names.get(u.userId) ?? "",
+      lastUsedAt: u.lastUsedAt,
+    }));
+    const dead = (kept: { portal: string }[]) =>
+      Object.keys(input.tokens).filter((portal) => !kept.some((k) => k.portal === portal));
+    const first = remembered[0];
+    if (!input.auto || !first) return { remembered, invalid: dead(remembered) };
+    const opened = await openDevice(c, first.portal, input.tokens[first.portal]!, hashes);
+    if (!opened.ok) {
+      const rest = remembered.filter((r) => r.portal !== first.portal);
+      return { remembered: rest, invalid: dead(rest) };
+    }
+    const rest = remembered.filter((r) => r.portal !== first.portal);
+    return { resumed: opened.result, remembered: rest, invalid: dead([...rest, first]) };
+  });
+}
+async function openDevice(c: Query, portal: string, token: string, known?: Map<string, string>) {
+  const hashes = known ?? new Map<string, string>();
+  const outcome = await redeemDeviceToken(c, {
+    token,
+    portal,
+    credentialHashFor: async (userId) => {
+      if (!hashes.has(userId))
+        for (const [id, hash] of await credentialHashes(c, [userId])) hashes.set(id, hash);
+      return hashes.get(userId) ?? null;
+    },
+  });
+  if (!outcome.ok) return outcome;
+  const session = await openSession(c, outcome.userId, portal, hashes.get(outcome.userId)!);
+  return {
+    ok: true as const,
+    result: {
+      portal,
+      token: session,
+      actor: outcome.actor,
+      ...(outcome.rotated ? { deviceToken: outcome.rotated } : {}),
+    },
+  };
+}
+// One remembered workspace chosen on the sign-in page.
+async function deviceLogin(raw: unknown) {
+  const input = z
+    .object({ portal: portalIdSchema, token: z.string().refine(isDeviceTokenShape) })
+    .strict()
+    .parse(raw);
+  const opened = await withCoreTransaction((c) => openDevice(c, input.portal, input.token));
+  if (!opened.ok) throw opened.error ?? UNREMEMBERED;
+  return opened.result;
 }
 async function authenticated(token: unknown) {
   if (typeof token !== "string" || token.length < 40 || token.length > 100)
@@ -294,13 +381,35 @@ async function dispatch(
   token: unknown,
 ) {
   if (action === "login") return login(p);
+  if (action === "device_resume") return deviceResume(p);
+  if (action === "device_login") return deviceLogin(p);
   // Opens the database connections before they are needed. Takes no input, needs
   // no session and returns nothing about the data.
   if (action === "warm") return { connections: await warmPool(4) };
   if (action === "logout") {
     if (typeof token !== "string")
       throw new AccessError("UNAUTHENTICATED", "Sign in to continue", 401);
+    // `forget` (the default) is "Sign out": the remembered-device tokens of this
+    // account in this workspace are revoked with the session. "Switch workspace"
+    // sends forget=false and keeps them.
+    const out = z
+      .object({ forget: z.boolean().default(true), deviceToken: z.string().optional() })
+      .strict()
+      .parse(p);
     await withCoreTransaction(async (c) => {
+      if (out.forget) {
+        const owner = (
+          await c.query(
+            `SELECT user_id,portal FROM ${authSchema}.streamlit_sessions WHERE token_hash=$1`,
+            [sha(token)],
+          )
+        ).rows[0];
+        await revokeDeviceTokens(c, {
+          userId: owner?.user_id ?? "",
+          portal: owner?.portal ?? "",
+          token: out.deviceToken,
+        });
+      }
       await c.query(
         `DELETE FROM ${authSchema}.session WHERE id IN(SELECT auth_session_id FROM ${authSchema}.streamlit_sessions WHERE token_hash=$1)`,
         [sha(token)],

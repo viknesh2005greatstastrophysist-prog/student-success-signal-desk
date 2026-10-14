@@ -1197,7 +1197,7 @@ var require_utils2 = __commonJS({
     var nodeCrypto = __require("crypto");
     module.exports = {
       postgresMd5PasswordHash,
-      randomBytes: randomBytes5,
+      randomBytes: randomBytes6,
       deriveKey,
       sha256: sha2563,
       hashByName,
@@ -1207,7 +1207,7 @@ var require_utils2 = __commonJS({
     var webCrypto = nodeCrypto.webcrypto || globalThis.crypto;
     var subtleCrypto = webCrypto.subtle;
     var textEncoder = new TextEncoder();
-    function randomBytes5(length) {
+    function randomBytes6(length) {
       return webCrypto.getRandomValues(Buffer.alloc(length));
     }
     async function md5(string4) {
@@ -4610,7 +4610,7 @@ var require_utils_webcrypto = __commonJS({
     var nodeCrypto = __require("crypto");
     module.exports = {
       postgresMd5PasswordHash,
-      randomBytes: randomBytes5,
+      randomBytes: randomBytes6,
       deriveKey,
       sha256: sha2563,
       hashByName,
@@ -4620,7 +4620,7 @@ var require_utils_webcrypto = __commonJS({
     var webCrypto = nodeCrypto.webcrypto || globalThis.crypto;
     var subtleCrypto = webCrypto.subtle;
     var textEncoder = new TextEncoder();
-    function randomBytes5(length) {
+    function randomBytes6(length) {
       return webCrypto.getRandomValues(Buffer.alloc(length));
     }
     async function md5(string4) {
@@ -7615,7 +7615,7 @@ var require_lib3 = __commonJS({
 });
 
 // scripts/streamlit-worker.mts
-import { createHash as createHash8, randomBytes as randomBytes4, randomUUID as randomUUID10 } from "node:crypto";
+import { createHash as createHash9, randomBytes as randomBytes5, randomUUID as randomUUID11 } from "node:crypto";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -35692,28 +35692,7 @@ async function loadPaymentReceipt(actor, transactionId) {
   });
 }
 
-// scripts/streamlit-worker.mts
-loadCoreConfig();
-captureModelCredentials();
-if (!["project", "college-project"].includes(identityMode()) || !["project", "college-project"].includes(
-  process.env.CORE_IDENTITY_REALM ?? ""
-))
-  throw new Error("Streamlit requires a dedicated college project runtime");
-var authSchema = quoteIdentifier(process.env.AUTH_DATABASE_SCHEMA);
-var sha2 = (value) => createHash8("sha256").update(value).digest("hex");
-var uuid5 = (value) => external_exports.string().uuid().parse(value);
-var dummy = await hashPassword$1(randomBytes4(24).toString("hex"));
-await withCoreTransaction(async (c) => {
-  await c.query(
-    [
-      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_sessions(token_hash text PRIMARY KEY,user_id text NOT NULL,portal text NOT NULL,expires_at timestamptz NOT NULL)`,
-      `ALTER TABLE ${authSchema}.streamlit_sessions ADD COLUMN IF NOT EXISTS auth_session_id text, ADD COLUMN IF NOT EXISTS credential_hash text`,
-      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_login_attempts(email_hash text PRIMARY KEY,window_at timestamptz NOT NULL,attempts int NOT NULL)`,
-      `DELETE FROM ${authSchema}.streamlit_sessions WHERE expires_at<now()`,
-      `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '1 day'`
-    ].join(";\n")
-  );
-});
+// services/core-api/lib/portal-session.ts
 var AccessError = class extends Error {
   constructor(code, message, status = 403) {
     super(message);
@@ -35721,7 +35700,7 @@ var AccessError = class extends Error {
     this.status = status;
   }
 };
-async function bindWith(c, userId, portal) {
+async function bindActorToPortal(c, userId, portal) {
   const result = await c.query(
     `SELECT p.id AS person_id,p.display_name,p.email,r.role,r.department_id,sp.id AS student_id FROM institution_revisions ir JOIN people p ON p.generation_id=ir.current_generation_id JOIN role_assignments r ON r.generation_id=ir.current_generation_id AND r.person_id=p.id AND r.active LEFT JOIN student_profiles sp ON sp.generation_id=ir.current_generation_id AND sp.person_id=p.id WHERE ir.singleton AND p.external_subject=$1 LIMIT 2`,
     [userId]
@@ -35747,12 +35726,131 @@ async function bindWith(c, userId, portal) {
     );
   return { ...actor, displayName: row.display_name, email: row.email };
 }
+
+// services/core-api/lib/device-tokens.ts
+import { createHash as createHash8, randomBytes as randomBytes4, randomUUID as randomUUID10 } from "node:crypto";
+var DEVICE_TOKEN_TTL_DAYS = 7;
+var DEVICE_TOKEN_GRACE_SECONDS = 120;
+var DEVICE_TOKENS_DDL = [
+  `CREATE TABLE IF NOT EXISTS device_tokens (id uuid PRIMARY KEY, token_hash text NOT NULL UNIQUE, user_id text NOT NULL, portal text NOT NULL, credential_hash text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL, last_used_at timestamptz, rotated_at timestamptz, replaced_by uuid, revoked_at timestamptz)`,
+  `CREATE INDEX IF NOT EXISTS device_tokens_account_idx ON device_tokens (user_id, portal) WHERE revoked_at IS NULL`
+];
+var TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
+var hashDeviceToken = (token) => createHash8("sha256").update(token).digest("hex");
+var isDeviceTokenShape = (value) => typeof value === "string" && TOKEN_SHAPE.test(value);
+async function issueDeviceToken(c, input2) {
+  const portal = portalIdSchema.parse(input2.portal);
+  const token = randomBytes4(32).toString("base64url");
+  const row = (await c.query(
+    `INSERT INTO device_tokens(id,token_hash,user_id,portal,credential_hash,expires_at,last_used_at) VALUES($1,$2,$3,$4,$5,now()+make_interval(days=>$6),now()) RETURNING expires_at`,
+    [randomUUID10(), hashDeviceToken(token), input2.userId, portal, input2.credentialHash, DEVICE_TOKEN_TTL_DAYS]
+  )).rows[0];
+  return { token, expiresAt: new Date(row.expires_at).toISOString() };
+}
+async function findDeviceTokens(c, held) {
+  const pairs = /* @__PURE__ */ new Set();
+  for (const [portal, token] of Object.entries(held)) {
+    if (isDeviceTokenShape(token) && portalIdSchema.safeParse(portal).success)
+      pairs.add(`${hashDeviceToken(token)}:${portal}`);
+  }
+  if (!pairs.size) return [];
+  const rows = (await c.query(
+    `SELECT token_hash,portal,user_id,credential_hash,COALESCE(last_used_at,created_at) AS used_at FROM device_tokens WHERE token_hash=ANY($1) AND revoked_at IS NULL AND expires_at>now() ORDER BY used_at DESC`,
+    [[...new Set([...pairs].map((pair) => pair.split(":")[0]))]]
+  )).rows;
+  return rows.filter((row) => pairs.has(`${row.token_hash}:${row.portal}`)).map((row) => ({
+    portal: row.portal,
+    userId: row.user_id,
+    credentialHash: row.credential_hash,
+    lastUsedAt: new Date(row.used_at).toISOString()
+  }));
+}
+async function redeemDeviceToken(c, input2) {
+  const portal = portalIdSchema.parse(input2.portal);
+  if (!isDeviceTokenShape(input2.token)) return { ok: false, reason: "unknown" };
+  const row = (await c.query(
+    `SELECT id,user_id,credential_hash,rotated_at FROM device_tokens WHERE token_hash=$1 AND portal=$2 AND revoked_at IS NULL AND expires_at>now() FOR UPDATE`,
+    [hashDeviceToken(input2.token), portal]
+  )).rows[0];
+  if (!row) return { ok: false, reason: "unknown" };
+  const revoke = () => c.query(`UPDATE device_tokens SET revoked_at=now() WHERE id=$1`, [row.id]);
+  const current = await input2.credentialHashFor(row.user_id);
+  if (current === null || current !== row.credential_hash) {
+    await revoke();
+    return { ok: false, reason: "credential_changed" };
+  }
+  let actor;
+  try {
+    actor = await bindActorToPortal(c, row.user_id, portal);
+  } catch (error61) {
+    if (!(error61 instanceof AccessError)) throw error61;
+    await revoke();
+    return { ok: false, reason: "denied", error: error61 };
+  }
+  if (row.rotated_at) {
+    await c.query(`UPDATE device_tokens SET last_used_at=now() WHERE id=$1`, [row.id]);
+    return { ok: true, userId: row.user_id, actor };
+  }
+  const rotated = await issueDeviceToken(c, {
+    userId: row.user_id,
+    portal,
+    credentialHash: current
+  });
+  await c.query(
+    `UPDATE device_tokens SET rotated_at=now(),last_used_at=now(),expires_at=LEAST(expires_at,now()+make_interval(secs=>$2)),replaced_by=(SELECT id FROM device_tokens WHERE token_hash=$3) WHERE id=$1`,
+    [row.id, DEVICE_TOKEN_GRACE_SECONDS, hashDeviceToken(rotated.token)]
+  );
+  return { ok: true, userId: row.user_id, actor, rotated };
+}
+async function revokeDeviceTokens(c, input2) {
+  const result = await c.query(
+    `UPDATE device_tokens SET revoked_at=now() WHERE revoked_at IS NULL AND ((user_id=$1 AND portal=$2) OR token_hash=$3)`,
+    [input2.userId, input2.portal, input2.token && isDeviceTokenShape(input2.token) ? hashDeviceToken(input2.token) : ""]
+  );
+  return result.rowCount ?? 0;
+}
+async function purgeDeviceTokens(c) {
+  const result = await c.query(
+    `DELETE FROM device_tokens WHERE expires_at<now()-interval '1 day' OR revoked_at<now()-interval '1 day'`
+  );
+  return result.rowCount ?? 0;
+}
+
+// scripts/streamlit-worker.mts
+loadCoreConfig();
+captureModelCredentials();
+if (!["project", "college-project"].includes(identityMode()) || !["project", "college-project"].includes(
+  process.env.CORE_IDENTITY_REALM ?? ""
+))
+  throw new Error("Streamlit requires a dedicated college project runtime");
+var authSchema = quoteIdentifier(process.env.AUTH_DATABASE_SCHEMA);
+var sha2 = (value) => createHash9("sha256").update(value).digest("hex");
+var uuid5 = (value) => external_exports.string().uuid().parse(value);
+var dummy = await hashPassword$1(randomBytes5(24).toString("hex"));
+await withCoreTransaction(async (c) => {
+  await c.query(
+    [
+      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_sessions(token_hash text PRIMARY KEY,user_id text NOT NULL,portal text NOT NULL,expires_at timestamptz NOT NULL)`,
+      `ALTER TABLE ${authSchema}.streamlit_sessions ADD COLUMN IF NOT EXISTS auth_session_id text, ADD COLUMN IF NOT EXISTS credential_hash text`,
+      `CREATE TABLE IF NOT EXISTS ${authSchema}.streamlit_login_attempts(email_hash text PRIMARY KEY,window_at timestamptz NOT NULL,attempts int NOT NULL)`,
+      `DELETE FROM ${authSchema}.streamlit_sessions WHERE expires_at<now()`,
+      `DELETE FROM ${authSchema}.streamlit_login_attempts WHERE window_at<now()-interval '1 day'`,
+      // Remembered devices (Core migration 012): the deployed engine does not run the
+      // Core migrations, so the same idempotent statements run here, under a lock
+      // because up to three engine processes start together.
+      `SELECT pg_advisory_xact_lock(420043)`,
+      ...DEVICE_TOKENS_DDL
+    ].join(";\n")
+  );
+  await purgeDeviceTokens(c);
+});
 async function login(raw) {
   const input2 = external_exports.object({
     email: external_exports.string().trim().email().max(254),
     password: external_exports.string().min(1).max(1e3),
     portal: portalIdSchema,
-    source: external_exports.string().max(100).default("server-local")
+    source: external_exports.string().max(100).default("server-local"),
+    remember: external_exports.boolean().default(false)
   }).strict().parse(raw), email3 = input2.email.toLowerCase();
   const housekeeping = withCoreTransaction(
     (c) => c.query(
@@ -35803,16 +35901,96 @@ async function login(raw) {
       401
     );
   }
-  const token = randomBytes4(32).toString("base64url"), authId = randomUUID10();
-  const actor = await withCoreTransaction(async (c) => {
-    const bound = await bindWith(c, user.id, input2.portal);
-    await c.query(
-      `WITH s AS (INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3) RETURNING id) INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) SELECT $2,$3,$4,now()+interval '8 hours',s.id,$5 FROM s`,
-      [authId, sha2(token), user.id, input2.portal, sha2(user.password)]
-    );
-    return bound;
+  const credentialHash = sha2(user.password);
+  return withCoreTransaction(async (c) => {
+    const actor = await bindActorToPortal(c, user.id, input2.portal);
+    const token = await openSession(c, user.id, input2.portal, credentialHash);
+    return {
+      token,
+      actor,
+      ...input2.remember ? { deviceToken: await issueDeviceToken(c, { userId: user.id, portal: input2.portal, credentialHash }) } : {}
+    };
   });
-  return { token, actor };
+}
+async function openSession(c, userId, portal, credentialHash) {
+  const token = randomBytes5(32).toString("base64url"), authId = randomUUID11();
+  await c.query(
+    `WITH s AS (INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3) RETURNING id) INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) SELECT $2,$3,$4,now()+interval '8 hours',s.id,$5 FROM s`,
+    [authId, sha2(token), userId, portal, credentialHash]
+  );
+  return token;
+}
+async function credentialHashes(c, userIds) {
+  if (!userIds.length) return /* @__PURE__ */ new Map();
+  const rows = (await c.query(
+    `SELECT "userId" AS user_id,encode(sha256(password::bytea),'hex') AS hash FROM ${authSchema}.account WHERE "providerId"='credential' AND "userId"=ANY($1)`,
+    [userIds]
+  )).rows;
+  return new Map(rows.map((r) => [r.user_id, r.hash]));
+}
+var deviceTokensInput = external_exports.partialRecord(portalIdSchema, external_exports.string().refine(isDeviceTokenShape)).default({});
+var UNREMEMBERED = new AccessError(
+  "UNAUTHENTICATED",
+  "This device is no longer remembered. Sign in with your email and password.",
+  401
+);
+async function deviceResume(raw) {
+  const input2 = external_exports.object({ tokens: deviceTokensInput, auto: external_exports.boolean().default(false) }).strict().parse(raw);
+  return withCoreTransaction(async (c) => {
+    const found = await findDeviceTokens(c, input2.tokens);
+    const hashes = await credentialHashes(c, [...new Set(found.map((f) => f.userId))]);
+    const usable = found.filter((f) => hashes.get(f.userId) === f.credentialHash);
+    const names = new Map(
+      (!usable.length ? [] : (await c.query(
+        `SELECT external_subject,display_name FROM people WHERE external_subject=ANY($1) AND generation_id=(SELECT current_generation_id FROM institution_revisions WHERE singleton)`,
+        [usable.map((u) => u.userId)]
+      )).rows).map((r) => [r.external_subject, r.display_name])
+    );
+    const remembered = usable.map((u) => ({
+      portal: u.portal,
+      displayName: names.get(u.userId) ?? "",
+      lastUsedAt: u.lastUsedAt
+    }));
+    const dead = (kept) => Object.keys(input2.tokens).filter((portal) => !kept.some((k) => k.portal === portal));
+    const first = remembered[0];
+    if (!input2.auto || !first) return { remembered, invalid: dead(remembered) };
+    const opened = await openDevice(c, first.portal, input2.tokens[first.portal], hashes);
+    if (!opened.ok) {
+      const rest2 = remembered.filter((r) => r.portal !== first.portal);
+      return { remembered: rest2, invalid: dead(rest2) };
+    }
+    const rest = remembered.filter((r) => r.portal !== first.portal);
+    return { resumed: opened.result, remembered: rest, invalid: dead([...rest, first]) };
+  });
+}
+async function openDevice(c, portal, token, known) {
+  const hashes = known ?? /* @__PURE__ */ new Map();
+  const outcome = await redeemDeviceToken(c, {
+    token,
+    portal,
+    credentialHashFor: async (userId) => {
+      if (!hashes.has(userId))
+        for (const [id, hash2] of await credentialHashes(c, [userId])) hashes.set(id, hash2);
+      return hashes.get(userId) ?? null;
+    }
+  });
+  if (!outcome.ok) return outcome;
+  const session = await openSession(c, outcome.userId, portal, hashes.get(outcome.userId));
+  return {
+    ok: true,
+    result: {
+      portal,
+      token: session,
+      actor: outcome.actor,
+      ...outcome.rotated ? { deviceToken: outcome.rotated } : {}
+    }
+  };
+}
+async function deviceLogin(raw) {
+  const input2 = external_exports.object({ portal: portalIdSchema, token: external_exports.string().refine(isDeviceTokenShape) }).strict().parse(raw);
+  const opened = await withCoreTransaction((c) => openDevice(c, input2.portal, input2.token));
+  if (!opened.ok) throw opened.error ?? UNREMEMBERED;
+  return opened.result;
 }
 async function authenticated(token) {
   if (typeof token !== "string" || token.length < 40 || token.length > 100)
@@ -35825,7 +36003,7 @@ async function authenticated(token) {
     )).rows[0];
     if (!session)
       throw new AccessError("UNAUTHENTICATED", "Sign in again to continue", 401);
-    return bindWith(c, session.user_id, session.portal);
+    return bindActorToPortal(c, session.user_id, session.portal);
   });
 }
 var BATCHABLE_READS = /* @__PURE__ */ new Set([
@@ -35867,11 +36045,25 @@ function failure(error61) {
 }
 async function dispatch(action, p, token) {
   if (action === "login") return login(p);
+  if (action === "device_resume") return deviceResume(p);
+  if (action === "device_login") return deviceLogin(p);
   if (action === "warm") return { connections: await warmPool(4) };
   if (action === "logout") {
     if (typeof token !== "string")
       throw new AccessError("UNAUTHENTICATED", "Sign in to continue", 401);
+    const out = external_exports.object({ forget: external_exports.boolean().default(true), deviceToken: external_exports.string().optional() }).strict().parse(p);
     await withCoreTransaction(async (c) => {
+      if (out.forget) {
+        const owner = (await c.query(
+          `SELECT user_id,portal FROM ${authSchema}.streamlit_sessions WHERE token_hash=$1`,
+          [sha2(token)]
+        )).rows[0];
+        await revokeDeviceTokens(c, {
+          userId: owner?.user_id ?? "",
+          portal: owner?.portal ?? "",
+          token: out.deviceToken
+        });
+      }
       await c.query(
         `DELETE FROM ${authSchema}.session WHERE id IN(SELECT auth_session_id FROM ${authSchema}.streamlit_sessions WHERE token_hash=$1)`,
         [sha2(token)]
@@ -35883,7 +36075,7 @@ async function dispatch(action, p, token) {
     });
     return { signedOut: true };
   }
-  const a = await authenticated(token), cmd = external_exports.string().uuid().parse(p.commandId ?? randomUUID10()), body = { ...p };
+  const a = await authenticated(token), cmd = external_exports.string().uuid().parse(p.commandId ?? randomUUID11()), body = { ...p };
   delete body.commandId;
   if (action === "actor") return a;
   if (action === "batch") {
