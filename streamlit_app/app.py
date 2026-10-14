@@ -1886,6 +1886,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 title="Needs your decision",
             )
             with st.expander("Diagnosis", icon=":material/troubleshoot:"):
+                render_diagnoses(job.get("failure_diagnosis"))
                 st.json(job.get("failure_diagnosis") or {})
             if job.get("offered_template"):
                 with st.expander(
@@ -2396,6 +2397,45 @@ def render_tool_calls(agent: Any) -> None:
         st.caption(":material/search_off: The agent asked for no look-ups beyond the standard evidence.")
 
 
+def repair_diagnosis_rows(validation: Any) -> tuple[list[dict[str, str]], bool]:
+    """One row per diagnosed failure, tagged with its repair attempt (Brief 16-lite).
+
+    Older reports have no stored diagnoses, so each row falls back to the plain wording
+    of its failed check; the flag says so.
+    """
+    attempts = validation.get("repairs") if isinstance(validation, dict) else None
+    rows: list[dict[str, str]] = []
+    fallback = False
+    for item in attempts or []:
+        found, used_fallback = labels.diagnosis_rows(item)
+        fallback = fallback or used_fallback
+        rows.extend({"Attempt": str(item.get("attempt", "—")), **row} for row in found)
+    return rows, fallback
+
+
+DIAGNOSIS_FALLBACK_NOTE = (
+    "Recorded before targeted diagnoses were stored, so this shows the standard wording "
+    "for each failed check."
+)
+
+
+def render_diagnoses(validation: Any) -> None:
+    """Targeted diagnoses: every repair attempt, then the latest open ones."""
+    if not isinstance(validation, dict):
+        return
+    rows, fallback = repair_diagnosis_rows(validation)
+    latest, latest_fallback = labels.diagnosis_rows(validation)
+    rows.extend({"Attempt": "Latest", **row} for row in latest)
+    if not rows:
+        return
+    dataframe(rows)
+    st.caption(
+        DIAGNOSIS_FALLBACK_NOTE
+        if fallback or latest_fallback
+        else "Each fix request names the failing part by code and position, with evidence references only: no names, dates or draft text."
+    )
+
+
 def render_draft_provenance(selected: dict[str, Any], validation: dict[str, Any]) -> None:
     with st.expander("How this draft was produced", icon=":material/route:"):
         dataframe(provenance_rows(validation, selected.get("mode"), selected.get("model_id")))
@@ -2568,24 +2608,22 @@ def render_draft_reviews(
                 f":material/build: {len(repairs)} targeted repair attempt(s) before review."
             )
             with st.expander("Repair history", icon=":material/build:"):
-                dataframe(
-                    [
-                        {
-                            "Attempt": item.get("attempt"),
-                            "What failed": ", ".join(
-                                labels.issue_label(f.get("code"))
-                                for f in item.get("failures", [])
-                            ),
-                        }
-                        for item in repairs
-                    ]
+                rows, fallback = repair_diagnosis_rows(validation)
+                dataframe(rows, empty="No failed checks were recorded for these attempts.")
+                st.caption(
+                    DIAGNOSIS_FALLBACK_NOTE
+                    if fallback
+                    else "Only the failing parts were rewritten each time; the rest stayed as drafted."
                 )
-        if validation.get("failures"):
+        open_rows, open_fallback = labels.diagnosis_rows(validation)
+        if open_rows:
             with st.expander("Open issues", icon=":material/report:"):
-                for failure in validation["failures"]:
-                    st.markdown(
-                        f"- {ui._md_safe(labels.issue_label(failure.get('code')))}"
-                    )
+                dataframe(open_rows)
+                st.caption(
+                    DIAGNOSIS_FALLBACK_NOTE
+                    if open_fallback
+                    else "The latest diagnosis of what is still wrong and the fix that was requested."
+                )
         st.caption(
             "Reports describe the checks that existed when this version was recorded."
         )
@@ -3693,6 +3731,13 @@ def render_agent_graph(review: dict[str, Any]) -> None:
                 if isinstance(validation, dict)
                 else None
             )
+        if isinstance(validation, dict) and (
+            validation.get("repairs") or validation.get("failures") or validation.get("diagnoses")
+        ):
+            with st.expander(
+                "Diagnosis and repairs for this run", icon=":material/troubleshoot:", expanded=True
+            ):
+                render_diagnoses(validation)
     if trace:
         with st.expander("Node timings", icon=":material/timer:"):
             dataframe(

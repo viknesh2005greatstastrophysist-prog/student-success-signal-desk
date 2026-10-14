@@ -130,12 +130,55 @@ export type EgressOptions = {
   /** server-constant guidance text keyed by library reference id */
   library?: Record<string, string>;
   failing?: Diagnosis[];
+  /** deterministic repair instructions (Brief 16-lite); allowlisted before they leave */
+  repair?: RepairInstruction[];
   now?: number;
   /** "triggering": only evidence behind triggering signals (wellbeing pack) */
   view?: "full" | "triggering";
   /** include anonymised prior interventions and guidance text */
   history?: boolean;
 };
+
+/** One targeted patch instruction for the Regenerator: a failure code, the
+ * failing path and an instruction built from codes, paths, aliases and numbers. */
+export type RepairInstruction = {
+  code: string;
+  path: string;
+  instruction: string;
+};
+const REPAIR_CODE = /^[A-Z][A-Z0-9_]{2,40}$/;
+const REPAIR_PATH =
+  /^[a-z]{3,20}(?:\[\d{1,2}\])?(?:\.[A-Za-z]{2,20}(?:\[\d{1,2}\])?)?$/;
+/** Plain lowercase words, aliases, positional ids, paths, numbers and codes. */
+const REPAIR_TOKEN =
+  /^(?:[a-z][a-z-]{0,40}|(?:ev|course|stu)-\d{1,3}|case-[0-9a-f]{4}|[arc]\d{1,2}|[a-z]{3,20}\[\d{1,2}\](?:\.[A-Za-z]{2,20}(?:\[\d{1,2}\])?)?|\d{1,4}(?:\.\d{1,2})?%?|[A-Z][A-Z0-9_]{2,40})$/;
+/**
+ * Repair instructions are server-built, but they leave the server, so each one
+ * is checked again here: an entry with an odd code or path is dropped, and an
+ * instruction with any other token or an identifier hit is dropped to
+ * code and path only (the model still learns which part failed).
+ */
+export function allowlistRepair(
+  entries: RepairInstruction[] | undefined,
+  roster?: GuardRoster,
+): RepairInstruction[] {
+  const out: RepairInstruction[] = [];
+  const seen = new Set<string>();
+  for (const e of entries ?? []) {
+    if (!REPAIR_CODE.test(e.code) || !REPAIR_PATH.test(e.path)) continue;
+    const key = `${e.code}:${e.path}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const clean =
+      e.instruction.length <= 400 &&
+      e.instruction
+        .split(/[\s,;:()]+/)
+        .every((t) => !t || REPAIR_TOKEN.test(t.replace(/\.$/, ""))) &&
+      !scanForIdentifiers(e.instruction, roster);
+    out.push({ code: e.code, path: e.path, instruction: clean ? e.instruction : "" });
+  }
+  return out;
+}
 
 /** Thresholds and weights are numbers only; they never carry identity. */
 export function policyPayload(policy: Policy) {
@@ -203,6 +246,7 @@ export function serializeDraftRequest(
       points: s.points,
     }));
   const policy: Policy | undefined = context.policy;
+  const repair = allowlistRepair(options.repair, context.roster);
   const payload = {
     case: options.aliases.caseAlias,
     specialist: { pack: options.pack, instruction: options.instruction },
@@ -221,7 +265,10 @@ export function serializeDraftRequest(
         similarity: round2(r.similarity),
       }))
       .filter((r) => r.actions.length),
-    failing: (options.failing ?? []).map((f) => `${f.field}:${f.code}`),
+    failing: [
+      ...new Set((options.failing ?? []).map((f) => `${f.field}:${f.code}`)),
+    ],
+    ...(repair.length ? { repair } : {}),
   };
   return { payload, fields: fieldList(payload) };
 }

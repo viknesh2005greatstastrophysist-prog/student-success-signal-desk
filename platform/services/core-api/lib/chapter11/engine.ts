@@ -12,7 +12,9 @@ import {
 export { isPacketV2, packetV2Schema, type PacketV2 };
 import { actions, domainNames } from "./catalogue";
 import { routeSpecialist, specialistRegistry } from "./specialists";
+import { diagnose, type RepairDiagnosis } from "./diagnosis";
 export { actions, domainNames, routeSpecialist, specialistRegistry };
+export { diagnose, type RepairDiagnosis };
 
 export const sourceNames = [
   "academic",
@@ -548,6 +550,8 @@ export type Diagnosis = {
     | "schema"
     | "specialist";
   code: string;
+  /** failing item inside the field, e.g. rationale[1] or actions[0].personalisation */
+  path?: string;
 };
 /** packet-v2 template: the labelled deterministic fallback for v2 drafts. */
 export function formatSkillV2(
@@ -719,6 +723,12 @@ export function acceptanceChecks(
     ? { success: true as const, data: parsed.data as Packet | PacketV2 }
     : { success: false as const };
   const claimCodes = ["UNSUPPORTED_CITATION", "MISSING_TRIGGER_COVERAGE", "UNCITED_CLAIM"];
+  const toolsStudent = (evidence as { tools?: { studentId?: string } }).tools;
+  const scopeBroken =
+    !sourceNames.every(
+      (name) => evidence[name].studentId === evidence.academic.studentId,
+    ) ||
+    (!!toolsStudent && toolsStudent.studentId !== evidence.academic.studentId);
   const checks = {
     alerts_cite_triggers:
       p.success &&
@@ -743,21 +753,25 @@ export function acceptanceChecks(
         (f) => f.code === "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS",
       ),
     privacy_scope_enforced:
-      sourceNames.every(
-        (name) => evidence[name].studentId === evidence.academic.studentId,
-      ) &&
-      (!(evidence as { tools?: { studentId?: string } }).tools ||
-        (evidence as { tools?: { studentId?: string } }).tools!.studentId ===
-          evidence.academic.studentId) &&
-      !report.failures.some((f) => f.code === "OUTPUT_PII"),
+      !scopeBroken && !report.failures.some((f) => f.code === "OUTPUT_PII"),
   };
   const failures = [...report.failures];
   if (checks.thresholds_faculty_set === false)
     failures.push({ field: "citations", code: "THRESHOLDS_NOT_FACULTY_SET" });
-  if (!checks.privacy_scope_enforced)
+  // A check that failed because of a failure already in the report (output PII,
+  // diagnostic wording, a schema fault) adds no second entry: that would only
+  // mark the whole field as failing and hide which sentence or action did.
+  if (scopeBroken)
     failures.push({ field: "citations", code: "PRIVACY_SCOPE_MISMATCH" });
-  if (!checks.advisor_review_required)
-    failures.push({ field: "actions", code: "ADVISOR_REVIEW_REQUIRED" });
+  if (p.success)
+    p.data.actions.forEach((a, index) => {
+      if (a.owner !== "assigned_faculty")
+        failures.push({
+          field: "actions",
+          code: "ADVISOR_REVIEW_REQUIRED",
+          path: `actions[${index}]`,
+        });
+    });
   return { valid: failures.length === 0, failures, checks };
 }
 
@@ -831,6 +845,8 @@ export interface Composer {
     failing?: Diagnosis[],
     prior?: unknown,
     meta?: CallMeta,
+    /** deterministic patch instructions for the failing parts (Brief 16-lite) */
+    repair?: RepairDiagnosis[],
   ): Promise<unknown>;
 }
 function providerFailure(error: unknown): string {
@@ -865,6 +881,35 @@ function summariseCalls(metas: CallMeta[]) {
     calls: metas.length,
   };
 }
+/** Failing fields, each with the item indexes that failed, or null when the
+ * whole field failed (no item path) and must be regenerated as a unit. */
+function failingParts(failures: Diagnosis[]) {
+  const parts = new Map<string, Set<number> | null>();
+  for (const { field, path } of failures) {
+    const item = path?.match(/^[a-z]+\[(\d{1,2})\]/);
+    if (!item) {
+      parts.set(field, null);
+      continue;
+    }
+    const known = parts.get(field);
+    if (known !== null)
+      parts.set(field, (known ?? new Set<number>()).add(Number(item[1])));
+  }
+  return parts;
+}
+/** Keep every passing item of a list and take only the failing ones from the
+ * patch. Undefined when the patch cannot be applied item by item. */
+function patchedItems(
+  current: unknown,
+  supplied: unknown,
+  indexes: Set<number> | null,
+): unknown[] | undefined {
+  if (!indexes || !Array.isArray(current) || !Array.isArray(supplied)) return undefined;
+  if (current.length !== supplied.length) return undefined;
+  if ([...indexes].some((i) => i >= current.length || supplied[i] === undefined))
+    return undefined;
+  return current.map((item, i) => (indexes.has(i) ? supplied[i] : item));
+}
 export async function compose(
   input: GenerationContext,
   provider?: Composer,
@@ -897,7 +942,20 @@ export async function compose(
   let mode: "deterministic" | "model" = "deterministic";
   let providerError: string | null = null;
   let baselineRepair = false;
-  const repairs: Array<{ attempt: number; failures: Diagnosis[] }> = [];
+  const repairs: Array<{
+    attempt: number;
+    failures: Diagnosis[];
+    diagnoses: RepairDiagnosis[];
+  }> = [];
+  const domain = v2 ? (context.baseline as PacketV2).specialist : context.domain;
+  const diagnoseFor = (failures: Diagnosis[], form: unknown) =>
+    diagnose(failures, {
+      candidate: form,
+      aliases: context.aliases,
+      risk: context.risk,
+      domain,
+      roster: context.roster,
+    });
   const modelAttempts: Array<{
     attempt: number;
     inputHash: string;
@@ -936,18 +994,26 @@ export async function compose(
     validationRoute(report.valid, repairs.length) === "regenerate";
     attempt++
   ) {
-    repairs.push({ attempt, failures: report.failures });
+    // Brief 16-lite: deterministic diagnosis, stored with the attempt and sent
+    // to the Regenerator as targeted patch instructions (no extra model call).
+    const diagnoses = diagnoseFor(report.failures, candidate);
+    repairs.push({ attempt, failures: report.failures, diagnoses });
     let patch: unknown = context.baseline;
     if (provider) {
       const meta = newCallMeta();
       metas.push(meta);
       try {
         patch = await runNode("Regenerator", () =>
-          provider.generate(context, report.failures, candidate, meta),
+          provider.generate(context, report.failures, candidate, meta, diagnoses),
         );
         modelAttempts.push({
           attempt,
-          inputHash: digest({ context, failures: report.failures, candidate }),
+          inputHash: digest({
+            context,
+            failures: report.failures,
+            diagnoses,
+            candidate,
+          }),
           output: patch,
           outputHash: digest(patch),
           call: meta,
@@ -965,10 +1031,17 @@ export async function compose(
         ? (patch as Record<string, unknown>)
         : {};
     candidate = { ...current };
-    for (const { field } of report.failures) {
+    for (const [field, indexes] of failingParts(report.failures)) {
+      const target = candidate as Record<string, unknown>;
+      const part = patchedItems(current[field], supplied[field], indexes);
+      if (part) {
+        // Item-level faults: only the failing sentences or actions change; the
+        // passing ones stay byte-for-byte as they were.
+        target[field] = part;
+        continue;
+      }
       if (supplied[field] === undefined) baselineRepair = true;
-      (candidate as Record<string, unknown>)[field] =
-        supplied[field] ?? baselineFields[field];
+      target[field] = supplied[field] ?? baselineFields[field];
     }
     report = await runNode("PacketValidator", () => check(candidate));
   }
@@ -981,6 +1054,7 @@ export async function compose(
     const after = check(restored, { ...options, aliases: undefined });
     restoreFailures = after.failures;
   }
+  const finalFailures = [...report.failures, ...restoreFailures];
   const needsHuman =
     !!providerError ||
     !report.valid ||
@@ -1003,7 +1077,11 @@ export async function compose(
         : null,
     validation: {
       ...report,
-      failures: [...report.failures, ...restoreFailures],
+      failures: finalFailures,
+      // The latest diagnoses: what a mentor sees if the repair budget ran out.
+      diagnoses: finalFailures.length
+        ? diagnoseFor(finalFailures, restoreFailures.length ? restored : candidate)
+        : [],
       valid: !needsHuman && report.valid,
       repairs,
       fallback: needsHuman,

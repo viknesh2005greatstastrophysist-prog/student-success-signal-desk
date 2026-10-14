@@ -1,4 +1,4 @@
-# Work status — 14 October 2026, 13:00 IST
+# Work status — 14 October 2026, 12:45 IST
 
 Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes.
 
@@ -7,7 +7,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 | Item | State |
 |---|---|
 | Branch | `streamlit-college-project` |
-| HEAD | Brief 12 (investigator + planner on one agent loop): `1aceac0` (loop + investigator), `9892467` (planner), plus the Streamlit/bundle/docs commit on top of `babab7f` — pushed to `origin/streamlit-college-project` once all checks below passed. |
+| HEAD | Brief 16-lite (deterministic diagnosis in the repair loop): one commit on top of `bb92e3d` (Brief 12.3), pushed to `origin/streamlit-college-project` once all checks below passed. Earlier: Brief 12 (`1aceac0`, `9892467`, `bb92e3d`). |
 | Hosted Streamlit (aura-college-workspace.streamlit.app) | Deployed from `5f7db7e` (Briefs 1–9). Does not yet have Brief 17. Private app; owner sign-in required. |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
@@ -16,7 +16,14 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 `gh auth switch --user viknesh2005greatstastrophysist-prog && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project && gh auth switch --user vikneshwaranmarimuthu-cmyk`.
 Streamlit Cloud redeploys from the branch on every push. Codex's subscription ended 14 Oct; Claude implements under a strict usage cap (one agent at a time).
 
-## Verification at HEAD (run 14 Oct 13:00 IST, Brief 12)
+## Verification at HEAD (run 14 Oct 12:45 IST, Brief 16-lite)
+
+- Core `tsc --noEmit` and eslint clean; Core tests 139: 131 pass, 0 fail, 8 skipped (opt-in DB suites) (was 124: 116 pass). New `chapter11-diagnosis.test.ts` (15 tests, stubbed providers and the local mock server, no network): the six failure injections (ungrounded number, missing trigger citation, diagnostic language, wrong-domain action code, over-length rationale, PII string) each diagnosed with the right code and path; four repaired within budget with the unaffected parts asserted identical, two escalated carrying an accurate diagnosis. Also covers the `labels.ISSUES` wording parity, the instruction allowlist and egress refusal of names, the whole-field fallback, v1 packets and the instruction reaching a sealed mock request.
+- `npm run check:engine` passes after `node scripts/build-streamlit-engine.mjs` (Core changed). `verify_ui.py` (6 logins, 21 pages), `verify_draft_v2.py` and `verify_agent_trace.py` pass; the last two gained cases for a stored diagnosis, an open diagnosis and an older record that falls back to the `ISSUES` wording.
+- Opt-in DB suites were NOT run: `service.ts` and storage are unchanged (the escalation already stores the whole validation, which now includes the diagnoses), and the local database password lives in a git-ignored runtime file that I did not read. Nothing was run against hosted Neon. The earlier DB-suite results below stand for the code before this change; re-run `chapter11-database.test.ts` on the local Postgres in a disposable schema before relying on it.
+- Live model calls for Brief 16-lite: 0 Groq, 0 Gemini. Student 021 and all records untouched (no database access in this change).
+
+## Verification before Brief 16-lite (run 14 Oct 13:00 IST, Brief 12)
 
 - Core `tsc --noEmit` and eslint clean; Core tests 124: 116 pass, 0 fail, 8 skipped (opt-in DB suites). New: `chapter11-agent-loop.test.ts` (budget, canonical call ids, no tool support, planted name blocked, allowlist), `chapter11-investigator.test.ts` (tools, scope, citations, fallback, skip), `chapter11-planner.test.ts` (three vague requests, scope, feedback, fallbacks, no lock/execute), gated `chapter11-agents-database.test.ts`.
 - Opt-in DB suites on the LOCAL Postgres (127.0.0.1:55432) in disposable schemas `aura_core_test_ch11_agent`, `_reg` and `_e2e`, all dropped afterwards (nothing run against hosted Neon): `chapter11-agents-database.test.ts` and `chapter11-database.test.ts` pass. Fifteen older `aura_core_test_*` schemas from earlier sessions are still in that database; they are not from this work.
@@ -57,10 +64,11 @@ Streamlit Cloud redeploys from the branch on every push. Codex's subscription en
 | 1–9 (lab-manual gaps) | `docs/CHAPTER11_GAP_BRIEFS.md` | Done by Codex, commits `be3d47d`..`5f7db7e`; ledger in `docs/CHAPTER11_GAP_IMPLEMENTATION.md` |
 | 10 (real case + real mentor sign-off) | same | **Owner action.** Not started. Never simulate. |
 | 11 (grounded drafting + egress + specialists) | `docs/CHAPTER11_AGENTIC_BRIEFS.md`, audit Phase 1 | **Done locally by Claude (14 Oct).** Ledger row in `docs/CHAPTER11_GAP_IMPLEMENTATION.md`. |
-| 12 + 13 (tool-using investigator + planner, one agent loop) | same, audit Phase 1 | **Done locally by Claude (14 Oct), pushed after verification.** Ledger row 12. Next: 16-lite; 14 deferred. Re-run one live Groq check after the prompt fixes (see the ledger row) before relying on the investigator in a demo. |
+| 12 + 13 (tool-using investigator + planner, one agent loop) | same, audit Phase 1 | **Done locally by Claude (14 Oct), pushed after verification.** Ledger row 12. 14 deferred. Re-run one live Groq check after the prompt fixes (see the ledger row) before relying on the investigator in a demo. |
+| 16-lite (diagnosis in the repair loop, no model call) | `docs/CHAPTER11_AGENTIC_BRIEFS.md` Brief 16, audit table | **Done locally by Claude (14 Oct), pushed after verification.** Ledger row 16-lite. |
 | 17 (visual redesign) | `docs/STREAMLIT_DESIGN_BRIEF.md` | Done by Claude in `6b34843`. Codex's "before" captures are in `runtime/streamlit-project/design/before/`; "after" captures in `.../design/after/` (git-ignored). |
 
-The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Remaining order: Brief 16-lite → Sonnet hygiene batch (0.3, 0.4, 0.6) → 0.5 / 0.2 only if budget remains. Brief 14 deferred.
+The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Remaining order: hygiene batch (0.3, 0.4, 0.6) → 0.5/0.2 if budget remains. Brief 14 deferred.
 
 ## Standing decisions (owner)
 

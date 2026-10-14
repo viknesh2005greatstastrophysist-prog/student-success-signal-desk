@@ -522,7 +522,7 @@ export function primedComposer(inner: Composer, outcome: InvestigationOutcome): 
   let used = false;
   return {
     modelId: inner.modelId,
-    async generate(context, failing, prior, meta = newCallMeta()) {
+    async generate(context, failing, prior, meta = newCallMeta(), repair) {
       if (!used && !failing && outcome.primed !== undefined) {
         used = true;
         meta.provider = outcome.summary.provider ?? undefined;
@@ -533,7 +533,7 @@ export function primedComposer(inner: Composer, outcome: InvestigationOutcome): 
         meta.latencyMs = outcome.summary.latencyMs;
         return outcome.primed;
       }
-      return inner.generate(context, failing, prior, meta);
+      return inner.generate(context, failing, prior, meta, repair);
     },
   };
 }

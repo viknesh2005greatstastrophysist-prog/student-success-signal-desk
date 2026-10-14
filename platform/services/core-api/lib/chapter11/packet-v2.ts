@@ -422,29 +422,36 @@ export function validatePacketV2(
         : parsed.error.issues.map((i) => ({
             field: (fields.has(String(i.path[0])) ? i.path[0] : "summary") as Diagnosis["field"],
             code: i.code === "too_big" || i.code === "too_small" ? "LENGTH_LIMIT" : "SCHEMA_INVALID",
+            ...(i.path.length > 1 && fields.has(String(i.path[0])) ? { path: pathOf(i.path) } : {}),
           }));
     return { valid: false, failures: dedupe(failures) };
   }
   const p = parsed.data;
   const failures: Diagnosis[] = [];
-  const fail = (field: Diagnosis["field"], code: string) => failures.push({ field, code });
+  // `path` names the failing item (for example rationale[1]) so a repair can
+  // regenerate that sentence or action only; field-level faults carry none.
+  const fail = (field: Diagnosis["field"], code: string, path?: string) =>
+    failures.push(path ? { field, code, path } : { field, code });
   if (p.specialist !== o.specialist) fail("specialist", "SPECIALIST_MISMATCH");
-  if (p.actions.some((a) => !o.codes.includes(a.code) || a.label !== actions[a.code] || a.owner !== "assigned_faculty"))
-    fail("actions", "CATALOGUE_OR_DOMAIN_MISMATCH");
+  p.actions.forEach((a, index) => {
+    if (!o.codes.includes(a.code) || a.label !== actions[a.code] || a.owner !== "assigned_faculty")
+      fail("actions", "CATALOGUE_OR_DOMAIN_MISMATCH", `actions[${index}]`);
+  });
   // Server-derived trigger citations: the v1 rule applies unchanged.
-  for (const c of p.citations) {
+  p.citations.forEach((c, index) => {
     const value = valueAt(evidence, c.evidencePath);
     if (value === undefined || o.canonical.get(c.evidencePath) !== c.statement)
-      fail("citations", "UNSUPPORTED_CITATION");
-  }
+      fail("citations", "UNSUPPORTED_CITATION", `citations[${index}]`);
+  });
   if (risk.signals.some((s) => !p.citations.some((c) => c.evidencePath === s.path)))
     fail("citations", "MISSING_TRIGGER_COVERAGE");
   if (UNSAFE_LANGUAGE.test(p.summary)) fail("summary", "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS");
   const strip = courseCodesIn(evidence);
-  const claims: Array<{ field: "rationale" | "actions"; texts: string[]; citations: string[]; extra: number[] }> = [
-    ...p.rationale.map((r) => ({ field: "rationale" as const, texts: [r.text], citations: r.citations, extra: [] })),
-    ...p.actions.map((a) => ({
+  const claims: Array<{ field: "rationale" | "actions"; path: string; texts: string[]; citations: string[]; extra: number[] }> = [
+    ...p.rationale.map((r, index) => ({ field: "rationale" as const, path: `rationale[${index}]`, texts: [r.text], citations: r.citations, extra: [] })),
+    ...p.actions.map((a, index) => ({
       field: "actions" as const,
+      path: `actions[${index}]`,
       texts: [a.personalisation, ...a.talkingPoints],
       citations: a.citations,
       extra: [a.dueInDays, ...numbersIn(actions[a.code] ?? "", [])],
@@ -452,16 +459,16 @@ export function validatePacketV2(
   ];
   const cited = new Set<string>();
   for (const claim of claims) {
-    if (!claim.citations.length) fail(claim.field, "UNCITED_CLAIM");
+    if (!claim.citations.length) fail(claim.field, "UNCITED_CLAIM", claim.path);
     const paths = claim.citations.map((t) => resolveCitation(t, o.aliases));
     const allowed: number[] = [...claim.extra];
     for (const path of paths) {
       const value = valueAt(evidence, path);
       if (value === undefined) {
-        fail(claim.field, "UNSUPPORTED_CITATION");
+        fail(claim.field, "UNSUPPORTED_CITATION", claim.path);
         continue;
       }
-      if (o.scope && !o.scope.includes(path)) fail(claim.field, "SPECIALIST_SCOPE");
+      if (o.scope && !o.scope.includes(path)) fail(claim.field, "SPECIALIST_SCOPE", claim.path);
       cited.add(path);
       allowed.push(value);
       const metric = metricOf(path).metric;
@@ -473,16 +480,16 @@ export function validatePacketV2(
     for (const text of claim.texts) {
       for (const n of numbersIn(text, strip))
         if (!allowed.some((a) => Math.abs(a - n) <= ROUNDING_TOLERANCE)) {
-          fail(claim.field, "UNSUPPORTED_NUMBER");
+          fail(claim.field, "UNSUPPORTED_NUMBER", claim.path);
           break;
         }
       for (const m of text.matchAll(new RegExp(COURSE_ALIAS.source, "gi")))
-        if (!o.aliases?.courses[`course-${Number(m[1])}`]) fail(claim.field, "UNKNOWN_COURSE_ALIAS");
-      if (UNSAFE_LANGUAGE.test(text)) fail(claim.field, "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS");
-      if (o.language?.test(text)) fail(claim.field, "SPECIALIST_LANGUAGE");
+        if (!o.aliases?.courses[`course-${Number(m[1])}`]) fail(claim.field, "UNKNOWN_COURSE_ALIAS", claim.path);
+      if (UNSAFE_LANGUAGE.test(text)) fail(claim.field, "UNSUPPORTED_AUTHORITY_OR_DIAGNOSIS", claim.path);
+      if (o.language?.test(text)) fail(claim.field, "SPECIALIST_LANGUAGE", claim.path);
       let scrubbed = text;
       for (const code of strip) scrubbed = scrubbed.split(code).join(" ");
-      if (scanForIdentifiers(scrubbed, o.roster)) fail(claim.field, "OUTPUT_PII");
+      if (scanForIdentifiers(scrubbed, o.roster)) fail(claim.field, "OUTPUT_PII", claim.path);
     }
   }
   if (risk.signals.some((s) => !cited.has(s.path))) fail("rationale", "MISSING_TRIGGER_COVERAGE");
@@ -507,10 +514,18 @@ function numbersIn(text: string, strip: string[]): number[] {
   for (const code of strip) t = t.split(code).join(" ");
   return [...t.matchAll(NUMBER)].map((m) => Number(m[0]));
 }
+/** Zod issue path to a readable location, e.g. rationale[0].text. */
+function pathOf(path: ReadonlyArray<PropertyKey>): string {
+  return path.reduce<string>(
+    (out, part) =>
+      typeof part === "number" ? `${out}[${part}]` : out ? `${out}.${String(part)}` : String(part),
+    "",
+  );
+}
 function dedupe(failures: Diagnosis[]) {
   const seen = new Set<string>();
   return failures.filter((f) => {
-    const key = `${f.field}:${f.code}`;
+    const key = `${f.field}:${f.code}:${f.path ?? ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

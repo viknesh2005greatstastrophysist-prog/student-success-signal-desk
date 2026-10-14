@@ -40,6 +40,36 @@ PROVENANCE = {
 }
 
 
+DIAGNOSES = [
+    {
+        "code": "UNSUPPORTED_NUMBER",
+        "path": "rationale[1]",
+        "diagnosis": "A number not found in the evidence (rationale sentence 2)",
+        "instruction": "rewrite rationale r2 (rationale[1]) so every number equals a cited value or a policy threshold, citing only ev-4",
+    }
+]
+# Brief 16-lite: one repaired draft (diagnosis stored with the attempt), one escalated
+# with a latest diagnosis, and one recorded before diagnoses existed (falls back to ISSUES).
+REPAIRED = {
+    "valid": True, "checks": {}, "packetSchema": "packet-v2", "provenance": PROVENANCE, "diagnoses": [],
+    "repairs": [{"attempt": 1, "failures": [{"field": "rationale", "code": "UNSUPPORTED_NUMBER", "path": "rationale[1]"}], "diagnoses": DIAGNOSES}],
+}
+OPEN = {
+    "valid": False, "checks": {}, "packetSchema": "packet-v2", "provenance": PROVENANCE,
+    "failures": [{"field": "actions", "code": "OUTPUT_PII", "path": "actions[0]"}],
+    "diagnoses": [{
+        "code": "OUTPUT_PII", "path": "actions[0]", "diagnosis": "Personal details in the draft text (action 1)",
+        "instruction": "rewrite action a1 (actions[0]) without names, register numbers, emails, dates or phone numbers <script>alert(1)</script>",
+    }],
+    "repairs": [{"attempt": 1, "failures": [{"field": "actions", "code": "OUTPUT_PII", "path": "actions[0]"}], "diagnoses": []}],
+}
+OLD = {
+    "valid": False, "checks": {}, "packetSchema": "packet-v2",
+    "failures": [{"field": "rationale", "code": "UNSUPPORTED_NUMBER"}],
+    "repairs": [{"attempt": 1, "failures": [{"field": "rationale", "code": "UNSUPPORTED_NUMBER"}]}],
+}
+
+
 def row(draft_id: str, packet: dict, validation: dict) -> dict:
     return {
         "id": draft_id, "student_id": "s-" + draft_id, "revision": 0, "status": "awaiting_faculty", "artifact_id": "a-" + draft_id,
@@ -52,6 +82,9 @@ def script(selected: int) -> str:
     queue = {"drafts": [
         row("v2", V2, {"valid": True, "checks": {}, "packetSchema": "packet-v2", "provenance": PROVENANCE, "repairs": []}),
         row("v1", V1, {"valid": True, "checks": {}, "repairs": []}),
+        row("fixed", V2, REPAIRED),
+        row("open", V2, OPEN),
+        row("old", V2, OLD),
     ]}
     return f"""
 import json, sys
@@ -87,4 +120,39 @@ at = AppTest.from_string(script(1), default_timeout=30).run()
 assert not at.exception, [e.message for e in at.exception]
 assert "Why this draft" not in " ".join(m.value for m in at.markdown)
 assert "Recorded before provider tracing" in " ".join(str(df.value) for df in at.dataframe)
-print(json.dumps({"status": "passed", "checks": ["packet-v2 rationale and chips", "escaped model text", "provenance panel", "v1 draft unchanged"]}))
+
+
+def frames(at: AppTest) -> str:
+    return " ".join(df.value.to_csv(index=False) for df in at.dataframe)
+
+
+def captions(at: AppTest) -> str:
+    return " ".join(c.value for c in at.caption)
+
+
+# Brief 16-lite: the stored diagnosis and the fix requested show in the validation report.
+at = AppTest.from_string(script(2), default_timeout=30).run()
+assert not at.exception, [e.message for e in at.exception]
+text = frames(at)
+assert "A number not found in the evidence (rationale sentence 2)" in text, text
+assert "rewrite rationale r2 (rationale[1])" in text and "citing only ev-4" in text, text
+assert "Repair history" in [e.label for e in at.status] + [e.label for e in at.expander]
+assert "Only the failing parts were rewritten" in captions(at)
+assert "Open issues" not in [e.label for e in at.status] + [e.label for e in at.expander]
+
+at = AppTest.from_string(script(3), default_timeout=30).run()
+assert not at.exception, [e.message for e in at.exception]
+text = frames(at)
+assert "Personal details in the draft text (action 1)" in text, text
+assert "without names, register numbers, emails, dates or phone numbers" in text
+assert "Open issues" in [e.label for e in at.status] + [e.label for e in at.expander]
+assert not any("<script>" in el.proto.body for el in at.get("html"))
+
+# Older record: no stored diagnoses, so the standard wording per failed check is shown.
+at = AppTest.from_string(script(4), default_timeout=30).run()
+assert not at.exception, [e.message for e in at.exception]
+text = frames(at)
+assert "A number not found in the evidence" in text and "rewrite" not in text, text
+assert "Recorded before targeted diagnoses were stored" in captions(at)
+
+print(json.dumps({"status": "passed", "checks": ["packet-v2 rationale and chips", "escaped model text", "provenance panel", "v1 draft unchanged", "stored diagnosis in repair history", "open issue diagnosis", "older record falls back to ISSUES wording"]}))

@@ -6,6 +6,7 @@ title-cased form so new backend values never render as raw enums.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -196,6 +197,56 @@ def issue_label(code: Any) -> str:
     if not code:
         return "None"
     return ISSUES.get(str(code), humanize(code))
+
+
+_PATH = re.compile(r"^([a-z]+)(?:\[(\d+)\])?(?:\.([A-Za-z]+)(?:\[(\d+)\])?)?$")
+_PARTS = {"rationale": "Rationale sentence", "actions": "Action", "citations": "Citation"}
+_SUBPARTS = {"talkingPoints": "talking point", "personalisation": "personalisation", "citations": "citations"}
+
+
+def path_label(path: Any) -> str:
+    """Plain place of a failure: rationale[1] -> 'Rationale sentence 2'. Empty when the whole draft."""
+    match = _PATH.match(str(path or ""))
+    if not match:
+        return ""
+    field, index, sub, sub_index = match.groups()
+    if index is None:
+        return humanize(field) if field not in {"summary"} else "Summary"
+    text = f"{_PARTS.get(field, humanize(field))} {int(index) + 1}"
+    if sub and sub != "text":
+        text += f", {_SUBPARTS.get(sub, humanize(sub).lower())}"
+        if sub_index is not None:
+            text += f" {int(sub_index) + 1}"
+    return text
+
+
+def diagnosis_rows(record: Any) -> tuple[list[dict[str, str]], bool]:
+    """Rows (Diagnosis, Fix requested) for a validation report or one repair attempt.
+
+    Reports recorded before targeted diagnoses were stored carry none, so each failed
+    check falls back to its plain `ISSUES` wording; the flag says the fallback was used.
+    """
+    if not isinstance(record, dict):
+        return [], False
+    stored = [d for d in record.get("diagnoses") or [] if isinstance(d, dict) and d.get("code")]
+    if stored:
+        return (
+            [
+                {
+                    "Diagnosis": str(d.get("diagnosis") or issue_label(d.get("code"))),
+                    "Fix requested": str(d.get("instruction") or "—"),
+                }
+                for d in stored
+            ],
+            False,
+        )
+    failures = [f for f in record.get("failures") or [] if isinstance(f, dict) and f.get("code")]
+    rows = []
+    for failure in failures:
+        where = path_label(failure.get("path"))
+        wording = issue_label(failure.get("code"))
+        rows.append({"Diagnosis": f"{wording} ({where.lower()})" if where else wording, "Fix requested": "—"})
+    return rows, bool(rows)
 
 
 def domain_label(code: Any) -> str:

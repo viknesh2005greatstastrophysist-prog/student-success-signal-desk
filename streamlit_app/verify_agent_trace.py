@@ -214,6 +214,55 @@ markup = " ".join(el.proto.body for el in at.get("html"))
 assert "Investigator" in markup, "pipeline strip shows the investigator node"
 assert "get_lms_timeline" in frames(at)
 
+# 4b. Brief 16-lite: the trace shows each repair attempt's diagnosis and the latest open one;
+# a run recorded before diagnoses existed falls back to the standard wording per failed check.
+DIAGNOSED = {
+    **VALIDATION,
+    "valid": False,
+    "failures": [{"field": "actions", "code": "OUTPUT_PII", "path": "actions[0]"}],
+    "diagnoses": [
+        {
+            "code": "OUTPUT_PII",
+            "path": "actions[0]",
+            "diagnosis": "Personal details in the draft text (action 1)",
+            "instruction": "rewrite action a1 (actions[0]) without names, register numbers, emails, dates or phone numbers",
+        }
+    ],
+    "repairs": [
+        {
+            "attempt": 1,
+            "failures": [{"field": "rationale", "code": "UNSUPPORTED_NUMBER", "path": "rationale[1]"}],
+            "diagnoses": [
+                {
+                    "code": "UNSUPPORTED_NUMBER",
+                    "path": "rationale[1]",
+                    "diagnosis": "A number not found in the evidence (rationale sentence 2)",
+                    "instruction": "rewrite rationale r2 (rationale[1]) so every number equals a cited value or a policy threshold, citing only ev-4",
+                }
+            ],
+        }
+    ],
+}
+for validation, expected, absent in (
+    (DIAGNOSED, ("rationale r2 (rationale[1])", "Latest", "without names, register numbers", "Attempt"), "Recorded before targeted"),
+    (
+        {**VALIDATION, "valid": False, "failures": [{"field": "rationale", "code": "UNSUPPORTED_NUMBER"}], "repairs": [{"attempt": 1, "failures": [{"field": "rationale", "code": "UNSUPPORTED_NUMBER"}]}]},
+        ("A number not found in the evidence",),
+        "rewrite",
+    ),
+):
+    job = {**review["jobs"][0], "validation": validation}
+    at = render(f"ns['render_agent_graph'](json.loads({json.dumps(json.dumps({**review, 'jobs': [job]}))}))")
+    assert "Diagnosis and repairs for this run" in [e.label for e in at.status] + [e.label for e in at.expander]
+    text = frames(at)
+    for token in expected:
+        assert token in text, (token, text)
+    assert absent not in text
+    assert ("Recorded before targeted" in " ".join(c.value for c in at.caption)) == (validation is not DIAGNOSED)
+# a clean run (no repairs, no failures) adds no diagnosis panel
+at = render(f"ns['render_agent_graph'](json.loads({json.dumps(json.dumps(review))}))")
+assert "Diagnosis and repairs for this run" not in [e.label for e in at.status] + [e.label for e in at.expander]
+
 # 5. a plan without an agent trace renders no planner panel (rule-based plans unchanged)
 at = render("ns['render_planner_trace']({'request': 'x', 'questions': []})")
 assert not [e for e in at.status] + [e for e in at.expander]
@@ -227,6 +276,7 @@ print(
                 "mentor draft tool calls",
                 "labelled fallback",
                 "AI Activity node + tool calls",
+                "AI Activity repair diagnoses and ISSUES fallback",
                 "escaping",
                 "rule-based plans unchanged",
             ],
