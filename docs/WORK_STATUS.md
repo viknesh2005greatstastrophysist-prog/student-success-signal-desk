@@ -8,7 +8,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 |---|---|
 | Branch | `streamlit-college-project` |
 | HEAD | Hygiene batch (audit 0.3, 0.4, 0.6) on top of `6ec8189` (Brief 16-lite): `7c8e15c` (0.3), `6f01f5c` (0.4), `855d5e4` (0.6), then a docs commit; pushed to `origin/streamlit-college-project` once all checks below passed. Earlier: Brief 16-lite (`6ec8189`), Brief 12 (`1aceac0`, `9892467`, `bb92e3d`). |
-| Hosted Streamlit (aura-college-workspace.streamlit.app) | Deployed from `5f7db7e` (Briefs 1–9). Does not yet have Brief 17. Private app; owner sign-in required. |
+| Hosted Streamlit (aura-college-workspace.streamlit.app) | Last confirmed deployed from `5f7db7e` (Briefs 1–9); it should redeploy on push but the running version is unconfirmed (private app, owner sign-in required). `GROQ_API_KEY` must be added to its Streamlit secrets by the owner. |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
 
@@ -18,6 +18,7 @@ Streamlit Cloud redeploys from the branch on every push. Codex's subscription en
 
 ## Verification at HEAD (run 14 Oct 13:00 IST, hygiene batch 0.3 / 0.4 / 0.6)
 
+- DB suites re-run 14 Oct after the hygiene batch, on the LOCAL Postgres (127.0.0.1:55432) in disposable schemas `aura_core_test_core_final`, `aura_core_test_ch11_final`, `aura_core_test_ch11_agent_final`, `aura_core_test_ch11_lease_final` (all dropped afterwards; nothing run against Neon): `database.test.ts`, `chapter11-database.test.ts`, `chapter11-agents-database.test.ts`, `chapter11-lease-database.test.ts` all pass (4/4).
 - Core `tsc --noEmit` and eslint clean; Core tests 140: 132 pass, 0 fail, 8 skipped (opt-in DB suites) (was 139: 131 pass). New: a positive-control test in `chapter11-escalation.test.ts`; its four fault tests now assert `checks[name] === false`, that no other check flips, and the specific failure code. The Lab 8 timing assertion in `chapter11.test.ts` is now a max-in-flight counter (1 sequential, exactly 4 parallel).
 - Core source did not change, so the bundle was not rebuilt: `npm run check:engine` passes. Python: `verify_ui.py` (6 logins, 21 pages), `verify_chapter11_dashboard.py`, `verify_chapter11_planning.py` (picks its student by status), `verify_draft_v2.py`, `verify_agent_trace.py` and the new offline `verify_read_cache.py` pass.
 - 0.3: `verify-ch11-escalation.mts` and `verify-ch11-parallel.mts` are deleted (they asserted `aura_project_core` and wrote pending jobs into it). Their unique assertions moved into the DB-gated tests, which only accept `aura_core_test_ch11*` schemas. `migrate-ch11-release.mts` now preserves every student whose latest case is `awaiting_faculty`, selected by status. Synthetic fixture register numbers in unit tests (`01FE24BCI047`, fictional students) remain.
@@ -86,7 +87,7 @@ The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Hygiene
 - Remote models receive **anonymised numbers only** (case alias, values, thresholds, course aliases, relative time). Local Qwen may receive full context.
 - Preserve all 321-student / 647-account records; additive migrations only; **Student 021 stays pending** for the presentation.
 - Codex desktop session = orchestrator on gpt-6-astra, delegating to gpt-6.1-sol (implementation) and gpt-6-luna (bounded checks). Claude sessions use Opus for sub-agents to conserve usage.
-- Three Groq keys for other accounts were pasted into chats on 13 Oct; they were never stored or used. Owner should revoke them.
+- Three Groq keys for other accounts were pasted into chats on 13 Oct; they were never stored or used. Owner revoked them on 14 Oct.
 
 ## Known gaps still open
 
