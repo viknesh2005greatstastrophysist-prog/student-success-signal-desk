@@ -13,6 +13,7 @@ import subprocess
 import tarfile
 import tempfile
 import threading
+import time
 import urllib.request
 import uuid
 from contextlib import ExitStack
@@ -99,6 +100,9 @@ def environment() -> dict[str, str]:
         )
     worker_environment = {
         **os.environ,
+        # Keep pooled database connections for two minutes (the Core default is 20 s):
+        # opening one to a database in another region costs several round trips.
+        "CORE_DB_IDLE_TIMEOUT_MS": "120000",
         **{key: str(value) for key, value in values.items()},
         "NODE_ENV": "production",
     }
@@ -156,20 +160,36 @@ def node_binary() -> str:
     return str(binary)
 
 
-class Client:
-    def __init__(self):
+# Actions that can call a model (the planner, the agent run, the replay). They run in
+# their own engine process, so a plan that waits minutes for a model never holds up
+# anyone's reads, and the model rate limiter (kept per process) is still one limiter.
+AGENT_ACTIONS = frozenset({"plan_save", "plan_revise", "plan_execute", "replay"})
+READER_PROCESSES = 2
+
+
+class Worker:
+    """One engine process, one request at a time (the engine reads stdin line by line).
+
+    Sessions and tokens live in the database, so any engine process can serve any
+    signed-in request; leases and transactions are database-level.
+    """
+
+    def __init__(self, name: str, node: str, env: dict[str, str], script: Path):
+        self.name = name
+        self.pending = 0  # requests waiting for or inside this worker
         self._lock = threading.Lock()
-        self._env = environment()
-        self._node = node_binary()
+        self._node, self._env, self._script = node, env, script
         self._process: subprocess.Popen | None = None
         self._resources = ExitStack()
         self._log = self._resources.enter_context(tempfile.TemporaryFile(mode="w+b"))  # noqa: SIM115 -- transport lifetime ends in close()
-        self._start()
-        atexit.register(self.close)
+
+    @property
+    def started(self) -> bool:
+        return self._process is not None and self._process.poll() is None
 
     def _start(self):
         self._process = subprocess.Popen(
-            [self._node, str(ROOT / "engine.mjs")],
+            [self._node, str(self._script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self._log,
@@ -231,6 +251,80 @@ class Client:
                     "ENGINE_STOPPED",
                 ) from error
 
+    def close(self):
+        if self._process and self._process.poll() is None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=5)
+        self._resources.close()
+
+
+class Client:
+    """Routes each request to an engine process.
+
+    Two reader processes serve everything except the model-calling actions: one
+    person stays on the first (its database connections are warm), a second
+    request that arrives while the first is busy goes to the other. The agent
+    process is started the first time a plan is saved, revised or run.
+    """
+
+    def __init__(
+        self,
+        script: Path | None = None,
+        readers: int = READER_PROCESSES,
+        *,
+        env: dict[str, str] | None = None,
+        node: str | None = None,
+    ):
+        # `script`, `env` and `node` are for tests with a stand-in engine; the app
+        # passes none of them.
+        self._env = env if env is not None else environment()
+        self._node = node or node_binary()
+        script = script or ROOT / "engine.mjs"
+        self._readers = [
+            Worker(f"reader-{i + 1}", self._node, self._env, script)
+            for i in range(max(1, readers))
+        ]
+        self._agent = Worker("agent", self._node, self._env, script)
+        self._choose = threading.Lock()
+        self._readers[0]._start()
+        atexit.register(self.close)
+
+    def workers(self) -> list[Worker]:
+        return [*self._readers, self._agent]
+
+    def _route(self, action: str) -> Worker:
+        if action in AGENT_ACTIONS:
+            worker = self._agent
+        else:
+            with self._choose:  # ties go to the first reader, so a lone user stays warm
+                worker = min(self._readers, key=lambda w: w.pending)
+        with self._choose:
+            worker.pending += 1
+        return worker
+
+    def request(
+        self, action: str, data: dict | None = None, token: str | None = None
+    ) -> object:
+        worker = self._route(action)
+        try:
+            return worker.request(action, data, token)
+        finally:
+            with self._choose:
+                worker.pending -= 1
+
+    def warm(self) -> None:
+        """Open the readers' database connections ahead of the first real request
+        (best effort; a failure here only means the first request pays for it)."""
+        for worker in self._readers:
+            try:
+                worker.request("warm")
+            except BridgeError:
+                pass
+
     def login(self, email: str, password: str, portal: str) -> dict:
         source = st.context.ip_address
         if not isinstance(source, str) or not source:
@@ -244,17 +338,53 @@ class Client:
         return self.request("logout", token=token)
 
     def close(self):
-        if self._process and self._process.poll() is None:
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait(timeout=5)
-        self._resources.close()
+        for worker in self.workers():
+            worker.close()
+
+
+_client_lock = threading.Lock()
+_client: Client | None = None
+
+
+def shared_client() -> Client:
+    """The one process-wide transport (also used by the background warm-up, which
+    runs outside a Streamlit script run)."""
+    global _client
+    with _client_lock:
+        if _client is None:
+            _client = Client()
+        return _client
 
 
 @st.cache_resource(show_spinner="Connecting to the college workspace…")
 def get_client() -> Client:
     # Only the transport is shared. Sessions and returned data remain user scoped.
-    return Client()
+    return shared_client()
+
+
+_warm_lock = threading.Lock()
+_warm_at = 0.0
+WARM_INTERVAL_SECONDS = 90.0
+
+
+def warm_in_background() -> None:
+    """Start the engine and open its database connections without making the page
+    wait: called while the sign-in card is shown, so the person's typing time pays
+    for the connections (a few round trips each to a database in another region).
+    At most one warm-up per interval; every failure is ignored."""
+    global _warm_at
+    if os.environ.get("AURA_DISABLE_WARMUP"):  # offline checks must not start an engine
+        return
+    now = time.monotonic()
+    with _warm_lock:
+        if now - _warm_at < WARM_INTERVAL_SECONDS:
+            return
+        _warm_at = now
+
+    def run() -> None:
+        try:
+            shared_client().warm()
+        except Exception:  # noqa: BLE001 -- warming is best effort
+            pass
+
+    threading.Thread(target=run, name="aura-warm", daemon=True).start()

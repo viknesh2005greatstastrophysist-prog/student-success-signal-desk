@@ -6,7 +6,7 @@ from typing import Any
 import labels
 import streamlit as st
 import ui
-from bridge import BridgeError, get_client
+from bridge import BridgeError, get_client, warm_in_background
 from common import (
     PORTALS,
     PORTAL_ROLES,
@@ -47,6 +47,10 @@ def login_view() -> None:
             )
         if submitted:
             complete_sign_in(portal, email, password)
+        else:
+            # Start the engine and open its database connections while the person
+            # types; the page has already been drawn and does not wait for this.
+            warm_in_background()
 
 
 def complete_sign_in(portal: str | None, email: str, password: str) -> None:

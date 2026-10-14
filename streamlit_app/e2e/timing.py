@@ -16,6 +16,13 @@ Usage (from the repo root; the server must be started with the log path set):
       --server.address 127.0.0.1 &
     .venv/bin/python streamlit_app/e2e/timing.py --label before --base-url http://127.0.0.1:8503
 
+Hosted app (public, in an iframe on *.streamlit.app): add --hosted. The script first opens the site
+root once (Streamlit's cookie bootstrap redirect) and then drives the app document itself
+(`<root>/~/+/`), so no iframe handling is needed. The engine-call counts are empty there (no
+server log); everything else is the same, measured from this machine.
+
+    .venv/bin/python streamlit_app/e2e/timing.py --hosted --label hosted-before --roles mentor1,student001
+
 Output: runtime/streamlit-project/e2e/timing-<label>.json (git-ignored) and a table on stdout.
 """
 
@@ -67,6 +74,16 @@ DONE_JS = r"""
 """
 
 
+DONE_JS_IDLE = r"""
+() => {
+  const app = document.querySelector('[data-testid="stApp"]');
+  return app && app.getAttribute('data-test-script-state') !== 'running'
+    && !document.querySelector('[data-testid="stStatusWidget"]')
+    && !document.querySelector('[data-stale="true"]');
+}
+"""
+
+
 def read_log(path: Path) -> list[str]:
     return path.read_text().splitlines() if path.exists() else []
 
@@ -94,8 +111,13 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--log", default="runtime/streamlit-project/e2e/timing-requests.log")
     parser.add_argument("--pass-no", default="timing")
+    parser.add_argument("--hosted", action="store_true", help="time the public hosted app (https://aura-college-workspace.streamlit.app)")
+    parser.add_argument("--hosted-url", default="https://aura-college-workspace.streamlit.app/")
     args = parser.parse_args()
     args.pass_no = f"timing-{args.label}"
+    if args.hosted:
+        args.base_url = args.hosted_url.rstrip("/") + "/~/+/"
+        args.timeout = max(args.timeout, 120)
     log = ROOT / args.log
     log.parent.mkdir(parents=True, exist_ok=True)
     walk = Walk(args)
@@ -108,7 +130,15 @@ def main() -> int:
             ctx, page = walk.new_context(browser, DESKTOP)
             record: dict[str, Any] = {"role": spec["key"], "pages": []}
             try:
-                walk.open_login(page)
+                if args.hosted:
+                    ctx.set_default_timeout(args.timeout * 1000)
+                    page.goto(args.hosted_url, wait_until="domcontentloaded")  # cookie bootstrap only
+                    page.wait_for_timeout(1500)
+                load_start = time.perf_counter()
+                page.goto(args.base_url, wait_until="domcontentloaded")
+                page.wait_for_selector('[data-testid="stForm"]', timeout=args.timeout * 1000)
+                page.wait_for_function(DONE_JS_IDLE, timeout=90000, polling=15)
+                record["cold_load_s"] = round(time.perf_counter() - load_start, 3)  # request until the sign-in card is drawn and idle
                 walk.choose_portal(page, spec["portal"])
                 email, password = walk.creds(spec)
                 page.locator("input[aria-label=Email]").fill(email)
@@ -144,7 +174,7 @@ def main() -> int:
             finally:
                 ctx.close()
             results.append(record)
-            print(f"== {spec['key']}: sign-in {record.get('sign_in_s')}s", flush=True)
+            print(f"== {spec['key']}: load {record.get('cold_load_s')}s, sign-in {record.get('sign_in_s')}s", flush=True)
             for row in record["pages"]:
                 print(
                     f"   {row['page'][:34]:34} first {row.get('first_s', '-')}s ({len(row.get('first_calls', []))} calls)"
@@ -160,11 +190,12 @@ def main() -> int:
         "first_visit": {"n": len(first), "median": statistics.median(first) if first else None, "max": max(first) if first else None},
         "revisit": {"n": len(revisit), "median": statistics.median(revisit) if revisit else None, "max": max(revisit) if revisit else None},
         "sign_in": {rec["role"]: rec.get("sign_in_s") for rec in results},
+        "cold_load": {rec["role"]: rec.get("cold_load_s") for rec in results},
         "roles": results,
     }
     out = ROOT / "runtime" / "streamlit-project" / "e2e" / f"timing-{args.label}.json"
     out.write_text(json.dumps(summary, indent=2) + "\n")
-    print(json.dumps({k: summary[k] for k in ("first_visit", "revisit", "sign_in")}, indent=2))
+    print(json.dumps({k: summary[k] for k in ("first_visit", "revisit", "sign_in", "cold_load")}, indent=2))
     print(f"wrote {out.relative_to(ROOT)}")
     return 0
 

@@ -7,7 +7,12 @@ read that registry and select a page by its URL path (`/courses` -> "courses").
 
 from __future__ import annotations
 
+import os
+
 from streamlit.testing.v1 import AppTest
+
+# AppTest renders the sign-in card; it must never start a real engine in the background.
+os.environ.setdefault("AURA_DISABLE_WARMUP", "1")
 
 
 def page_registry(at: AppTest) -> dict[str, dict]:
