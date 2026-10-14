@@ -44,7 +44,16 @@ Mentor gate (edit, approve or decline the exact version) ──> Publisher (stud
 
 - **Models:** Groq first (`qwen/qwen3.8-27b` drafts, `openai/gpt-oss-120b` judges), then Gemini 3.1
   Flash-Lite, then a local Qwen model when running on the owner's laptop. Requests are rate- and token-limited
-  to stay inside free tiers.
+  to stay inside free tiers. Every plan and every review runs on AI: there is no rule-based mode. If every model
+  fails, the case waits as "AI unavailable, retry" with an audited reason (the planner asks the mentor to retry),
+  and no template draft is made. Drafts from the earlier rule-based path stay on record under "Legacy drafts"
+  and are never decided.
+- **Roles:** only a student's assigned mentor creates, revises, locks, runs or pauses a review plan and sees that
+  student's risk score and evidence. The department head and the AI-activity workspace observe plans and
+  department-level aggregates; the Core enforces this, not only the pages.
+- **Scope:** the mentor's own "Students in scope" selection is authoritative. The planner may narrow it or ask a
+  question, never silently replace or widen it; if the request describes a different set, the plan shows the
+  conflict and nothing changes until the mentor confirms.
 - **Grounded drafts:** every claim in a draft must cite a piece of collected evidence. Uncited numbers,
   diagnostic wording, wrong-domain actions and personal details are caught by the validator and repaired or
   escalated to the mentor.
@@ -104,5 +113,5 @@ Database suites are opt-in and must use a throwaway `aura_core_test_*` schema; s
 - Senior-developer audit and plan: [`docs/AUDIT_2026-10-13.md`](docs/AUDIT_2026-10-13.md)
 - Lab-manual coverage: [`docs/CHAPTER11_COMPLETION.md`](docs/CHAPTER11_COMPLETION.md)
 
-In progress: the end-to-end test-and-fix passes, removing the remaining rule-based fallback so every review
-runs on AI agents, and a visual redesign.
+In progress: the end-to-end test-and-fix passes (pass A removed the rule-based path and fixed planner scope,
+privacy and read-only roles; the live AI run and the remaining findings follow), and a visual redesign.

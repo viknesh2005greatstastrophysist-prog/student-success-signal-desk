@@ -24,7 +24,7 @@ Open Faculty at `http://127.0.0.1:3103` or Governance at `http://127.0.0.1:3105`
 
 ## Optional local model
 
-If Ollama and a compatible model are already available, set `CH11_MODEL` to the installed model name and `CH11_MODEL_BASE_URL=http://127.0.0.1:11434/v1` in the private environment before starting the services. The recorded acceptance used `qwen3.8:27b-mlx` on the project owner's machine. The project does not automatically download that model. Without a configured model, select the clearly labelled rule-based mode.
+If Ollama and a compatible model are already available, set `CH11_MODEL` to the installed model name and `CH11_MODEL_BASE_URL=http://127.0.0.1:11434/v1` in the private environment before starting the services. The recorded acceptance used `qwen3.8:27b-mlx` on the project owner's machine. The project does not automatically download that model. Without a configured model, plans and reviews wait as "AI unavailable, retry"; there is no rule-based mode.
 
 ## Verification
 

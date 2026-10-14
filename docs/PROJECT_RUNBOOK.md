@@ -42,7 +42,7 @@ The current workspace already contains the full-cohort review. A fresh source pa
 npm run project:command -- --import tsx services/core-api/scripts/run-project-agents.ts --final-cycle
 ```
 
-For local model inference, set `CH11_MODEL` and `CH11_MODEL_BASE_URL` before first setup. The endpoint must be loopback and expose `/chat/completions` in the expected OpenAI-compatible format. The configured model for the verified run was `qwen3.8:27b-mlx` at a local endpoint. A model installation is not included in the source package. If no provider is configured, the pipeline uses its deterministic policy path. Model errors use explicit validated fallback, never silent success.
+For local model inference, set `CH11_MODEL` and `CH11_MODEL_BASE_URL` before first setup. The endpoint must be loopback and expose `/chat/completions` in the expected OpenAI-compatible format. The configured model for the verified run was `qwen3.8:27b-mlx` at a local endpoint. A model installation is not included in the source package. If no provider is configured, or every provider fails, nothing is drafted: the review waits as "AI unavailable, retry" with the audited reasons. There is no rule-based draft. Model errors are never silent successes.
 
 Configuration is generated at `runtime/project-final/environment.json`. It contains secrets. Edit only locally while stopped; service and model URLs must remain loopback. Do not print it to terminal logs. When rotating the authentication secret, also invalidate the local signing keys and sessions before restarting, because private signing keys are encrypted with that secret. Preserve users and password hashes.
 

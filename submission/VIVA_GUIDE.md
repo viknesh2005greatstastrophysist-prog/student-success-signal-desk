@@ -12,7 +12,7 @@ A chatbot usually receives a message and returns text. This system maintains a p
 
 The configured local Qwen model chooses and orders allowed recommendation actions and may choose a due interval between one and fourteen days. The factual summary and citations must come from the evidence. The model cannot invent a new intervention, change grades, contact a student or approve its own work. Arithmetic, access control and publication rules are enforced by code.
 
-We did not train or fine-tune Qwen. We built and evaluated the workflow around an existing model. The cloud demonstration currently uses the explicitly labelled rule-based mode; the live model runs locally.
+We did not train or fine-tune Qwen. We built and evaluated the workflow around an existing model. Every review runs on an AI model (Groq, then Gemini, then the local Qwen model on the laptop). If every model fails, the review waits as "AI unavailable, retry" with an audited reason; there is no rule-based draft.
 
 ## One worked example
 

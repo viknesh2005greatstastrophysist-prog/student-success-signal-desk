@@ -206,7 +206,8 @@ INIT_JS = r"""
       // data-e2e="select-0" on a hidden element would otherwise win `.first` and time out
       document.querySelectorAll('[data-e2e]').forEach((el) => el.removeAttribute('data-e2e'));
       const own = (el) => { const p = el.closest('[role="tabpanel"]'); return (p ? p.id : '') === (panelId || ''); };
-      const ok = (el) => !el.closest('[data-testid="stForm"], [data-testid="stSidebar"]') && visible(el) && own(el);
+      // a control inside a collapsed expander (details:not([open])) is in the DOM but cannot be driven
+      const ok = (el) => !el.closest('[data-testid="stForm"], [data-testid="stSidebar"], details:not([open])') && visible(el) && own(el);
       const out = [];
       const add = (sel, kind, mapper) => {
         let n = 0;
@@ -823,7 +824,7 @@ def build_issues(summary: dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--pass", dest="pass_no", type=int, default=1, help="pass number; output goes to runtime/streamlit-project/e2e/pass<N>/")
+    parser.add_argument("--pass", dest="pass_no", type=str, default="1", help="pass label (for example 2 or 2a); output goes to runtime/streamlit-project/e2e/pass<label>/")
     parser.add_argument("--base-url", default="http://127.0.0.1:8503")
     parser.add_argument("--roles", default="", help="comma list of role keys (default: all). Keys: " + ", ".join(r["key"] for r in ROLES))
     parser.add_argument("--timeout", type=int, default=90, help="per-step timeout, seconds")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import subprocess
 import time
 from datetime import date, datetime, timedelta
@@ -68,6 +69,10 @@ PORTAL_ROLES = {
 ATTENDANCE_STATES = ["present", "absent", "late", "excused"]
 FOLLOWUP_STATES = ["planned", "in_progress", "completed"]
 PLAN_DOMAINS = ["academic", "attendance", "wellbeing-referral"]
+SCOPE_BASIS = {"selected": "Your selection", "criteria": "From the request"}
+UUID_TEXT = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
 ACTION_OWNER_LABELS = {"assigned_faculty": "Assigned faculty", "student": "Student"}
 
 
@@ -1547,6 +1552,183 @@ def render_policies(review: dict[str, Any], actor: dict[str, Any]) -> None:
         )
 
 
+def policy_text(text: Any, policy_by_id: dict[str, dict[str, Any]]) -> str:
+    """Plan text with policy ids replaced by the policy's name and version."""
+
+    def named(match: re.Match[str]) -> str:
+        row = policy_by_id.get(match.group(0).lower()) or policy_by_id.get(
+            match.group(0)
+        )
+        return str((row or {}).get("Policy version") or "the approved policy")
+
+    return UUID_TEXT.sub(named, str(text))
+
+
+def ai_unavailable_rows(jobs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Provider, model and failure for every model that did not answer."""
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for job in jobs:
+        for reason in job.get("failure_reasons") or []:
+            text = str(reason)
+            if text in seen:
+                continue
+            seen.add(text)
+            head, _, tail = text.partition(": ")
+            kind, _, model = head.partition(" ")
+            if tail and kind in labels.PROVIDERS:
+                rows.append(
+                    {
+                        "Provider": labels.provider_label(kind),
+                        "Model": model or "—",
+                        "What happened": tail,
+                    }
+                )
+            else:
+                rows.append(
+                    {"Provider": "—", "Model": "—", "What happened": text}
+                )
+    return rows
+
+
+def render_ai_unavailable(
+    selected_plan: dict[str, Any], jobs: list[dict[str, Any]], can_plan: bool
+) -> None:
+    """Reviews waiting because no AI model answered: the audited reason and a retry."""
+    waiting = [job for job in jobs if job.get("status") == "ai_unavailable"]
+    if not waiting:
+        return
+    st.warning(
+        f"{len(waiting)} of {len(jobs)} student reviews are waiting for an AI model. "
+        "Nothing was drafted by rules; the reasons below are in the audit log.",
+        icon=":material/cloud_off:",
+    )
+    rows = ai_unavailable_rows(waiting)
+    if rows:
+        with st.expander("Why no model answered", icon=":material/troubleshoot:"):
+            dataframe(rows)
+    if can_plan and not selected_plan.get("paused"):
+        retry = st.button(
+            "Retry AI review",
+            type="primary",
+            key=f"retry_ai_{selected_plan['id']}",
+            icon=":material/refresh:",
+        )
+        if retry:
+            save_action(
+                "plan_execute",
+                {"planId": selected_plan["id"]},
+                "Retry recorded. Saved activity has been refreshed.",
+            )
+
+
+def render_plan_scope(
+    selected_plan: dict[str, Any],
+    body: dict[str, Any],
+    students: list[dict[str, Any]],
+    can_plan: bool,
+) -> None:
+    """Who the agents will run on, any narrowing, and an unanswered scope conflict."""
+    scoped = [str(sid) for sid in body.get("studentIds") or []]
+    roster = {
+        str(value(row, "id", "student_id", default="")): row
+        for row in students
+        if value(row, "id", "student_id")
+    }
+    scope = body.get("scope") or {}
+    if scope.get("narrowedFrom"):
+        st.caption(
+            f":material/filter_alt: Narrowed from {scope['narrowedFrom']} selected students to "
+            f"{len(scoped)} by the criteria in your request."
+        )
+    conflict = body.get("scopeConflict")
+    if isinstance(conflict, dict) and not conflict.get("resolution"):
+        selected = int(conflict.get("selected") or len(scoped))
+        implied = int(conflict.get("implied") or 0)
+        switchable = bool(conflict.get("impliedStudentIds"))
+        plan_key = f"{selected_plan['id']}_{selected_plan['revision']}"
+        with st.container(border=True, key=f"scope_conflict_{plan_key}"):
+            st.markdown("**Your selection and your request describe different students**")
+            st.markdown(
+                f"You selected **{selected}**; your request describes **{implied}**. "
+                f"The plan stays on your **{selected}** until you choose."
+            )
+            if not can_plan:
+                st.caption("Only the assigned mentor can answer this.")
+            else:
+                keep_col, switch_col = st.columns(2)
+                with keep_col:
+                    if st.button(
+                        f"Keep my {selected}",
+                        key=f"scope_keep_{plan_key}",
+                        icon=":material/check:",
+                        width="stretch",
+                    ):
+                        save_action(
+                            "plan_revise",
+                            {
+                                "planId": selected_plan["id"],
+                                "expectedRevision": selected_plan["revision"],
+                                "input": {
+                                    "request": body.get("request", ""),
+                                    "scopeChoice": "keep",
+                                },
+                            },
+                            "Your selection stays as chosen.",
+                        )
+                with switch_col:
+                    if switchable and st.button(
+                        f"Use the {implied} from my request",
+                        key=f"scope_switch_{plan_key}",
+                        icon=":material/swap_horiz:",
+                        width="stretch",
+                    ):
+                        save_action(
+                            "plan_revise",
+                            {
+                                "planId": selected_plan["id"],
+                                "expectedRevision": selected_plan["revision"],
+                                "input": {
+                                    "request": body.get("request", ""),
+                                    "scopeChoice": "switch",
+                                },
+                            },
+                            f"The plan now covers the {implied} students your request describes.",
+                        )
+                if not switchable:
+                    st.caption(
+                        "The request describes more students than one review covers (50). "
+                        "Narrow the request to switch."
+                    )
+    with st.expander(
+        f"Students in scope ({len(scoped)})", icon=":material/groups:"
+    ):
+        if not scoped:
+            st.caption("No students are in scope yet.")
+        else:
+            rows = []
+            for sid in scoped:
+                row = roster.get(sid)
+                rows.append(
+                    {
+                        "Register number": str(
+                            value(row, "register_number", "srn", default="Not listed")
+                        )
+                        if row
+                        else "Not listed",
+                        "Student": labels.pretty_name(
+                            value(row, "display_name", "name", default="Not listed")
+                        )
+                        if row
+                        else "Not in your current list",
+                    }
+                )
+            dataframe(sorted(rows, key=lambda item: item["Register number"]))
+            st.caption(
+                "These are the students the agents will run on once the plan is locked."
+            )
+
+
 def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None:
     raw_policies = review.get("policies") or []
     policies = policy_rows(raw_policies)
@@ -1567,16 +1749,29 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
     }
     policy_by_id = {row["id"]: row for row in policies if row["id"]}
     plans = review.get("plans") or []
+    # Plans are created, revised, locked, run and paused by the assigned mentor
+    # only; the department head and AI-activity roles observe (the Core enforces it).
+    can_plan = role == "faculty"
     st.caption(
-        ":material/route: **How a review runs:** describe it → answer the coordinator's questions → "
+        ":material/route: **How a review runs:** describe it → answer the planner's questions → "
         "lock the plan → run the agents → decide each draft in the review queue."
     )
-    if role in {"faculty", "hod", "governance"}:
+    if not can_plan:
+        st.caption(
+            ":material/visibility: This workspace can observe review plans but not create or change them."
+        )
+    if can_plan:
         with st.expander(
             "Create a review plan",
             expanded=not plans,
             icon=":material/add_circle:",
         ):
+            if not review.get("modelConfigured"):
+                st.warning(
+                    "No AI model is connected, so the planner cannot answer yet. "
+                    "Nothing is drafted by rules: saving will ask you to retry.",
+                    icon=":material/cloud_off:",
+                )
             with st.form("create_plan", border=False):
                 request_text = st.text_area(
                     "Review request",
@@ -1589,7 +1784,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     format_func=lambda item: student_labels.get(item, item),
                     max_selections=50,
                 )
-                left, middle, right = st.columns(3)
+                left, right = st.columns(2)
                 with left:
                     domain = st.selectbox(
                         "Review focus",
@@ -1600,7 +1795,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                             else labels.domain_label(item)
                         ),
                     )
-                with middle:
+                with right:
                     policy_id = st.selectbox(
                         "Approved mentor policy",
                         [None, *policy_by_id.keys()],
@@ -1610,19 +1805,6 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                             else policy_by_id[item]["Policy version"]
                         ),
                     )
-                with right:
-                    modes = ["deterministic"] + (
-                        ["model"] if review.get("modelConfigured") else []
-                    )
-                    mode = st.selectbox(
-                        "Execution mode",
-                        modes,
-                        format_func=lambda item: (
-                            "Rule-based review"
-                            if item == "deterministic"
-                            else "AI model review"
-                        ),
-                    )
                 feedback = st.text_area("Planning notes", max_chars=1000)
                 submitted = st.form_submit_button(
                     "Save review plan", type="primary", icon=":material/save:"
@@ -1630,7 +1812,6 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             if submitted:
                 payload: dict[str, Any] = {
                     "request": request_text.strip(),
-                    "mode": mode,
                     "feedback": feedback.strip(),
                 }
                 if chosen_students:
@@ -1706,19 +1887,24 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         )
         facts[2].caption("Students")
         facts[2].markdown(f"**{len(body.get('studentIds') or [])}**")
-        facts[3].caption("Mode")
-        facts[3].markdown(f"**{labels.mode_label(body.get('mode'))}**")
+        facts[3].caption("Scope")
+        facts[3].markdown(
+            f"**{SCOPE_BASIS.get((body.get('scope') or {}).get('basis'), '—')}**"
+        )
         if questions:
             st.warning(
                 "Complete these details before locking the plan: "
                 + " ".join(questions),
                 icon=":material/help:",
             )
+        render_plan_scope(selected_plan, body, students, can_plan)
         steps = body.get("steps", [])
         if steps:
             with st.expander("Planned steps", icon=":material/format_list_numbered:"):
                 for number, step in enumerate(steps, 1):
-                    st.markdown(f"{number}. {ui._md_safe(step)}")
+                    st.markdown(
+                        f"{number}. {ui._md_safe(policy_text(step, policy_by_id))}"
+                    )
         render_planner_trace(body)
         ui.tech_details(
             [
@@ -1727,19 +1913,22 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             ]
         )
 
-    if selected_plan.get("status") != "locked":
+    if selected_plan.get("status") != "locked" and can_plan:
         with st.expander(
             "Answer questions or revise this plan",
             expanded=bool(questions),
             icon=":material/edit:",
         ):
-            with st.form(
-                f"revise_plan_{selected_id}_{selected_plan['revision']}", border=False
-            ):
+            # The form key carries the revision and the save counter, so a saved
+            # revision always opens a fresh form: the feedback box is empty and
+            # every field shows the saved values again, never the old typed text.
+            form_key = f"revise_plan_{selected_id}_{selected_plan['revision']}_{selector_revision}"
+            with st.form(form_key, border=False):
                 revised_request = st.text_area(
                     "Revised review request",
                     value=body.get("request", ""),
                     max_chars=2000,
+                    key=f"{form_key}_request",
                 )
                 revised_students = st.multiselect(
                     "Revised students in scope",
@@ -1751,8 +1940,9 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     ],
                     format_func=lambda sid: student_labels.get(sid, sid),
                     max_selections=50,
+                    key=f"{form_key}_students",
                 )
-                left, middle, right = st.columns(3)
+                left, right = st.columns(2)
                 focuses = [None, *PLAN_DOMAINS]
                 with left:
                     revised_focus = st.selectbox(
@@ -1762,9 +1952,10 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                         format_func=lambda item: (
                             labels.domain_label(item) if item else "Choose a focus"
                         ),
+                        key=f"{form_key}_focus",
                     )
                 policy_ids = [None, *policy_by_id]
-                with middle:
+                with right:
                     revised_policy = st.selectbox(
                         "Revised policy",
                         policy_ids,
@@ -1776,31 +1967,28 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                             if item
                             else "Choose a policy"
                         ),
+                        key=f"{form_key}_policy",
                     )
-                with right:
-                    revised_mode = st.selectbox(
-                        "Revised mode",
-                        ["deterministic", "model"],
-                        index=1 if body.get("mode") == "model" else 0,
-                        format_func=lambda item: (
-                            "AI model review"
-                            if item == "model"
-                            else "Rule-based review"
-                        ),
-                    )
+                if body.get("feedback"):
+                    st.caption("Notes saved so far (the planner keeps reading them):")
+                    for note in str(body["feedback"]).splitlines():
+                        if note.strip():
+                            ui.plain_text(note, muted=True)
                 revised_feedback = st.text_area(
                     "Revision feedback",
-                    value=body.get("feedback", ""),
+                    value="",
                     max_chars=1000,
-                    help="Use the fields above to adjust the review. With AI model review, the planner also reads plain-English feedback "
-                    "(for example: leave out final-years, focus on attendance). Notes help focus the planned steps and reference retrieval.",
+                    placeholder="Answer the planner's questions or add a note. Your earlier notes are kept.",
+                    help="Write only what is new: it is added to the notes above, never mixed into them. "
+                    "Answered questions are not asked again. The planner reads plain English "
+                    "(for example: leave out final-years, focus on attendance); your selection above stays authoritative.",
+                    key=f"{form_key}_feedback",
                 )
                 revise = st.form_submit_button("Save revised plan", type="primary")
             if revise:
                 revision_input = {
                     "request": revised_request,
-                    "feedback": revised_feedback,
-                    "mode": revised_mode,
+                    "feedback": revised_feedback.strip(),
                 }
                 if revised_students:
                     revision_input["studentIds"] = revised_students
@@ -1820,7 +2008,13 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
 
     action_col, export_col = st.columns([2, 1], vertical_alignment="bottom")
     with action_col:
-        if selected_plan.get("status") == "locked":
+        if selected_plan.get("status") == "locked" and not can_plan:
+            st.caption(
+                ":material/lock: This plan is locked"
+                + (" and paused" if selected_plan.get("paused") else "")
+                + ". Only the assigned mentor can run or pause it."
+            )
+        elif selected_plan.get("status") == "locked":
             paused = bool(selected_plan.get("paused"))
             with st.form(
                 f"pause_form_{selected_id}_{selected_plan['revision']}", border=False
@@ -1868,13 +2062,14 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     {"planId": selected_plan["id"]},
                     "Review run recorded. Saved activity has been refreshed.",
                 )
-        elif selected_plan.get("status") != "locked" and not questions:
-            if st.button(
+        elif can_plan and selected_plan.get("status") != "locked" and not questions:
+            lock = st.button(
                 "Lock review plan",
                 type="primary",
                 key=f"lock_{selected_plan['id']}",
                 icon=":material/lock:",
-            ):
+            )
+            if lock:
                 save_action(
                     "plan_lock",
                     {
@@ -1926,14 +2121,19 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             )
             trace_job = next(job for job in traced if str(job["id"]) == trace_id)
         ui.pipeline_stepper(trace_job.get("node_trace"))
+    render_ai_unavailable(selected_plan, review_jobs, can_plan)
     dataframe(
         [
             {
                 "Student": names.get(str(row.get("student_id")), "Student"),
                 "Status": labels.status_label(row.get("status")),
                 "Stage": labels.status_label(row.get("stage")),
-                "Mode": labels.mode_label(row.get("mode")),
-                "Issue": labels.issue_label(row.get("error_code")),
+                "Drafted by": labels.mode_label(row.get("mode"))
+                if row.get("mode")
+                else "—",
+                "Issue": labels.issue_label(row.get("error_code"))
+                if row.get("error_code")
+                else "—",
             }
             for row in review_jobs
         ]
@@ -1948,15 +2148,9 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             with st.expander("Diagnosis", icon=":material/troubleshoot:"):
                 render_diagnoses(job.get("failure_diagnosis"))
                 st.json(job.get("failure_diagnosis") or {})
-            if job.get("offered_template"):
-                with st.expander(
-                    "Rule template offered for human consideration",
-                    icon=":material/description:",
-                ):
-                    st.caption(
-                        "This template has not advanced to approval or publication."
-                    )
-                    st.json(job["offered_template"])
+                st.caption(
+                    "No draft was substituted. Revise the review or retry it; nothing reaches a student without your approval."
+                )
     for job in review_jobs:
         if job.get("retrieval"):
             with st.expander(
@@ -2288,7 +2482,7 @@ def render_planner_trace(body: dict[str, Any]) -> None:
     if not isinstance(agent, dict):
         return
     with st.expander("How the planner read this request", icon=":material/psychology:"):
-        rows = agent_rows(agent, "Planner", "Rule-based parser (tools not used)")
+        rows = agent_rows(agent, "Planner", "Planner (tools not used)")
         source = agent.get("questionSource")
         if source:
             rows.append(
@@ -2297,7 +2491,7 @@ def render_planner_trace(body: dict[str, Any]) -> None:
                     "Detail": {
                         "model": "the planner model, about this request",
                         "model+rules": "the planner model, topped up by the standard rule questions",
-                        "rules": "the standard rule questions (the model path was not used)",
+                        "rules": "the standard rule questions (a plan saved before the rule-based path was retired)",
                     }.get(str(source), labels.humanize(source)),
                 }
             )
@@ -2346,7 +2540,7 @@ def provenance_rows(validation: dict[str, Any], mode: Any, model_id: Any) -> lis
     blocked = [e for e in egress if e.get("outcome") == "blocked"]
     rows = [
         {"Step": "Provider", "Detail": labels.provider_label(prov.get("provider")) if prov.get("provider") else labels.mode_label(mode)},
-        {"Step": "Model", "Detail": str(prov.get("model") or "none (rule-based)")},
+        {"Step": "Model", "Detail": str(prov.get("model") or "not recorded")},
         {"Step": "Specialist", "Detail": labels.domain_label(prov.get("specialist"))},
         {"Step": "Packet format", "Detail": str(validation.get("packetSchema") or "packet-v1")},
         {"Step": "Repairs", "Detail": str(prov.get("repairs", len(validation.get("repairs") or [])))},
@@ -2356,7 +2550,7 @@ def provenance_rows(validation: dict[str, Any], mode: Any, model_id: Any) -> lis
         rows.append({"Step": "Provider skipped", "Detail": f"{labels.provider_label(fallback.get('provider'))} {fallback.get('model', '')}: {fallback.get('reason', '')}"})
     if prov.get("tokens"):
         rows.append({"Step": "Tokens reported", "Detail": str(prov.get("tokens"))})
-    rows.append({"Step": "Remote requests", "Detail": f"{len(sent)} sent, {len(blocked)} stopped by the privacy guard" if egress else "none (local or rule-based)"})
+    rows.append({"Step": "Remote requests", "Detail": f"{len(sent)} sent, {len(blocked)} stopped by the privacy guard" if egress else "none (local model only)"})
     for item in sent[-2:]:
         rows.append({"Step": "Egress audit hash", "Detail": f"{str(item.get('payloadHash', ''))[:16]}… · {item.get('bytes', '?')} bytes · {len(item.get('fields') or [])} fields"})
     for item in blocked:
@@ -2512,15 +2706,45 @@ def render_draft_reviews(
     risk_by_student: dict[str, dict[str, Any]],
 ) -> None:
     drafts = queue.get("drafts") or []
+    is_mentor = actor.get("role") == "faculty"
     ui.section(
         "Support reviews",
-        "Drafts the agents prepared for flagged students. Nothing reaches a student or family until you approve it.",
+        "Drafts the agents prepared for flagged students. Nothing reaches a student or family until you approve it."
+        if is_mentor
+        else "Drafts waiting on each student's assigned mentor. Nothing reaches a student or family until that mentor approves it.",
     )
     if not drafts:
         ui.empty_state(
-            "Nothing is waiting for you",
-            "When a review run drafts support for a flagged student, it appears here for your decision.",
+            "Nothing is waiting for you" if is_mentor else "Nothing is waiting on a mentor",
+            "When a review run drafts support for a flagged student, it appears here for your decision."
+            if is_mentor
+            else "When a review run drafts support for a flagged student, it appears here until the mentor decides.",
             "✅",
+        )
+        if queue.get("legacyDrafts"):
+            st.caption(
+                f":material/inventory_2: Older drafts from the retired rule-based path are kept below, read-only ({len(queue['legacyDrafts'])})."
+            )
+        return
+    if not is_mentor:
+        # Department oversight: who is waiting on a mentor, never the draft's
+        # content, risk score or evidence (the Core does not send them either).
+        dataframe(
+            [
+                {
+                    "Student": labels.pretty_name(row.get("display_name", "Student")),
+                    "Register number": row.get("register_number", "Not listed"),
+                    "Status": "Awaiting the assigned mentor"
+                    if row.get("status") == "awaiting_faculty"
+                    else labels.status_label(row.get("status")),
+                    "Drafted by": labels.mode_label(row.get("mode")),
+                    "Drafted": labels.nice_time(row.get("drafted_at")),
+                }
+                for row in drafts
+            ]
+        )
+        st.caption(
+            ":material/lock: Draft contents, risk scores and evidence are visible only to the student's assigned mentor."
         )
         return
     per_row = 3
@@ -2656,7 +2880,7 @@ def render_draft_reviews(
         )
         if validation.get("fallback"):
             st.caption(
-                ":material/swap_horiz: A rule-based fallback produced this draft."
+                ":material/swap_horiz: A rule-based fallback produced this draft (a path that has been retired)."
             )
         if validation.get("providerError"):
             st.caption(
@@ -2820,11 +3044,71 @@ def render_draft_reviews(
                 )
 
 
+def render_legacy_drafts(queue: dict[str, Any], actor: dict[str, Any]) -> None:
+    """Drafts written by the retired rule-based path: viewable, read-only, undecided."""
+    legacy = queue.get("legacyDrafts") or []
+    if not legacy:
+        return
+    is_mentor = actor.get("role") == "faculty"
+    with st.expander(
+        f"Legacy drafts ({len(legacy)})", expanded=False, icon=":material/inventory_2:"
+    ):
+        st.caption(
+            "These were written by the rule-based path that has been retired. They stay on record and "
+            "undecided: nothing here can be approved, edited or published. Run a new AI review for the "
+            "student to replace one."
+        )
+        dataframe(
+            [
+                {
+                    "Student": labels.pretty_name(row.get("display_name", "Student")),
+                    "Register number": row.get("register_number", "Not listed"),
+                    "Status": "Undecided, read-only",
+                    "Drafted by": labels.mode_label(row.get("mode")),
+                    "Drafted": labels.nice_time(row.get("drafted_at")),
+                }
+                for row in legacy
+            ]
+        )
+        if not is_mentor:
+            return
+        picked = st.selectbox(
+            "Legacy draft",
+            legacy,
+            format_func=lambda row: (
+                f"{labels.pretty_name(row.get('display_name', 'Student'))} · "
+                f"{row.get('register_number', '')} · {labels.nice_time(row.get('drafted_at'))}"
+            ),
+            key="legacy_draft",
+        )
+        packet = picked.get("recommendation") or {}
+        ui.plain_text(packet.get("summary") or "No summary recorded.")
+        rows = [
+            {
+                "Action": item.get("label"),
+                "Due in days": item.get("dueInDays"),
+            }
+            for item in packet.get("actions") or []
+            if isinstance(item, dict)
+        ]
+        if rows:
+            dataframe(rows)
+        ui.tech_details(
+            [
+                ("Case reference", picked.get("id")),
+                ("Draft version reference", picked.get("artifact_id")),
+                ("Content hash", picked.get("content_hash")),
+            ]
+        )
+
+
 def render_review_page(actor: dict[str, Any]) -> None:
     role = actor.get("role")
     ui.page_header(
         "Support reviews",
-        "AI agents gather evidence, score risk and draft support. You decide what reaches a student.",
+        "AI agents gather evidence, score risk and draft support. You decide what reaches a student."
+        if role == "faculty"
+        else "AI agents gather evidence and draft support. The assigned mentor decides what reaches a student.",
         eyebrow="Mentor workspace" if role == "faculty" else "Department oversight",
     )
     review = load("review_overview")
@@ -2858,7 +3142,7 @@ def render_review_page(actor: dict[str, Any]) -> None:
                     "label": "AI model",
                     "value": "Connected"
                     if review.get("modelConfigured")
-                    else "Rule-based",
+                    else "Not connected",
                     "icon": ":material/smart_toy:",
                 },
             ]
@@ -2874,6 +3158,7 @@ def render_review_page(actor: dict[str, Any]) -> None:
         )
         with tab_queue:
             render_draft_reviews(queue, actor, risk_by_student)
+            render_legacy_drafts(queue, actor)
         with tab_risk:
             if role == "faculty":
                 render_composite_risk(review, actor)
@@ -2896,7 +3181,9 @@ def render_review_page(actor: dict[str, Any]) -> None:
                 {
                     "Status": labels.status_label(row.get("status")),
                     "Stage": labels.status_label(row.get("stage")),
-                    "Mode": labels.mode_label(row.get("mode")),
+                    "Drafted by": labels.mode_label(row.get("mode"))
+                    if row.get("mode")
+                    else "—",
                     "Issue": labels.issue_label(row.get("error_code")),
                 }
                 for row in jobs
@@ -3491,10 +3778,9 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
                 "Runs": row.get("evaluatedRuns"),
                 "Pass rate": rate(row.get("validationPassRate")),
                 "Repairs": row.get("repairsUsed"),
-                "Fallback rate": rate(row.get("fallbackRate")),
                 "Escalation rate": rate(row.get("escalationRate")),
                 "AI model runs": row.get("modelRuns"),
-                "Rule runs": row.get("ruleRuns"),
+                "Legacy rule-based runs": row.get("legacyRuleRuns"),
                 "Decided": row.get("decidedRuns"),
                 "Approved as drafted": rate(row.get("approveAsIsRate")),
                 "Avg. decision time (min)": None
@@ -3507,7 +3793,6 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
             name: st.column_config.NumberColumn(name, format="%.0f%%")
             for name in (
                 "Pass rate",
-                "Fallback rate",
                 "Escalation rate",
                 "Approved as drafted",
             )
@@ -3521,7 +3806,7 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
                     "Cycle": labels.short_ref(row.get("cycleId")),
                     "Passed checks": "Yes" if row.get("validationPassed") else "No",
                     "Repairs": row.get("repairsUsed"),
-                    "Fallback": "Yes" if row.get("fallback") else "No",
+                    "Rule-based fallback (retired)": "Yes" if row.get("fallback") else "No",
                     "Escalated": "Yes" if row.get("escalated") else "No",
                     "Mode": labels.mode_label(row.get("mode")),
                     "Decision": labels.status_label(row.get("decision"))
@@ -3686,7 +3971,14 @@ def render_review_trends(review: dict[str, Any]) -> None:
             .properties(height=300)
         )
         st.altair_chart(trend_axis_config(lines), width="stretch")
-        st.caption("Gaps mean no evaluated students in that band for the cycle.")
+        st.caption(
+            "Gaps mean no evaluated students in that band for the cycle."
+            + (
+                ""
+                if (st.session_state.get("actor") or {}).get("role") == "faculty"
+                else " Department views show a band average only when at least three students are in it, so no single student's score is exposed."
+            )
+        )
 
 
 def render_department_home(overview: dict[str, Any]) -> None:
@@ -3891,6 +4183,12 @@ def render_governance(actor: dict[str, Any]) -> None:
                 "value": sum(1 for job in jobs if job.get("status") == "needs_human"),
                 "icon": ":material/front_hand:",
             },
+            {
+                "label": "Waiting for AI",
+                "value": sum(1 for job in jobs if job.get("status") == "ai_unavailable"),
+                "icon": ":material/cloud_off:",
+                "help": "Reviews where no AI model answered. They wait for the mentor to retry; nothing is drafted by rules.",
+            },
         ]
     )
     tab_graph, tab_runs, tab_eval, tab_plans, tab_policies = st.tabs(
@@ -3912,7 +4210,9 @@ def render_governance(actor: dict[str, Any]) -> None:
                     "Run": labels.short_ref(row.get("id")),
                     "Status": labels.status_label(row.get("status")),
                     "Stage": labels.status_label(row.get("stage")),
-                    "Mode": labels.mode_label(row.get("mode")),
+                    "Drafted by": labels.mode_label(row.get("mode"))
+                    if row.get("mode")
+                    else "—",
                     "Replay record": "Available"
                     if row.get("run_id")
                     else "Not available",

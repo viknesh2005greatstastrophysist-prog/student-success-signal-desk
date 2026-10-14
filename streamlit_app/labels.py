@@ -29,6 +29,7 @@ STATUS = {
     "awaiting_faculty": ("Awaiting your review", "orange", ":material/front_hand:"),
     "awaiting_review": ("Awaiting review", "orange", ":material/front_hand:"),
     "needs_human": ("Needs your decision", "red", ":material/report:"),
+    "ai_unavailable": ("AI unavailable, retry", "orange", ":material/cloud_off:"),
     "not_flagged": ("Not flagged", "gray", ":material/check:"),
     "blocked": ("Blocked", "red", ":material/block:"),
     "failed": ("Failed", "red", ":material/error:"),
@@ -110,6 +111,8 @@ ISSUES = {
     "MODEL_DAILY_CAP": "Daily model allowance used up",
     "MODEL_HTTP_429": "Model provider rate limit",
     "MODEL_NOT_CONFIGURED": "No model is configured",
+    "AI_UNAVAILABLE": "No AI model answered; retry when one is available",
+    "LEGACY_DRAFT_READ_ONLY": "Retired rule-based draft, read-only",
 }
 
 PROVIDERS = {
@@ -125,10 +128,13 @@ DOMAINS = {
     "wellbeing-referral": "Wellbeing referral",
 }
 
+# Every review now runs on an AI model. The rule-based labels only describe
+# drafts and runs recorded before that path was retired.
 MODES = {
-    "deterministic": "Rule-based",
+    "deterministic": "Rule-based (retired)",
     "model": "AI model",
-    "fallback": "Rule-based fallback",
+    "fallback": "Rule-based fallback (retired)",
+    "unavailable": "AI unavailable",
 }
 
 AGENT_NODES = {
@@ -341,7 +347,7 @@ def pretty_name(raw: Any) -> str:
 
 
 def provider_label(code: Any) -> str:
-    return PROVIDERS.get(str(code), humanize(code)) if code else "Rule-based"
+    return PROVIDERS.get(str(code), humanize(code)) if code else "No model answered"
 
 
 def fmt_number(raw: Any) -> str:

@@ -31,7 +31,7 @@ The interface uses native Streamlit forms, tables, charts, editors, expanders an
 
 ## Agent pipeline
 
-1. A staff actor selects students, a review domain, an approved mentor policy and the execution mode. Missing constraints produce explicit clarification questions.
+1. A mentor describes the review and may select students, a review domain and an approved mentor policy. The AI planner reads the request, resolves students from the mentor's own scope (an explicit selection is authoritative) and asks clarification questions about what is genuinely ambiguous. Every plan and review runs on AI; there is no execution-mode choice.
 2. Locking freezes the scope and policy. Execution checks current authorization and persistent job state before doing work.
 3. Four collectors obtain academic, LMS, internship and placement evidence. Up to four student jobs run concurrently.
 4. Schema, scope, semester, freshness and completeness checks block unsupported evidence. Deterministic thresholds compute explainable risk triggers.

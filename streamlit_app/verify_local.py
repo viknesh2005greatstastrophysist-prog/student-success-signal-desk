@@ -207,6 +207,9 @@ try:
         if i >= 40 and i % 4 == 0 and s["mentorId"] == student["mentorId"]
     )
     overview = call("faculty", "review_overview")
+    # Every review runs on an AI model (there is no rule-based mode). This is a live
+    # acceptance run: it needs a connected model and uses it for the planner and the draft.
+    assert overview["modelConfigured"], "Connect an AI model before this acceptance run"
     policy = next(
         p for p in overview["policies"] if p["faculty_person_id"] == student["mentorId"]
     )
@@ -218,10 +221,22 @@ try:
             "studentIds": [selected["id"]],
             "domain": "academic",
             "policyId": policy["id"],
-            "mode": "model" if overview["modelConfigured"] else "deterministic",
             "feedback": "Keep source definitions unknown and retain mentor authority.",
         },
     )
+    conflict = new["body"].get("scopeConflict")
+    if conflict and not conflict.get("resolution"):
+        # the request text described more students than the selected one: keep the selection
+        new = call(
+            "faculty",
+            "plan_revise",
+            {
+                "planId": new["id"],
+                "expectedRevision": new["revision"],
+                "input": {"request": new["body"]["request"], "scopeChoice": "keep"},
+            },
+        )
+    assert not new["body"]["questions"], new["body"]["questions"]
     call(
         "faculty",
         "plan_lock",
