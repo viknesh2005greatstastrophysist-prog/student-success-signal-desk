@@ -138,7 +138,7 @@ labels_seen = [e.label for e in at.status] + [e.label for e in at.expander]
 assert "How the planner read this request" in labels_seen, labels_seen
 text = frames(at)
 for expected in (
-    "get_attendance_breakdown",
+    "Get attendance breakdown",  # tool names are shown humanised (labels.tool_label)
     "by=course",
     "412",
     "Groq",
@@ -212,7 +212,7 @@ review = {
 at = render(f"ns['render_agent_graph'](json.loads({json.dumps(json.dumps(review))}))")
 markup = " ".join(el.proto.body for el in at.get("html"))
 assert "Investigator" in markup, "pipeline strip shows the investigator node"
-assert "get_lms_timeline" in frames(at)
+assert "Get lms timeline" in frames(at)  # humanised tool name
 
 # 4b. Brief 16-lite: the trace shows each repair attempt's diagnosis and the latest open one;
 # a run recorded before diagnoses existed falls back to the standard wording per failed check.

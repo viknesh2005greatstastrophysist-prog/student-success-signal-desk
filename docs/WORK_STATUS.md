@@ -127,3 +127,19 @@ The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Hygiene
 - Hosted app is private; decide sharing before the viva.
 - Lab manual DoD needs a real case approved by an actual mentor in one session (Brief 10).
 - Local Qwen is laptop-only; hosted path uses Groq/Gemini/rules.
+
+## Stopped at the owner's 26% weekly usage cap (14 Oct, evening IST)
+
+Done in the end-to-end loop: round 1 (live mentor test + automated walk, 39 findings), fix passes A and B, the
+Signal redesign (rubric 7.35 → 8.0, 17 UI findings fixed), round 2 live agentic run on Groq (definition-of-done
+path exercised end to end by Claude acting as the mentor: request → planner → agents → 3 valid drafts → light edit
+→ approve → publish → student/parent views; case `fbe05729`), one P1 found and fixed (#33). Rule-based path removed.
+CI green after `verify_agent_trace.py` was updated for humanised tool names.
+
+Still open, in priority order:
+1. #34 limiter: default max wait (15 s) is shorter than the 60 s window, so calls after a burst are refused rather than queued. Decide between a longer default wait (UI blocks up to a minute) or a queued/retry message.
+2. #35 judge agent: `ModelRole "judge"` exists but nothing calls it. Wire it (score each draft with `openai/gpt-oss-120b`) or drop it from the spec.
+3. #37 coverage: the regenerator and the attendance / wellbeing-referral specialists are covered only by offline tests; a live run needs a failing-draft case and a wellbeing case.
+4. Hosted live run and making the hosted app public: blocked while the Streamlit Cloud menu could not be driven (browser pane hidden). Settings → Sharing → public, then run `streamlit_app/e2e/live_run.py` against the hosted URL for one student.
+5. C4 repo tidy (move the first prototype under `legacy/`), C6 code hygiene (`ponytail-audit` + `simplify`, app.py split), round 3 rerun of `walk.py` and `live_run.py`.
+6. #36, #38, #39 (P3s) in `docs/E2E_TEST_LOG.md`.
