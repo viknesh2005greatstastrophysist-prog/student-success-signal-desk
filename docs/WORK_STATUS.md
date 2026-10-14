@@ -1,6 +1,19 @@
-# Work status — 14 October 2026, fix pass B
+# Work status — 15 October 2026, rework 1 (structure, speed, drop-downs)
 
 Durable handoff note so no state lives only in a chat session. Update this file whenever the state below changes.
+
+## Rework 1 (15 Oct): structure, speed and drop-downs (worker 1 of 4)
+
+Owner decisions: `~/Personal Brain/brainstorms/2026-10-14-aura-app-rework.md`. This worker did the information architecture, speed and drop-down fix; the Apple-style visual system (worker 3), data regeneration and the live run (worker 4) are separate.
+
+- Step 0 (fix pass C) verified and pushed (`46f9a71`, `977526b`, `0e8c8f8`): Core tsc and eslint clean, platform tests 7/7, Core tests 180 (171 pass, 0 fail, 9 skipped opt-in), the four DB suites on the LOCAL Postgres in disposable `aura_core_test_*` schemas (all dropped), engine rebuilt and `check:engine` passes, every `verify_*.py` except `verify_local.py` and `verify_cloud.py` passes. `live_run.py` not run.
+- Commits on top: `90324c6` (engine: batched read action, `sources` refused to student and parent), `23950ca` (Streamlit: per-role pages, new IA, non-typeable pickers, batched reads, fragments, verify scripts, CI step), `383fad8` (E2E: timing script, drop-down check, walk), `ad9f43e` (engine: sign-in runs its independent checks together; `verify_ui` checks staff-only sources), then a docs commit. Pushed with the account switch below; CI result in the final message of the session.
+- Layout: `streamlit_app/app.py` (thin entry, `st.navigation`), `common.py`, `auth.py`, `views/{student,parent,mentor,hod,operations,lms,profile,sources,reviews,metrics,pages}.py`, `apptest_util.py` (AppTest helpers: open a page by URL path, pick by label, the old single-module namespace for the offline scripts). Pages per role are in `docs/E2E_TEST_LOG.md` ("Rework 1") and the README.
+- Speed: see `docs/E2E_TEST_LOG.md`, "Rework: speed". Locally every page was already under the targets; with a simulated 60 ms database round trip, cold page switches went from a 1.38 s median and 3.33 s worst to about 0.12 s median and 1.95 s worst, warm switches stay about 0.1 s, and sign-in plus landing page is 2.8 to 4.1 s (was 3.9 to 5.6 s; not under 2 s). Hosted timing not measured (private app).
+- Drop-downs: no typing anywhere (`filter_mode=None`; up to seven plain options are segmented controls; search boxes for long lists); verified in a real browser, 23 drop-downs, 0 failures. Known limit: the two student multi-selects inside the plan forms have no live search.
+- Walk `--pass rework1`: 9 sessions, 136 views, 0 exceptions, 0 error alerts, 0 console errors, 0 failed requests, 0 overflow, 0 truncated, 0 leaked-text, 0 walk errors, 0 forbidden pages.
+- Servers: own server on 8503 started and stopped; 8502 never touched. Live model calls: 0 Groq, 0 Gemini. Student 021 and `d398bbc3` untouched. No database change (additive or otherwise).
+- Open: an HoD "decision turnaround" is shown as the median wait of open drafts plus decisions made and the last decision time, because the Core records no draft-to-decision duration per plan; the sidebar shows the navigation above the brand (visual pass); the engine runs one request at a time per process (a long plan run blocks other users' reads on the same app instance; a small engine pool would help the hosted app but was out of scope); no GitHub Actions ping (the app is private and a plain request does not wake a sleeping Community Cloud app).
 
 ## Where the code is
 
@@ -10,7 +23,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 | HEAD | Fix pass B on top of fix pass A (`1d0c7bf`): `02a7cef` (Core: one definition of awaiting decision, student-level risk counts, shared run totals, late flag), `ddcd7a3` (rebuilt engine bundle), `7ceabe5` (Streamlit: consistent counts, validation headline, late submissions, verify scripts, CI step), then a docs commit; pushed to `origin/streamlit-college-project` after the checks below passed. Fix pass A: `2a3b7bc`, `59756cc`, `53379bd`. |
 | Hosted Streamlit (aura-college-workspace.streamlit.app) | Last confirmed deployed from `5f7db7e` (Briefs 1–9); it should redeploy on push but the running version is unconfirmed (private app, owner sign-in required). `GROQ_API_KEY` added to its Streamlit secrets (`[aura]` section) by the owner on 14 Oct. |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
-| Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
+| Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude) / 8503 (rework runs). Local Postgres 127.0.0.1:55432 `aura_project`. |
 
 **Pushing.** Plain `git push` fails here (keychain holds `vikneshwaranmarimuthu-cmyk`; the repo belongs to `viknesh2005greatstastrophysist-prog`). Both accounts are signed in to `gh`, so push with:
 `gh auth switch --user viknesh2005greatstastrophysist-prog && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project && gh auth switch --user vikneshwaranmarimuthu-cmyk`.
