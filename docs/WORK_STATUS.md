@@ -16,6 +16,17 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 `gh auth switch --user viknesh2005greatstastrophysist-prog && git -c credential.helper='!gh auth git-credential' push origin streamlit-college-project && gh auth switch --user vikneshwaranmarimuthu-cmyk`.
 Streamlit Cloud redeploys from the branch on every push. Codex's subscription ended 14 Oct; Claude implements under a strict usage cap (one agent at a time).
 
+## Live agentic run, round 2 (14 Oct evening, Claude as mentor, Groq first)
+
+- What ran: `streamlit_app/e2e/live_run.py` (staged, headless Chromium, real UI, LOCAL server on 8503 and local Postgres, fixture accounts; screenshots and `state.json` in git-ignored `runtime/streamlit-project/e2e/live2/`). Server env: `CH11_PROVIDER_ORDER=groq,gemini,configured` and `CH11_LIMITER_MAX_WAIT_MS=65000` (E2E log #34).
+- Case ids: plan `909398ad-5799-4f15-99ef-ba1900cba87d` (3 high-risk mentees, none of them student 021); reviews `aaaf970c`, `e75d0d4e`, `0a125f32`; approved and published case `fbe05729-3a90-4110-a05d-8cbc33841059` (Preetam G, 01FE24BCI018), edited from version 1 to 3 and revalidated before approval.
+- Groq completion calls: about 50, not metered (planner 6, investigator about 35, draft about 6, 2 real 429s), a few over the 45 budget because the failed attempts before the #33 fix re-ran the investigators. Gemini and local Qwen: 0.
+- Honest statement: the lab-manual definition-of-done flow was exercised end to end with Claude acting as the mentor (describe, planner questions, lock, run, validated AI drafts, mentor edit, revalidation, approval, publish, student and parent views, HoD and AI activity counts, evidence export) on the local database. It is a test run by Claude, not a sign-off by real faculty. Not exercised live: regenerator and diagnoses, the attendance and wellbeing-referral specialists, the judge (not wired).
+- Fix made: #33 (P1), `464dec0`: one review per request for a budgeted remote model, with a test; engine rebuilt, `check:engine` passes. Open: #34 to #39 (E2E log).
+- Read-only walk `walk.py --pass 2c` (own server 8503): 9 role and workspace sessions, 254 views, 0 Streamlit exceptions, 0 error alerts, 0 browser console errors, 0 failed requests, 0 horizontal overflow, 0 truncated views, 1 leaked-text finding and 1 walk error..
+- Hosted run: blocked, app private (303 to `share.streamlit.io/-/auth`). Open item.
+- The server on 8503 was stopped afterwards; 8502 (another session) was never touched.
+
 ## Verification at HEAD (run 14 Oct, fix pass B: data correctness)
 
 - Core `tsc --noEmit` and eslint clean. Core tests 166: 157 pass, 0 fail, 9 skipped (opt-in DB suites; baseline 163: 154 pass). New: `chapter11-counts.test.ts` (3: awaiting drafts collapse to one per student with history, one latest risk row per student, evaluation totals). The agents DB suite now asserts that the queue, its count and the overview count agree for the mentor and the department head, and that a legacy draft is never counted.
