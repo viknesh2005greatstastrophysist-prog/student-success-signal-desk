@@ -71,8 +71,14 @@ test("packet-v2 template is valid for every specialist, names the driving course
     const v2 = c.baseline as PacketV2;
     assert.equal(v2.schema, "packet-v2");
     assert.ok(v2.rationale.length >= 2 && v2.rationale.length <= 5);
-    assert.match(v2.rationale[0]!.text, /Attendance is 64% overall against the 75% minimum.*lowest in 21CS501 at 58%/);
-    assert.ok(v2.rationale[0]!.citations.includes(COURSE_ATT));
+    if (domain === "wellbeing-referral") {
+      // The wellbeing pack never sees more than the triggering signals.
+      assert.match(v2.rationale[0]!.text, /^Attendance is 64% against the 75% minimum/);
+      assert.ok(!v2.rationale[0]!.citations.includes(COURSE_ATT));
+    } else {
+      assert.match(v2.rationale[0]!.text, /Attendance is 64% overall against the 75% minimum.*lowest in 21CS501 at 58%/);
+      assert.ok(v2.rationale[0]!.citations.includes(COURSE_ATT));
+    }
   }
 });
 

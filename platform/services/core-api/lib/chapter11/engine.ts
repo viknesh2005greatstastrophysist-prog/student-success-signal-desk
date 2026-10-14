@@ -11,8 +11,8 @@ import {
 } from "./packet-v2";
 export { isPacketV2, packetV2Schema, type PacketV2 };
 import { actions, domainNames } from "./catalogue";
-import { specialistRegistry } from "./specialists";
-export { actions, domainNames, specialistRegistry };
+import { routeSpecialist, specialistRegistry } from "./specialists";
+export { actions, domainNames, routeSpecialist, specialistRegistry };
 
 export const sourceNames = [
   "academic",
@@ -478,7 +478,15 @@ export function formatSkillV2(
   domain: (typeof domainNames)[number],
   evidence: Evidence,
 ): PacketV2 {
-  return templateV2(formatSkill(risk, domain), risk, evidence, domain);
+  // The coordinator routes the case to one specialist pack by its signals.
+  const specialist = routeSpecialist(risk.signals, domain);
+  return templateV2(
+    formatSkill(risk, specialist),
+    risk,
+    evidence,
+    specialist,
+    specialists[specialist].evidenceView,
+  );
 }
 export const anyPacketSchema = z.union([packetSchema, packetV2Schema]);
 export type AnyPacket = Packet | PacketV2;
@@ -500,10 +508,16 @@ export function validateAnyPacket(
 ): { valid: boolean; failures: Diagnosis[] } {
   const v2 = o.version ? o.version === 2 : isPacketV2(candidate);
   if (!v2) return validatePacket(candidate, evidence, risk, domain);
-  const specialist = o.specialist ?? domain;
+  const specialist = o.specialist ?? routeSpecialist(risk.signals, domain);
+  const pack = specialists[specialist];
   return validatePacketV2(candidate, evidence, risk, {
-    codes: specialists[specialist].codes,
+    codes: pack.codes,
     specialist,
+    language: pack.language,
+    scope:
+      pack.evidenceView === "triggering"
+        ? risk.signals.map((s) => s.path)
+        : undefined,
     canonical: new Map(
       formatSkill(risk, domain).citations.map((c) => [
         c.evidencePath,
@@ -778,7 +792,14 @@ export async function compose(
     const meta = newCallMeta();
     metas.push(meta);
     try {
-      candidate = await provider.generate(context, undefined, undefined, meta);
+      const node = v2
+        ? specialists[(context.baseline as PacketV2).specialist].node
+        : undefined;
+      candidate = node
+        ? await runNode(node, () =>
+            provider.generate(context, undefined, undefined, meta),
+          )
+        : await provider.generate(context, undefined, undefined, meta);
       mode = "model";
       modelAttempts.push({
         attempt: 0,

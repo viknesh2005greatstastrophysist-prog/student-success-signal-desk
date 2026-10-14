@@ -525,7 +525,10 @@ export function draftRequest(
     catalogue: pack.codes.map((code) => ({ code, label: actions[code] })),
     library: Object.fromEntries(referenceLibrary.map((r) => [r.id, r.text])),
     failing,
+    view: pack.evidenceView,
+    history: pack.history,
   });
+  const refs = payload.evidence.map((e) => e.ref);
   return {
     fields,
     body: {
@@ -536,11 +539,14 @@ export function draftRequest(
         json_schema: {
           name: "student_support_draft",
           strict: true,
-          schema: draftOutputJsonSchema(pack.codes, Object.keys(aliases.evidence)),
+          schema: draftOutputJsonSchema(pack.codes, refs),
         },
       },
       messages: [
-        { role: "system", content: `${pack.instruction} ${DRAFT_RULES}` },
+        {
+          role: "system",
+          content: `${pack.instruction} ${pack.systemPrompt} ${DRAFT_RULES}`,
+        },
         { role: "user", content: JSON.stringify(payload) },
       ],
     },

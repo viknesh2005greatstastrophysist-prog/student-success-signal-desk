@@ -108,6 +108,10 @@ export type EgressOptions = {
   library?: Record<string, string>;
   failing?: Diagnosis[];
   now?: number;
+  /** "triggering": only evidence behind triggering signals (wellbeing pack) */
+  view?: "full" | "triggering";
+  /** include anonymised prior interventions and guidance text */
+  history?: boolean;
 };
 
 /** The allowlisted drafting payload. Only fields built here may leave. */
@@ -119,7 +123,12 @@ export function serializeDraftRequest(
   const pathToAlias = invert(options.aliases.evidence);
   const codeToCourse = invert(options.aliases.courses);
   const catalogueCodes = new Set(options.catalogue.map((c) => c.code));
-  const evidence = Object.entries(options.aliases.evidence).map(
+  const triggering = new Set(context.risk.signals.map((s) => s.path));
+  const visible = Object.entries(options.aliases.evidence).filter(
+    ([, path]) => options.view !== "triggering" || triggering.has(path),
+  );
+  const history = options.history !== false;
+  const evidence = visible.map(
     ([ref, path]) => {
       const m = metricOf(path);
       const record = context.evidence[m.source as keyof Evidence];
@@ -175,10 +184,10 @@ export function serializeDraftRequest(
         }
       : {}),
     catalogue: options.catalogue.map((c) => ({ code: c.code, label: c.label })),
-    guidance: context.references
+    guidance: (history ? context.references : [])
       .map((r) => options.library?.[r.id])
       .filter((t): t is string => !!t),
-    priorInterventions: context.references
+    priorInterventions: (history ? context.references : [])
       .filter((r) => !options.library?.[r.id] && r.actionCodes?.length)
       .map((r) => ({
         actions: (r.actionCodes ?? []).filter((c) => catalogueCodes.has(c)),

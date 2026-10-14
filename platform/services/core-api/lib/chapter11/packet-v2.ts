@@ -100,12 +100,17 @@ function lowestCourse(evidence: Evidence, metric: string) {
   return best;
 }
 
-function templateRationale(risk: Risk, evidence: Evidence) {
+function templateRationale(
+  risk: Risk,
+  evidence: Evidence,
+  view: "full" | "triggering",
+) {
   const sig = (code: string) => risk.signals.find((s) => s.code === code);
   const out: Array<{ text: string; citations: string[] }> = [];
   const attendance = sig("ATTENDANCE_LOW");
   if (attendance) {
-    const course = lowestCourse(evidence, "attendancePct");
+    const course =
+      view === "full" ? lowestCourse(evidence, "attendancePct") : undefined;
     out.push(
       course && course.value < attendance.threshold
         ? {
@@ -285,12 +290,13 @@ export function templateV2(
   risk: Risk,
   evidence: Evidence,
   specialist: DomainName,
+  view: "full" | "triggering" = "full",
 ): PacketV2 {
   return {
     schema: PACKET_V2,
     specialist,
     summary: v1.summary,
-    rationale: templateRationale(risk, evidence),
+    rationale: templateRationale(risk, evidence, view),
     actions: v1.actions.map((a) => ({
       code: a.code,
       label: a.label,
@@ -333,7 +339,10 @@ export function assembleDraft(raw: unknown, baseline: PacketV2): unknown {
 /** Strict JSON schema for the model output (no length keywords; the
  * validator enforces limits). Citation refs are constrained to the aliases. */
 export function draftOutputJsonSchema(codes: string[], refs: string[]) {
-  const cites = { type: "array", items: { type: "string", enum: refs } };
+  const cites = {
+    type: "array",
+    items: refs.length ? { type: "string", enum: refs } : { type: "string" },
+  };
   return {
     type: "object",
     additionalProperties: false,
@@ -388,6 +397,8 @@ export type V2Options = {
   policy?: Policy;
   /** extra language rule for a specialist pack (Brief 15) */
   language?: RegExp;
+  /** evidence paths this pack may cite (triggering-only packs) */
+  scope?: string[];
 };
 
 /** Claim-level validation of a packet-v2 candidate (alias or restored form). */
@@ -445,6 +456,7 @@ export function validatePacketV2(
         fail(claim.field, "UNSUPPORTED_CITATION");
         continue;
       }
+      if (o.scope && !o.scope.includes(path)) fail(claim.field, "SPECIALIST_SCOPE");
       cited.add(path);
       allowed.push(value);
       const metric = metricOf(path).metric;

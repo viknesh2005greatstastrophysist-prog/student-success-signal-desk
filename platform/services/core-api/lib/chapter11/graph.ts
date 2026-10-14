@@ -5,6 +5,11 @@ export const collectorNodes = [
   "InternshipCollector",
   "PlacementCollector",
 ] as const;
+export const specialistNodes = [
+  "AcademicSpecialist",
+  "AttendanceSpecialist",
+  "WellbeingReferralSpecialist",
+] as const;
 export const reviewGraph = {
   version: "chapter11-graph-v1",
   maxRepairs: 2,
@@ -24,6 +29,7 @@ export const reviewGraph = {
     "RiskAnalysisAgent",
     "HistoryRetriever",
     "RecommendationAgent",
+    ...specialistNodes,
     "PacketValidator",
     "Regenerator",
     "HumanGate",
@@ -60,6 +66,16 @@ export const reviewGraph = {
       to: "PacketValidator",
       condition: "candidate",
     },
+    ...specialistNodes.map((to) => ({
+      from: "RecommendationAgent",
+      to,
+      condition: "routed by the case's signals (packet-v2)",
+    })),
+    ...specialistNodes.map((from) => ({
+      from,
+      to: "PacketValidator",
+      condition: "specialist candidate",
+    })),
     {
       from: "PacketValidator",
       to: "Regenerator",
@@ -90,6 +106,7 @@ export type NodeId =
   | "RiskAnalysisAgent"
   | "HistoryRetriever"
   | "RecommendationAgent"
+  | (typeof specialistNodes)[number]
   | "PacketValidator"
   | "Regenerator"
   | "HumanGate"

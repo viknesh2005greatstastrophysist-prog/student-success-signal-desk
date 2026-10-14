@@ -35,7 +35,7 @@ test("private project model cannot send context to a remote HTTPS endpoint",()=>
 });
 test("shared model profile cannot copy another case's facts and citations",async()=>{
   const evidence=(id:string,attendance:number)=>Object.fromEntries(sourceNames.map(source=>[source,{source,studentId:id,recordId:`${id}:${source}`,observedAt:"2026-10-12T00:00:00.000Z",semester:"2026-ODD",state:"present",synthetic:true,values:source==="academic"?{attendancePct:attendance,markPct:40}:source==="lms"?{inactivityDays:2,overdueAssignments:0}:source==="internship"?{missedMilestones:0}:{missedActivities:0}}])) as unknown as Evidence;
-  const profile=projectProfileComposer({modelId:"FICTIONAL-MODEL",async generate(context){return context.baseline;}});
+  const profile=projectProfileComposer({modelId:"FICTIONAL-MODEL",async generate(context){return context.baseline;}},{bulkDryRun:true});
   for(const studentId of ["11111111-1111-4111-8111-111111111111","22222222-2222-4222-8222-222222222222"]){const sources=evidence(studentId,50),risk=riskAnalysis(sources,demoPolicy),baseline=formatSkill(risk,"academic");const packet=await profile.composer.generate({evidence:sources,risk,baseline,domain:"academic",references:[]});assert.deepEqual(packet,baseline);}
   assert.equal(profile.stats.actualModelCalls,1);assert.equal(profile.stats.reusedProfiles,1);
 });
