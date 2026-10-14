@@ -8,7 +8,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 |---|---|
 | Branch | `streamlit-college-project` |
 | HEAD | Hygiene batch (audit 0.3, 0.4, 0.6) on top of `6ec8189` (Brief 16-lite): `7c8e15c` (0.3), `6f01f5c` (0.4), `855d5e4` (0.6), then a docs commit; pushed to `origin/streamlit-college-project` once all checks below passed. Earlier: Brief 16-lite (`6ec8189`), Brief 12 (`1aceac0`, `9892467`, `bb92e3d`). |
-| Hosted Streamlit (aura-college-workspace.streamlit.app) | Last confirmed deployed from `5f7db7e` (Briefs 1–9); it should redeploy on push but the running version is unconfirmed (private app, owner sign-in required). `GROQ_API_KEY` must be added to its Streamlit secrets by the owner. |
+| Hosted Streamlit (aura-college-workspace.streamlit.app) | Last confirmed deployed from `5f7db7e` (Briefs 1–9); it should redeploy on push but the running version is unconfirmed (private app, owner sign-in required). `GROQ_API_KEY` added to its Streamlit secrets (`[aura]` section) by the owner on 14 Oct. |
 | Vercel portals (8) | Paused by owner decision. Still 503. |
 | Local | `.venv/bin/streamlit run streamlit_app/app.py` on 127.0.0.1:8501 (Codex) / 8502 (Claude). Local Postgres 127.0.0.1:55432 `aura_project`. |
 
@@ -83,7 +83,7 @@ The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Hygiene
 ## Standing decisions (owner)
 
 - ₹0 spend; free plans only; **one account and one API key per provider** (no quota rotation; provider terms forbid it).
-- Hosted model order: Groq `qwen/qwen3.8-27b` (drafting) and `openai/gpt-oss-120b` (judge) → Gemini Flash-Lite → labelled rule-based path. `GROQ_API_KEY` is in the private root `.env` (git-ignored, mode 600) and verified; not yet in Streamlit secrets.
+- Hosted model order: Groq `qwen/qwen3.8-27b` (drafting) and `openai/gpt-oss-120b` (judge) → Gemini Flash-Lite → labelled rule-based path. `GROQ_API_KEY` is in the private root `.env` (git-ignored, mode 600) and verified, and in the hosted app's Streamlit secrets (14 Oct).
 - Remote models receive **anonymised numbers only** (case alias, values, thresholds, course aliases, relative time). Local Qwen may receive full context.
 - Preserve all 321-student / 647-account records; additive migrations only; **Student 021 stays pending** for the presentation.
 - Codex desktop session = orchestrator on gpt-6-astra, delegating to gpt-6.1-sol (implementation) and gpt-6-luna (bounded checks). Claude sessions use Opus for sub-agents to conserve usage.
