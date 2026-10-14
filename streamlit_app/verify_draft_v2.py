@@ -90,9 +90,8 @@ def script(selected: int) -> str:
 import json, sys
 import streamlit as st
 sys.path.insert(0, {str(APP)!r})
-source = open({str(APP / "app.py")!r}).read().rsplit("\\nmain()", 1)[0]
-ns = {{"__name__": "draft_v2_check", "__file__": {str(APP / "app.py")!r}}}
-exec(compile(source, "app.py", "exec"), ns)
+from apptest_util import namespace
+ns = namespace()
 queue = json.loads({json.dumps(json.dumps(queue))})
 st.session_state["support_draft"] = queue["drafts"][{selected}]
 ns["render_draft_reviews"](queue, {{"role": "faculty"}}, {{}})

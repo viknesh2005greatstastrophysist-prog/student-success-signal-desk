@@ -1,10 +1,14 @@
 """Read-only actual-account checks for the mentor dashboard increment."""
 
 import json
+import sys
 from pathlib import Path
 
 from bridge import Client
 from streamlit.testing.v1 import AppTest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from apptest_util import open_page  # noqa: E402
 
 root = Path(__file__).resolve().parent.parent
 accounts = json.loads((root / "runtime/project-final/accounts.json").read_text())
@@ -29,12 +33,15 @@ at.segmented_control[0].set_value("faculty")
 at.text_input[0].set_value(account["email"])
 at.text_input[1].set_value(account["password"])
 next(b for b in at.button if b.label == "Sign in").click().run()
-next(r for r in at.radio if r.label == "Workspace").set_value("Support reviews").run()
+open_page(at, "mentees")
+at.segmented_control(key="mentees_view").set_value("Risk view").run()
 assert not at.exception, [e.message for e in at.exception]
 assert not at.error, [e.value for e in at.error]
 assert any(s.value == "Composite risk view" for s in at.subheader)
 next(c for c in at.checkbox if c.label == "Flagged students only").check().run()
 assert not at.exception
+at.segmented_control(key="mentees_view").set_value("Outcomes").run()
+assert not at.exception, [e.message for e in at.exception]
 assert any(
     b.label == "Download intervention log CSV" for b in at.get("download_button")
 )

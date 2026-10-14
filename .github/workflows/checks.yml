@@ -80,3 +80,4 @@ jobs:
       - run: python streamlit_app/verify_read_cache.py
       - run: python streamlit_app/verify_ai_only_ui.py
       - run: python streamlit_app/verify_data_counts.py
+      - run: python streamlit_app/verify_navigation.py

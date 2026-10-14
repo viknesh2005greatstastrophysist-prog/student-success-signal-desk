@@ -71,9 +71,8 @@ def script(call: str) -> str:
 import json, sys
 import streamlit as st
 sys.path.insert(0, {str(APP)!r})
-source = open({str(APP / "app.py")!r}).read().rsplit("\\nmain()", 1)[0]
-ns = {{"__name__": "ai_only_check", "__file__": {str(APP / "app.py")!r}}}
-exec(compile(source, "app.py", "exec"), ns)
+from apptest_util import namespace
+ns = namespace()
 def fake_save(action, data, success):
     st.session_state.setdefault("calls", []).append([action, data])
     return {{}}

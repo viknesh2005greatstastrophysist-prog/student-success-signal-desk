@@ -1,0 +1,409 @@
+from __future__ import annotations
+
+from typing import Any
+
+import altair as alt
+import labels
+import pandas as pd
+import streamlit as st
+import ui
+from common import pick
+from common import dataframe
+from views.reviews import provenance_rows, render_diagnoses, render_tool_calls
+
+
+def rate(raw: Any) -> float | None:
+    try:
+        return None if raw is None else round(float(raw) * 100, 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def render_evaluation_metrics(review: dict[str, Any]) -> None:
+    cycle_map = cycle_labels(review)
+    ui.section(
+        "How the agents performed",
+        "Calculated from recorded checkpoints, immutable drafts and mentor decisions. Undecided cases are excluded from decision metrics.",
+        icon=":material/insights:",
+    )
+    metrics = review.get("metrics") or {}
+    cycles = metrics.get("cycles") or []
+    per_run = metrics.get("perRun") or []
+    if not per_run:
+        ui.empty_state(
+            "No evaluated runs yet",
+            "Metrics appear after the first review run is validated.",
+        )
+        return
+    decided = [r for r in per_run if r.get("decision")]
+    approved = [r for r in decided if r.get("decision") == "approved"]
+    totals = metrics.get("totals") or {}
+    ui.kpi_row(
+        [
+            {
+                "label": "Validation pass rate",
+                "value": labels.percent_text(
+                    totals.get("validationPassed", 0), totals.get("evaluated", 0)
+                ),
+                "icon": ":material/verified:",
+                "help": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)} drafts passed every acceptance check before mentor review. Cycles are listed below.",
+            },
+            {
+                "label": "Targeted repairs",
+                "value": sum(int(r.get("repairsUsed") or 0) for r in per_run),
+                "icon": ":material/build:",
+            },
+            {
+                "label": "Escalated to a mentor",
+                "value": totals.get("escalated", 0),
+                "icon": ":material/front_hand:",
+                "help": "Same count as the Escalations card on AI activity.",
+            },
+            {
+                "label": "Approved as drafted",
+                "value": f"{round(100 * sum(1 for r in approved if r.get('approveAsIs')) / len(approved))}%"
+                if approved
+                else "—",
+                "icon": ":material/thumb_up:",
+                "help": "Of approved drafts, how many mentors approved without editing.",
+            },
+        ]
+    )
+    dataframe(
+        [
+            {
+                "Cycle": f"{cycle_map.get(str(row.get('cycleId')), 'C?')} · {labels.short_ref(row.get('cycleId'))}",
+                "Runs": row.get("evaluatedRuns"),
+                "Pass rate": rate(row.get("validationPassRate")),
+                "Repairs": row.get("repairsUsed"),
+                "Escalation rate": rate(row.get("escalationRate")),
+                "AI model runs": row.get("modelRuns"),
+                "Legacy rule-based runs": row.get("legacyRuleRuns"),
+                "Decided": row.get("decidedRuns"),
+                "Approved as drafted": rate(row.get("approveAsIsRate")),
+                "Avg. decision time (min)": None
+                if row.get("averageDecisionSeconds") is None
+                else round(float(row["averageDecisionSeconds"]) / 60, 1),
+            }
+            for row in cycles
+        ],
+        column_config={
+            name: st.column_config.NumberColumn(name, format="%.0f%%")
+            for name in (
+                "Pass rate",
+                "Escalation rate",
+                "Approved as drafted",
+            )
+        },
+    )
+    with st.expander("Per-run metrics", icon=":material/table_rows:"):
+        dataframe(
+            [
+                {
+                    "Run": labels.short_ref(row.get("jobId")),
+                    "Cycle": f"{cycle_map.get(str(row.get('cycleId')), 'C?')} · {labels.short_ref(row.get('cycleId'))}",
+                    "Passed checks": "Yes" if row.get("validationPassed") else "No",
+                    "Repairs": row.get("repairsUsed"),
+                    "Rule-based fallback (retired)": "Yes"
+                    if row.get("fallback")
+                    else "No",
+                    "Escalated": "Yes" if row.get("escalated") else "No",
+                    "Mode": labels.mode_label(row.get("mode")),
+                    "Decision": labels.status_label(row.get("decision"))
+                    if row.get("decision")
+                    else "Pending",
+                    "Mentor edit distance": row.get("mentorEditDistance"),
+                }
+                for row in per_run
+            ]
+        )
+
+
+TREND_SERIES = {
+    "reviewed": ("Reviewed", "#0E1116"),
+    "flagged": ("Flagged", "#E5A200"),
+    "blocked": ("Blocked", "#E5484D"),
+    "awaiting_approval": ("Awaiting mentor", "#FF5A1F"),
+    "approved": ("Approved", "#2F9E6F"),
+    "completed": ("Completed", "#1B6B49"),
+    "withdrawn": ("Withdrawn", "#A8A396"),
+}
+BAND_SERIES = {
+    "low": ("Low", "#2F9E6F"),
+    "medium": ("Medium", "#E5A200"),
+    "high": ("High", "#E5484D"),
+}
+
+
+def cycle_labels(review: dict[str, Any]) -> dict[str, str]:
+    """C1, C2 ... over every cycle, oldest first. Charts and tables share these names (#24)."""
+    return {
+        str(row.get("cycle_id")): f"C{index}"
+        for index, row in enumerate(review.get("trends") or [], start=1)
+    }
+
+
+def trend_has_signal(rows: list[dict[str, Any]]) -> bool:
+    """A chart is only worth drawing when cycles are big enough and differ from each other."""
+    if len(rows) < 3 or max(int(r.get("reviewed") or 0) for r in rows) < 3:
+        return False
+    return any(len({int(r.get(key) or 0) for r in rows}) > 1 for key in TREND_SERIES)
+
+
+def render_review_trends(review: dict[str, Any]) -> None:
+    ui.section(
+        "Support trends by review cycle",
+        "Each cycle is one saved review plan. Aggregates only; no student can be identified here.",
+        icon=":material/monitoring:",
+    )
+    rows = review.get("trends") or []
+    if not rows:
+        ui.empty_state(
+            "No evaluated review cycles yet",
+            "Trends appear after mentors run their first review.",
+        )
+        return
+    evaluated = [r for r in rows if int(r.get("reviewed") or 0) > 0]
+    if evaluated:
+        rows = evaluated
+    recent = 8
+    if len(rows) > recent and not st.toggle(
+        f"Show all {len(rows)} cycles", key="trend_all_cycles"
+    ):
+        rows = rows[-recent:]
+        st.caption(f"Showing the {recent} most recent cycles with evaluated students.")
+    cycle_map = cycle_labels(review)
+    order = [
+        cycle_map.get(str(r.get("cycle_id")), f"C{i}") for i, r in enumerate(rows, 1)
+    ]
+    if not trend_has_signal(rows):
+        biggest = max(int(r.get("reviewed") or 0) for r in rows)
+        ui.insight(
+            "Too small to chart yet",
+            f"The {len(rows)} most recent cycles each evaluated at most {biggest} "
+            f"student{'s' if biggest != 1 else ''}, and their counts do not change from one cycle to the next, "
+            "so a trend line would show nothing. Charts appear once cycles cover at least three students and differ.",
+        )
+        dataframe(
+            [
+                {
+                    "Cycle": order[index],
+                    "Date": labels.nice_date(r.get("day")),
+                    "Reviewed": int(r.get("reviewed") or 0),
+                    "Flagged": int(r.get("flagged") or 0),
+                    "Awaiting mentor": int(r.get("awaiting_approval") or 0),
+                    "Approved": int(r.get("approved") or 0),
+                }
+                for index, r in enumerate(rows)
+            ]
+        )
+        return
+    counts = pd.DataFrame(
+        [
+            {
+                "Cycle": order[index],
+                "Review cycle": str(r["day"]),
+                "Measure": label,
+                "Count": int(r.get(key, 0) or 0),
+            }
+            for index, r in enumerate(rows)
+            for key, (label, _) in TREND_SERIES.items()
+        ]
+    )
+    averages = pd.DataFrame(
+        [
+            {
+                "Cycle": order[index],
+                "Review cycle": str(r["day"]),
+                "Band": label,
+                "Average score": r.get("average_" + key),
+            }
+            for index, r in enumerate(rows)
+            for key, (label, _) in BAND_SERIES.items()
+            if r.get("average_" + key) is not None
+        ]
+    )
+    left, right = st.columns([3, 2], gap="medium")
+    with left, ui.card("trend_outcomes"):
+        st.markdown("##### Outcomes per cycle")
+        bars = (
+            alt.Chart(counts)
+            .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+            .encode(
+                x=alt.X("Cycle:N", title=None, sort=order, axis=alt.Axis(labelAngle=0)),
+                xOffset=alt.XOffset(
+                    "Measure:N", sort=[v[0] for v in TREND_SERIES.values()]
+                ),
+                y=alt.Y("Count:Q", title="Students", axis=alt.Axis(tickMinStep=1)),
+                color=alt.Color(
+                    "Measure:N",
+                    sort=[v[0] for v in TREND_SERIES.values()],
+                    scale=alt.Scale(
+                        domain=[v[0] for v in TREND_SERIES.values()],
+                        range=[v[1] for v in TREND_SERIES.values()],
+                    ),
+                    title=None,
+                ),
+                tooltip=["Review cycle", "Measure", "Count"],
+            )
+            .properties(height=260)
+        )
+        st.altair_chart(ui.style_chart(bars), width="stretch")
+    with right, ui.card("trend_bands"):
+        st.markdown("##### Average risk score by band")
+        if averages.empty:
+            averages = pd.DataFrame(
+                [
+                    {
+                        "Cycle": "C1",
+                        "Review cycle": "",
+                        "Band": "Low",
+                        "Average score": None,
+                    }
+                ]
+            )
+        lines = (
+            alt.Chart(averages)
+            .mark_line(point=alt.OverlayMarkDef(size=60, filled=True), strokeWidth=2.5)
+            .encode(
+                x=alt.X("Cycle:N", title=None, sort=order, axis=alt.Axis(labelAngle=0)),
+                y=alt.Y(
+                    "Average score:Q",
+                    title="Score (0–100)",
+                    scale=alt.Scale(domain=[0, 100]),
+                ),
+                color=alt.Color(
+                    "Band:N",
+                    scale=alt.Scale(
+                        domain=[v[0] for v in BAND_SERIES.values()],
+                        range=[v[1] for v in BAND_SERIES.values()],
+                    ),
+                    title=None,
+                ),
+                tooltip=[
+                    "Review cycle",
+                    "Band",
+                    alt.Tooltip("Average score:Q", format=".1f"),
+                ],
+            )
+            .properties(height=260)
+        )
+        st.altair_chart(ui.style_chart(lines), width="stretch")
+        st.caption(
+            "Gaps mean no evaluated students in that band for the cycle."
+            + (
+                ""
+                if (st.session_state.get("actor") or {}).get("role") == "faculty"
+                else " Department views show a band average only when at least three students are in it, so no single student's score is exposed."
+            )
+        )
+
+
+def render_agent_graph(review: dict[str, Any]) -> None:
+    ui.section(
+        "Agent graph",
+        "The executor runs this graph for every student. Validation can regenerate at most twice; publication waits for the assigned mentor's approval of the exact draft.",
+        icon=":material/account_tree:",
+    )
+    jobs = [job for job in review.get("jobs", []) if job.get("node_trace")]
+    trace = None
+    if jobs:
+        job_id = pick(
+            "Show node activity for run",
+            [str(job["id"]) for job in jobs],
+            format_func=lambda jid: (
+                f"Run {labels.short_ref(jid)} · "
+                f"{labels.status_label(next(j for j in jobs if str(j['id']) == jid).get('status'))}"
+            ),
+            key="graph_job",
+        )
+        selected_job = next(job for job in jobs if str(job["id"]) == job_id)
+        trace = selected_job.get("node_trace")
+    ui.pipeline_stepper(
+        trace,
+        empty_text="" if not jobs else "Not reached",
+        judge=(selected_job.get("validation") or {}).get("judge")
+        if jobs and isinstance(selected_job.get("validation"), dict)
+        else None,
+    )
+    if jobs:
+        validation = selected_job.get("validation") or {}
+        with st.expander(
+            "Model calls for this run", icon=":material/smart_toy:", expanded=True
+        ):
+            dataframe(
+                provenance_rows(
+                    validation if isinstance(validation, dict) else {},
+                    selected_job.get("mode"),
+                    None,
+                )
+            )
+            render_tool_calls(
+                (validation.get("provenance") or {}).get("agent")
+                if isinstance(validation, dict)
+                else None
+            )
+        if isinstance(validation, dict) and (
+            validation.get("repairs")
+            or validation.get("failures")
+            or validation.get("diagnoses")
+        ):
+            with st.expander(
+                "Diagnosis and repairs for this run",
+                icon=":material/troubleshoot:",
+                expanded=True,
+            ):
+                render_diagnoses(validation)
+    if trace:
+        with st.expander("Node timings", icon=":material/timer:"):
+            dataframe(
+                [
+                    {
+                        "Node": labels.node_label(node),
+                        "Status": labels.NODE_STATES.get(
+                            state["status"], (labels.humanize(state["status"]), "")
+                        )[0],
+                        "Visits": state["visits"],
+                        "Milliseconds": round(state["elapsedMs"], 2),
+                    }
+                    for node, state in trace.items()
+                ]
+            )
+    graph = review.get("graph") or {}
+    edges = graph.get("edges") or []
+    if edges:
+        with st.expander(
+            "Full graph with transition conditions", icon=":material/schema:"
+        ):
+
+            def node_id(raw: Any) -> str:
+                return "".join(ch for ch in str(raw) if ch.isalnum()) or "Node"
+
+            def node_text(raw: Any) -> str:
+                return labels.node_label(raw).replace('"', "'")
+
+            nodes = {edge["from"] for edge in edges} | {edge["to"] for edge in edges}
+            colours = {
+                "coordinator": "#0E1116",
+                "agent": "#2B59FF",
+                "gate": "#FF5A1F",
+                "publish": "#2F9E6F",
+            }
+            declarations = " ".join(
+                f'{node_id(n)} [label="{node_text(n)}", color="{colours.get(labels.AGENT_NODES.get(str(n), ("", "agent"))[1], "#2B59FF")}"];'
+                for n in sorted(nodes)
+            )
+            links = " ".join(
+                f'{node_id(edge["from"])} -> {node_id(edge["to"])} [label="{str(edge.get("condition", "")).replace(chr(34), chr(39))}"];'
+                for edge in edges
+            )
+            st.graphviz_chart(
+                "digraph AURA { rankdir=LR; bgcolor=transparent; "
+                'node [shape=box, style="rounded,filled", fillcolor=white, fontname="Helvetica", fontsize=11, penwidth=2]; '
+                'edge [fontname="Helvetica", fontsize=9, color="#A8A396", fontcolor="#3A3F47"]; '
+                + declarations
+                + " "
+                + links
+                + " }",
+                width="stretch",
+            )

@@ -213,11 +213,17 @@ def family_summary(text: Any) -> str:
     prefix = "Mentor review requested:"
     if not raw.startswith(prefix):
         return raw
-    items = [part.strip().rstrip(".") for part in raw[len(prefix) :].split(",") if part.strip()]
+    items = [
+        part.strip().rstrip(".")
+        for part in raw[len(prefix) :].split(",")
+        if part.strip()
+    ]
     if not items:
         return "Your mentor has asked to check in with you."
     names = [SUMMARY_KEYWORDS.get(item.lower(), item.lower()) for item in items]
-    joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    joined = (
+        names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    )
     return f"Your mentor would like to check in about {joined}."
 
 
@@ -248,8 +254,16 @@ def issue_label(code: Any) -> str:
 
 
 _PATH = re.compile(r"^([a-z]+)(?:\[(\d+)\])?(?:\.([A-Za-z]+)(?:\[(\d+)\])?)?$")
-_PARTS = {"rationale": "Rationale sentence", "actions": "Action", "citations": "Citation"}
-_SUBPARTS = {"talkingPoints": "talking point", "personalisation": "personalisation", "citations": "citations"}
+_PARTS = {
+    "rationale": "Rationale sentence",
+    "actions": "Action",
+    "citations": "Citation",
+}
+_SUBPARTS = {
+    "talkingPoints": "talking point",
+    "personalisation": "personalisation",
+    "citations": "citations",
+}
 
 
 def path_label(path: Any) -> str:
@@ -276,7 +290,11 @@ def diagnosis_rows(record: Any) -> tuple[list[dict[str, str]], bool]:
     """
     if not isinstance(record, dict):
         return [], False
-    stored = [d for d in record.get("diagnoses") or [] if isinstance(d, dict) and d.get("code")]
+    stored = [
+        d
+        for d in record.get("diagnoses") or []
+        if isinstance(d, dict) and d.get("code")
+    ]
     if stored:
         return (
             [
@@ -288,12 +306,19 @@ def diagnosis_rows(record: Any) -> tuple[list[dict[str, str]], bool]:
             ],
             False,
         )
-    failures = [f for f in record.get("failures") or [] if isinstance(f, dict) and f.get("code")]
+    failures = [
+        f for f in record.get("failures") or [] if isinstance(f, dict) and f.get("code")
+    ]
     rows = []
     for failure in failures:
         where = path_label(failure.get("path"))
         wording = issue_label(failure.get("code"))
-        rows.append({"Diagnosis": f"{wording} ({where.lower()})" if where else wording, "Fix requested": "—"})
+        rows.append(
+            {
+                "Diagnosis": f"{wording} ({where.lower()})" if where else wording,
+                "Fix requested": "—",
+            }
+        )
     return rows, bool(rows)
 
 
@@ -448,7 +473,11 @@ def validation_headline(validation: Any) -> tuple[str, str, str]:
     validation = validation if isinstance(validation, dict) else {}
     checks = validation.get("checks")
     checks = checks if isinstance(checks, dict) else {}
-    recorded = {name: checks.get(name) for name in CHECK_NAMES if isinstance(checks.get(name), bool)}
+    recorded = {
+        name: checks.get(name)
+        for name in CHECK_NAMES
+        if isinstance(checks.get(name), bool)
+    }
     if validation.get("valid") is False or (recorded and not all(recorded.values())):
         return ("Did not pass", "red", ":material/report:")
     if not recorded:
@@ -507,3 +536,14 @@ def is_late(due_at: Any, submitted_at: Any, flag: Any = None) -> bool:
         return sent > due
     except (TypeError, ValueError):
         return False
+
+
+def hours_phrase(hours: float) -> str:
+    """'3 hours' or '2 days': how long something has waited, in plain words."""
+    if hours < 1:
+        return "under an hour"
+    if hours < 48:
+        count = round(hours)
+        return f"{count} hour{'s' if count != 1 else ''}"
+    days = round(hours / 24)
+    return f"{days} days"

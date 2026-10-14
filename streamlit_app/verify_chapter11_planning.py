@@ -9,6 +9,7 @@ points the worker at it and carries no Groq or Gemini key), so no live model is 
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -91,6 +92,9 @@ os.environ.pop("GROQ_API_KEY", None)
 from bridge import Client  # after the environment is set
 from streamlit.testing.v1 import AppTest
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from apptest_util import choose, open_page, picker  # noqa: E402
+
 account = next(
     a
     for a in json.loads((root / "runtime/project-final/accounts.json").read_text())
@@ -114,24 +118,25 @@ at.segmented_control[0].set_value("faculty")
 at.text_input[0].set_value(account["email"])
 at.text_input[1].set_value(account["password"])
 next(b for b in at.button if b.label == "Sign in").click().run()
-next(r for r in at.radio if r.label == "Workspace").set_value("Support reviews").run()
+open_page(at, "reviews")
+at.segmented_control(key="reviews_section").set_value("Start a review").run()
 next(t for t in at.text_area if t.label == "Review request").set_value(
     "Technical clarify and revise verification"
 )
 next(b for b in at.button if b.label == "Save review plan").click().run()
 assert not at.exception
-plan_id = next(s for s in at.selectbox if s.label == "Plan").value
+plan_id = picker(at, "Plan").value
 assert any(QUESTIONS[0] in w.value and QUESTIONS[1] in w.value for w in at.warning)
 next(m for m in at.multiselect if m.label == "Revised students in scope").set_value(
     [student]
 )
-next(s for s in at.selectbox if s.label == "Revised focus").select("academic")
-next(s for s in at.selectbox if s.label == "Revised policy").select(policy)
+choose(at, "Revised focus", "academic")
+choose(at, "Revised policy", policy)
 assert not any("mode" in e.label.lower() for e in at.selectbox), "no execution mode"
 note = "Technical verification: the first student, academic focus, current cycle."
 next(t for t in at.text_area if t.label == "Revision feedback").set_value(note)
 next(b for b in at.button if b.label == "Save revised plan").click().run()
-assert next(s for s in at.selectbox if s.label == "Plan").value == plan_id
+assert picker(at, "Plan").value == plan_id
 assert not at.exception and not at.error
 # The paraphrased question was answered by the note: it is not asked again, the
 # feedback box opens empty and the note is kept above it, never mixed into it.
@@ -140,10 +145,10 @@ assert not any("Complete these details" in w.value for w in at.warning), [
 ]
 assert next(t for t in at.text_area if t.label == "Revision feedback").value == ""
 next(b for b in at.button if b.label == "Lock review plan").click().run()
-assert next(s for s in at.selectbox if s.label == "Plan").value == plan_id, (
+assert picker(at, "Plan").value == plan_id, (
     "after lock",
     plan_id,
-    next(s for s in at.selectbox if s.label == "Plan").value,
+    picker(at, "Plan").value,
     [s.value for s in at.success],
 )
 next(t for t in at.text_input if t.label == "Pause or resume reason").set_value(
@@ -151,9 +156,9 @@ next(t for t in at.text_input if t.label == "Pause or resume reason").set_value(
 )
 next(b for b in at.button if b.label == "Pause review").click().run()
 assert not at.error, [e.value for e in at.error]
-assert next(s for s in at.selectbox if s.label == "Plan").value == plan_id, (
+assert picker(at, "Plan").value == plan_id, (
     plan_id,
-    next(s for s in at.selectbox if s.label == "Plan").value,
+    picker(at, "Plan").value,
     [s.value for s in at.success],
 )
 assert next(b for b in at.button if b.label == "Run review").disabled, [

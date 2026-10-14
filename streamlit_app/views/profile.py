@@ -1,0 +1,239 @@
+"""One student's profile for staff: a mentor (own mentees) or the department head (read-only)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import streamlit as st
+
+import labels
+import ui
+from common import (
+    average,
+    dataframe,
+    display_name,
+    load,
+    percent,
+    person_id,
+    pick,
+    sections,
+)
+from views.sources import render_source_evidence
+from views.student import render_course_cards
+
+MENTOR_SECTIONS = [
+    "Overview",
+    "Attendance",
+    "Marks",
+    "Signals",
+    "Plans and outcomes",
+    "Source records",
+]
+HOD_SECTIONS = ["Overview", "Attendance", "Marks", "Support plans", "Source records"]
+
+
+def student_options(students: list[dict[str, Any]]) -> tuple[list[str], dict[str, str]]:
+    """Ids sorted by name, and the label shown for each."""
+    ordered = sorted(
+        (s for s in students if person_id(s)),
+        key=lambda s: labels.pretty_name(display_name(s)).lower(),
+    )
+    ids = [person_id(s) for s in ordered]
+    names = {
+        person_id(s): " · ".join(
+            str(part)
+            for part in [labels.pretty_name(display_name(s)), s.get("register_number")]
+            if part
+        )
+        for s in ordered
+    }
+    return ids, names
+
+
+def pick_student(students: list[dict[str, Any]], *, label: str, key: str) -> str | None:
+    """A non-typeable picker with its own search box for long lists."""
+    ids, names = student_options(students)
+    if not ids:
+        return None
+    return pick(label, ids, format_func=lambda i: names.get(i, i), key=key)
+
+
+def latest_risk(rows: list[dict[str, Any]], student_id: str) -> dict[str, Any] | None:
+    mine = [r for r in rows if str(r.get("studentId")) == str(student_id)]
+    return next((r for r in mine if r.get("latest", True)), mine[0] if mine else None)
+
+
+def render_signals(row: dict[str, Any] | None) -> None:
+    if not row:
+        ui.empty_state(
+            "Not evaluated yet",
+            "Signals appear here after a review cycle has scored this student.",
+        )
+        return
+    st.markdown(ui.risk_md(row.get("band"), row.get("score")))
+    ui.html_block(ui.signal_chips(row.get("signals") or []))
+    if row.get("reviewPath"):
+        ui.plain_text(row["reviewPath"], muted=True)
+    dataframe(
+        [
+            {
+                "Signal": labels.signal_label(signal["code"]),
+                "Source": labels.source_label(signal["source"]),
+                "Value": signal["value"],
+                "Threshold": signal["threshold"],
+                "Points": signal["points"],
+                "Reason": labels.readable_claim(signal["explanation"]),
+            }
+            for signal in row.get("signals") or []
+        ]
+    )
+
+
+def plan_rows(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "Approved actions": "; ".join(
+                a.get("label", "") for a in (p.get("plan") or {}).get("actions", [])
+            ),
+            "Status": labels.status_label(p.get("status")),
+            "Outcome": p.get("outcome") or "Not recorded",
+            "Decided by": p.get("decided_by"),
+            "Decision time": labels.nice_time(p.get("decided_at")),
+        }
+        for p in plans
+    ]
+
+
+@st.fragment
+def render_profile(student_id: str, role: str) -> None:
+    """A student's profile. Choosing a section reruns only this block, and a
+    section's data is fetched when it is opened."""
+    detail = load("student", {"studentId": student_id})
+    student = detail.get("student") or {}
+    mentor = detail.get("mentor") or {}
+    courses = detail.get("courses") or []
+    followups = detail.get("followups") or []
+    is_mentor = role == "faculty"
+    st.subheader(labels.pretty_name(display_name(student)), anchor=False)
+    st.caption(
+        " · ".join(
+            str(part)
+            for part in [
+                student.get("register_number"),
+                f"Semester {student['semester']}" if student.get("semester") else None,
+                f"Mentor {mentor['name']}" if mentor.get("name") else None,
+            ]
+            if part
+        )
+    )
+    section = sections(
+        MENTOR_SECTIONS if is_mentor else HOD_SECTIONS, key=f"profile_section_{role}"
+    )
+    if section == "Overview":
+        average_attendance = average([percent(r.get("percentage")) for r in courses])
+        ui.kpi_row(
+            [
+                {
+                    "label": "Courses this term",
+                    "value": len(courses),
+                    "icon": ":material/menu_book:",
+                },
+                {
+                    "label": "Average attendance",
+                    "value": "—"
+                    if average_attendance is None
+                    else f"{average_attendance:g}%",
+                    "icon": ":material/event_available:",
+                },
+                {
+                    "label": "Open check-ins",
+                    "value": sum(
+                        1 for r in followups if r.get("status") != "completed"
+                    ),
+                    "icon": ":material/event_note:",
+                },
+            ]
+        )
+        if courses:
+            render_course_cards(courses)
+        if followups:
+            ui.section("Mentor follow-ups")
+            dataframe(
+                [
+                    {
+                        "Due": labels.nice_date(r.get("due_on")),
+                        "Mentor": r.get("mentor_name"),
+                        "Note": r.get("note"),
+                        "Status": labels.status_label(r.get("status")),
+                        "Outcome": r.get("outcome") or "Not recorded",
+                    }
+                    for r in followups
+                ]
+            )
+    elif section == "Attendance":
+        dataframe(
+            [
+                {
+                    "Course": f"{r.get('code', '')} · {r.get('title', '')}",
+                    "Present": r.get("present"),
+                    "Absent": r.get("absent"),
+                    "Late": r.get("late"),
+                    "Attendance": percent(r.get("percentage")),
+                }
+                for r in courses
+            ],
+            empty="No courses are registered yet.",
+        )
+        ui.section("Every recorded session")
+        dataframe(
+            [
+                {
+                    "Date": labels.nice_date(r.get("session_date")),
+                    "Course": r.get("code"),
+                    "Topic": r.get("topic"),
+                    "Status": labels.status_label(r.get("status")),
+                }
+                for r in detail.get("attendance", [])
+            ],
+            empty="No attendance has been recorded yet.",
+        )
+    elif section == "Marks":
+        dataframe(
+            [
+                {
+                    "Course": r.get("code"),
+                    "Assessment": r.get("assessment"),
+                    "Score": f"{r.get('score')} / {r.get('maximum_score')}",
+                    "Feedback": r.get("feedback") or "No feedback recorded",
+                }
+                for r in detail.get("marks", [])
+            ],
+            empty="No marks have been recorded yet.",
+        )
+    elif section == "Signals":
+        review = load("review_overview")
+        render_signals(latest_risk(review.get("riskView") or [], student_id))
+    elif section in ("Plans and outcomes", "Support plans"):
+        queue = load("review_queue")
+        mine = [
+            p
+            for p in queue.get("plans") or []
+            if str(p.get("student_id")) == student_id
+        ]
+        waiting = [
+            d
+            for d in queue.get("drafts") or []
+            if str(d.get("student_id")) == student_id
+        ]
+        if is_mentor and waiting:
+            ui.gate_banner(
+                f"{len(waiting)} draft{'s are' if len(waiting) != 1 else ' is'} waiting for your decision. "
+                "Open Reviews to approve, edit or decline.",
+                title="Needs you",
+            )
+        dataframe(
+            plan_rows(mine),
+            empty="No approved plans for this student yet.",
+        )
+    else:
+        render_source_evidence(student.get("register_number"), student.get("name"))
