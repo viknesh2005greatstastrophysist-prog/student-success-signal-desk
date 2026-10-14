@@ -200,7 +200,7 @@ hr, [data-testid="stDivider"] hr { border: 0; border-top: 1px solid var(--hairli
 .aura-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); margin: 4px 0; }
 
 /* ---- Agent pipeline stepper: a line that draws, nodes that light cobalt --- */
-.aura-flow { --p: 0; position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; margin: var(--s3) 0 var(--s1); padding-top: 4px; }
+.aura-flow { --p: 0; position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 10px; margin: var(--s3) 0 var(--s1); padding-top: 4px; }
 .aura-flow::before, .aura-flow::after { content: ""; position: absolute; top: 15px; left: 5%; right: 5%; height: 2px; border-radius: 2px; }
 .aura-flow::before { background: var(--hairline-2); }
 .aura-flow::after { background: var(--agent); transform-origin: left center; transform: scaleX(var(--p)); right: 5%; width: 90%; left: 5%; animation: aura-draw .9s var(--ease) .15s backwards; }
@@ -217,7 +217,7 @@ hr, [data-testid="stDivider"] hr { border: 0; border-top: 1px solid var(--hairli
 .aura-node.failed .aura-pin::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--high); }
 .aura-node.gate .aura-pin { border-radius: 7px; }
 .aura-node-body { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
-.aura-node-name { font-size: 12px; font-weight: 550; color: var(--ink); line-height: 1.25; overflow-wrap: break-word; }
+.aura-node-name { font-size: 11.5px; font-weight: 550; color: var(--ink); line-height: 1.25; overflow-wrap: break-word; }
 .aura-node-state:empty { display: none; }
 .aura-node-state { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); letter-spacing: .04em; text-transform: uppercase; }
 .aura-node.done .aura-node-state { color: var(--agent-ink); }

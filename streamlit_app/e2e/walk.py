@@ -363,7 +363,7 @@ class Walk:
             page.locator("input[type=password]").fill(password)
             start = time.time()
             page.get_by_role("button", name="Sign in", exact=True).click()
-            page.wait_for_selector('[data-testid="stSidebar"]', timeout=self.args.timeout * 1000)
+            page.wait_for_selector('[data-testid="stSidebar"]', state="attached", timeout=self.args.timeout * 1000)  # collapsed on phones (#19)
             self.settle(page)
             return round(time.time() - start, 2)
         except PlaywrightError as error:
