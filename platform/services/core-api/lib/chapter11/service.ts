@@ -54,6 +54,7 @@ import {
 import { createSourceRegistry, anonymousPriorReference } from "./connectors";
 import { evaluationMetrics } from "./metrics";
 import { compositeRiskView } from "./dashboard";
+import { persistThenAudit, startLeaseHeartbeat } from "./lease";
 
 type PlanBody = ReturnType<typeof planSkill>;
 type PlanRow = {
@@ -836,6 +837,18 @@ async function saveCheckpoint(
   job.stage = stage;
 }
 
+/** Heartbeat renewal: extends the lease only while this executor still owns the
+ * running job. Resolves false once the lease has been lost or the job has ended. */
+async function renewLease(job: Job): Promise<boolean> {
+  return withCoreTransaction(async (client) => {
+    const renewed = await client.query(
+      "UPDATE ch11_jobs SET lease_until=now()+interval '180 seconds' WHERE id=$1 AND lease_token=$2 AND status='running' RETURNING id",
+      [job.id, job.lease_token],
+    );
+    return (renewed.rowCount ?? 0) > 0;
+  });
+}
+
 async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
   return withCoreTransaction(async (client) => {
     const activePlan = await getPlan(client, actor, plan.id, true);
@@ -1026,6 +1039,26 @@ export async function executePlan(
       policy.rows[0]!.faculty_person_id,
       plan.body.studentIds!,
     );
+    // A job at the attempt limit is never reclaimable, so one whose executor died
+    // would stay 'running' forever. Move it to the terminal needs-human state.
+    const expired = await client.query<{
+      id: string;
+      stage: string;
+      attempts: number;
+    }>(
+      "UPDATE ch11_jobs SET status='failed',error_code='LEASE_EXPIRED',escalated_at=now(),failure_diagnosis=jsonb_build_object('code','LEASE_EXPIRED','attempts',attempts,'reasons','[]'::jsonb),lease_until=NULL,updated_at=now() WHERE plan_id=$1 AND generation_id=$2 AND status='running' AND lease_until<now() AND attempts>=3 AND escalated_at IS NULL RETURNING id,stage,attempts",
+      [plan.id, plan.generation_id],
+    );
+    for (const row of expired.rows)
+      await audit(
+        client,
+        plan.generation_id,
+        actor,
+        row.id,
+        "execution.stopped",
+        { stage: row.stage },
+        { code: "LEASE_EXPIRED", reasons: [] },
+      );
     const jobs = await client.query<{ id: string }>(
       "SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4",
       [plan.id, plan.generation_id],
@@ -1087,10 +1120,12 @@ export async function executePlan(
         return claimed.rows[0];
       });
       if (!job) return { id, skipped: true };
-      const trace: NodeTrace = job.checkpoint.nodeTrace ?? {};
-      job.checkpoint.nodeTrace = trace;
-      const runNode = createNodeRunner(trace);
+      // Keep the lease alive through slow collection and model calls.
+      const heartbeat = startLeaseHeartbeat(() => renewLease(job));
       try {
+        const trace: NodeTrace = job.checkpoint.nodeTrace ?? {};
+        job.checkpoint.nodeTrace = trace;
+        const runNode = createNodeRunner(trace);
         const result = (await executeReviewGraph(
           {
             Coordinator: () => ensureReviewRunning(actor, planId),
@@ -1182,6 +1217,14 @@ export async function executePlan(
               await ensureReviewRunning(actor, planId);
               if (job.checkpoint.composed?.validation.escalated) {
                 await withCoreTransaction(async (client) => {
+                  // Serialise with pause (as publishDraft does): a pause that committed
+                  // after the check above leaves the job resumable, not terminal.
+                  const activePlan = await getPlan(client, actor, planId, true);
+                  if (activePlan.paused)
+                    throw new ConflictError(
+                      "PLAN_PAUSED",
+                      "Review paused before escalating to a mentor",
+                    );
                   const escalated = await client.query(
                     "UPDATE ch11_jobs SET status='failed',stage='needs_human',escalated_at=now(),failure_diagnosis=$2::jsonb,error_code='REPAIR_BUDGET_EXHAUSTED',lease_until=NULL WHERE id=$1 AND lease_token=$3 AND status='running' RETURNING id",
                     [
@@ -1260,41 +1303,46 @@ export async function executePlan(
               : error instanceof Error && error.message === "INJECTED_STOP"
                 ? "INJECTED_STOP"
                 : "EXECUTION_FAILED";
-        await withCoreTransaction(async (client) => {
-          const stopped = await client.query(
-            "UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3<>'PLAN_PAUSED' THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,checkpoint=$6::jsonb,attempts=CASE WHEN $3='PLAN_PAUSED' THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running' RETURNING id",
-            [
-              job.id,
-              code === "PLAN_PAUSED"
-                ? "queued"
-                : code === "DATA_BLOCKED"
-                  ? "blocked"
-                  : "failed",
-              code,
-              job.lease_token,
-              JSON.stringify({
-                code,
-                attempts: job.attempts,
-                reasons: error instanceof DataBlocked ? error.reasons : [],
-              }),
-              JSON.stringify(job.checkpoint),
-            ],
-          );
-          if (stopped.rowCount)
-            await audit(
-              client,
-              job.generation_id,
-              actor,
-              job.id,
-              "execution.stopped",
-              { stage: job.stage },
-              {
-                code,
-                reasons: error instanceof DataBlocked ? error.reasons : [],
-              },
-            );
-        });
+        heartbeat.stop();
+        const reasons = error instanceof DataBlocked ? error.reasons : [];
+        // The status change commits on its own; the audit row is best-effort in a
+        // second transaction so an audit fault cannot leave the job 'running'.
+        await persistThenAudit(
+          () =>
+            withCoreTransaction(async (client) => {
+              const stopped = await client.query(
+                "UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3<>'PLAN_PAUSED' THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,checkpoint=$6::jsonb,attempts=CASE WHEN $3='PLAN_PAUSED' THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running' RETURNING id",
+                [
+                  job.id,
+                  code === "PLAN_PAUSED"
+                    ? "queued"
+                    : code === "DATA_BLOCKED"
+                      ? "blocked"
+                      : "failed",
+                  code,
+                  job.lease_token,
+                  JSON.stringify({ code, attempts: job.attempts, reasons }),
+                  JSON.stringify(job.checkpoint),
+                ],
+              );
+              return (stopped.rowCount ?? 0) > 0;
+            }),
+          () =>
+            withCoreTransaction((client) =>
+              audit(
+                client,
+                job.generation_id,
+                actor,
+                job.id,
+                "execution.stopped",
+                { stage: job.stage },
+                { code, reasons },
+              ),
+            ),
+        );
         return { id, error: code };
+      } finally {
+        heartbeat.stop();
       }
     },
   );

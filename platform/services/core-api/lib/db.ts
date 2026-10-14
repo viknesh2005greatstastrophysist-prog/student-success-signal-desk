@@ -23,6 +23,31 @@ export function getPool(): Pool {
   return pool;
 }
 
+/** Roll back after a failure without letting a throwing ROLLBACK mask the original
+ * error. Returns the rollback error (if any) so the caller can release the client
+ * with the error flag and have the pool discard the connection. */
+export async function rollbackQuietly(
+  client: { query(sql: string): Promise<unknown> },
+): Promise<Error | undefined> {
+  try {
+    await client.query("ROLLBACK");
+    return undefined;
+  } catch (rollbackError) {
+    return rollbackError instanceof Error
+      ? rollbackError
+      : new Error("ROLLBACK failed");
+  }
+}
+
+/** Per-reader statement timeout (ms) for snapshot capture; CH11_READER_TIMEOUT_MS
+ * overrides the 20 s default. Always a validated integer, so it is safe to inline. */
+export function readerTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = Number(env.CH11_READER_TIMEOUT_MS);
+  return Number.isInteger(raw) && raw >= 1 && raw <= 600_000 ? raw : 20_000;
+}
+
 export async function withCoreTransaction<T>(
   work: (client: PoolClient) => Promise<T>,
   mode: "shared" | "exclusive" = "shared",
@@ -35,6 +60,7 @@ export async function withCoreTransaction<T>(
   }
   const client = await getPool().connect();
   const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
+  let discard: Error | undefined;
   try {
     await client.query("BEGIN");
     await client.query(`SET LOCAL search_path TO ${schema}, public`);
@@ -48,10 +74,10 @@ export async function withCoreTransaction<T>(
     await client.query("COMMIT");
     return result;
   } catch (error) {
-    await client.query("ROLLBACK");
+    discard = await rollbackQuietly(client);
     throw error;
   } finally {
-    client.release();
+    client.release(discard);
   }
 }
 
@@ -91,12 +117,20 @@ export async function collectSnapshot<T>(
   });
   await previous;
   let exporter: PoolClient | undefined;
+  let lockHeld = false;
+  let discard: Error | undefined;
+  const timeoutMs = readerTimeoutMs();
   try {
     const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
     exporter = await getPool().connect();
+    // Take the shared lock before BEGIN: a REPEATABLE READ snapshot is fixed by the
+    // first statement of the transaction, so locking inside it would read a
+    // revision older than the exclusive operation that was holding the lock.
+    await exporter.query("SELECT pg_advisory_lock_shared($1)", [420042]);
+    lockHeld = true;
     await exporter.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
     await exporter.query(`SET LOCAL search_path TO ${schema}, public`);
-    await exporter.query("SELECT pg_advisory_xact_lock_shared($1)", [420042]);
+    await exporter.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
     const revision = (
       await exporter.query<{ revision: string }>(
         "SELECT revision::text FROM institution_revisions WHERE singleton=true FOR SHARE",
@@ -128,12 +162,14 @@ export async function collectSnapshot<T>(
             const index = cursor++;
             const client = await sourcePool!.connect();
             const started = performance.now();
+            let readerDiscard: Error | undefined;
             try {
               await client.query(
                 "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
               );
               await client.query(`SET TRANSACTION SNAPSHOT '${snapshot}'`);
               await client.query(`SET LOCAL search_path TO ${schema}, public`);
+              await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
               results[index] = await snapshotClient.run(
                 client,
                 readers[index]!,
@@ -141,10 +177,10 @@ export async function collectSnapshot<T>(
               await client.query("COMMIT");
               timings[index] = performance.now() - started;
             } catch (error) {
-              await client.query("ROLLBACK");
+              readerDiscard = await rollbackQuietly(client);
               throw error;
             } finally {
-              client.release();
+              client.release(readerDiscard);
             }
           }
         },
@@ -160,10 +196,26 @@ export async function collectSnapshot<T>(
       capturedAt: new Date().toISOString(),
     };
   } catch (error) {
-    if (exporter) await exporter.query("ROLLBACK");
+    if (exporter) discard = await rollbackQuietly(exporter);
     throw error;
   } finally {
-    exporter?.release();
+    if (exporter && lockHeld) {
+      try {
+        const released = await exporter.query<{ ok: boolean }>(
+          "SELECT pg_advisory_unlock_shared($1) AS ok",
+          [420042],
+        );
+        // A lock that could not be released must not return to the pool.
+        if (!released.rows[0]?.ok)
+          discard ??= new Error("Shared advisory lock was not released");
+      } catch (unlockError) {
+        discard ??=
+          unlockError instanceof Error
+            ? unlockError
+            : new Error("Advisory unlock failed");
+      }
+    }
+    exporter?.release(discard);
     unlock();
   }
 }

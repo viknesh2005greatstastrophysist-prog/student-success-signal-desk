@@ -26798,6 +26798,18 @@ function getPool() {
   }
   return pool;
 }
+async function rollbackQuietly(client) {
+  try {
+    await client.query("ROLLBACK");
+    return void 0;
+  } catch (rollbackError) {
+    return rollbackError instanceof Error ? rollbackError : new Error("ROLLBACK failed");
+  }
+}
+function readerTimeoutMs(env = process.env) {
+  const raw = Number(env.CH11_READER_TIMEOUT_MS);
+  return Number.isInteger(raw) && raw >= 1 && raw <= 6e5 ? raw : 2e4;
+}
 async function withCoreTransaction(work, mode = "shared") {
   const nested = snapshotClient.getStore();
   if (nested) {
@@ -26807,6 +26819,7 @@ async function withCoreTransaction(work, mode = "shared") {
   }
   const client = await getPool().connect();
   const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
+  let discard;
   try {
     await client.query("BEGIN");
     await client.query(`SET LOCAL search_path TO ${schema}, public`);
@@ -26818,10 +26831,10 @@ async function withCoreTransaction(work, mode = "shared") {
     await client.query("COMMIT");
     return result;
   } catch (error61) {
-    await client.query("ROLLBACK");
+    discard = await rollbackQuietly(client);
     throw error61;
   } finally {
-    client.release();
+    client.release(discard);
   }
 }
 async function withCoreSnapshot(work) {
@@ -26849,12 +26862,17 @@ async function collectSnapshot(readers, concurrency = 4) {
   });
   await previous;
   let exporter;
+  let lockHeld = false;
+  let discard;
+  const timeoutMs = readerTimeoutMs();
   try {
     const schema = quoteIdentifier(loadCoreConfig().databaseSchema);
     exporter = await getPool().connect();
+    await exporter.query("SELECT pg_advisory_lock_shared($1)", [420042]);
+    lockHeld = true;
     await exporter.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
     await exporter.query(`SET LOCAL search_path TO ${schema}, public`);
-    await exporter.query("SELECT pg_advisory_xact_lock_shared($1)", [420042]);
+    await exporter.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
     const revision2 = (await exporter.query(
       "SELECT revision::text FROM institution_revisions WHERE singleton=true FOR SHARE"
     )).rows[0].revision;
@@ -26882,12 +26900,14 @@ async function collectSnapshot(readers, concurrency = 4) {
             const index = cursor++;
             const client = await sourcePool.connect();
             const started = performance.now();
+            let readerDiscard;
             try {
               await client.query(
                 "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
               );
               await client.query(`SET TRANSACTION SNAPSHOT '${snapshot}'`);
               await client.query(`SET LOCAL search_path TO ${schema}, public`);
+              await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
               results[index] = await snapshotClient.run(
                 client,
                 readers[index]
@@ -26895,10 +26915,10 @@ async function collectSnapshot(readers, concurrency = 4) {
               await client.query("COMMIT");
               timings[index] = performance.now() - started;
             } catch (error61) {
-              await client.query("ROLLBACK");
+              readerDiscard = await rollbackQuietly(client);
               throw error61;
             } finally {
-              client.release();
+              client.release(readerDiscard);
             }
           }
         }
@@ -26914,10 +26934,22 @@ async function collectSnapshot(readers, concurrency = 4) {
       capturedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
   } catch (error61) {
-    if (exporter) await exporter.query("ROLLBACK");
+    if (exporter) discard = await rollbackQuietly(exporter);
     throw error61;
   } finally {
-    exporter?.release();
+    if (exporter && lockHeld) {
+      try {
+        const released = await exporter.query(
+          "SELECT pg_advisory_unlock_shared($1) AS ok",
+          [420042]
+        );
+        if (!released.rows[0]?.ok)
+          discard ??= new Error("Shared advisory lock was not released");
+      } catch (unlockError) {
+        discard ??= unlockError instanceof Error ? unlockError : new Error("Advisory unlock failed");
+      }
+    }
+    exporter?.release(discard);
     unlock();
   }
 }
@@ -31280,6 +31312,45 @@ function compositeRiskView(students, jobs) {
   });
 }
 
+// services/core-api/lib/chapter11/lease.ts
+var LEASE_HEARTBEAT_MS = 6e4;
+var logFailure = (what, error61) => console.error(
+  `${what}: ${error61 instanceof Error ? error61.message : "unknown error"}`
+);
+function startLeaseHeartbeat(renew, intervalMs = LEASE_HEARTBEAT_MS, onError = (error61) => logFailure("Lease renewal failed; will retry", error61)) {
+  let stopped = false;
+  let inFlight = false;
+  const timer = setInterval(() => {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    Promise.resolve().then(renew).then(
+      (renewed) => {
+        if (!renewed) stop();
+      },
+      (error61) => onError(error61)
+    ).finally(() => {
+      inFlight = false;
+    });
+  }, intervalMs);
+  timer.unref();
+  function stop() {
+    stopped = true;
+    clearInterval(timer);
+  }
+  return { stop };
+}
+async function persistThenAudit(persist, audit2, onAuditError = (error61) => logFailure("Audit write failed after the job state was saved", error61)) {
+  const persisted = await persist();
+  if (persisted) {
+    try {
+      await audit2();
+    } catch (error61) {
+      onAuditError(error61);
+    }
+  }
+  return persisted;
+}
+
 // services/core-api/lib/chapter11/service.ts
 async function audit(client, generation, actor, subject, event, input2, output2) {
   await client.query(
@@ -31838,6 +31909,15 @@ async function saveCheckpoint(actor, job, stage, checkpoint) {
   job.checkpoint = checkpoint;
   job.stage = stage;
 }
+async function renewLease(job) {
+  return withCoreTransaction(async (client) => {
+    const renewed = await client.query(
+      "UPDATE ch11_jobs SET lease_until=now()+interval '180 seconds' WHERE id=$1 AND lease_token=$2 AND status='running' RETURNING id",
+      [job.id, job.lease_token]
+    );
+    return (renewed.rowCount ?? 0) > 0;
+  });
+}
 async function publishDraft(actor, job, plan) {
   return withCoreTransaction(async (client) => {
     const activePlan = await getPlan(client, actor, plan.id, true);
@@ -32011,6 +32091,20 @@ async function executePlan(actor, planId, options = {}) {
       policy.rows[0].faculty_person_id,
       plan.body.studentIds
     );
+    const expired = await client.query(
+      "UPDATE ch11_jobs SET status='failed',error_code='LEASE_EXPIRED',escalated_at=now(),failure_diagnosis=jsonb_build_object('code','LEASE_EXPIRED','attempts',attempts,'reasons','[]'::jsonb),lease_until=NULL,updated_at=now() WHERE plan_id=$1 AND generation_id=$2 AND status='running' AND lease_until<now() AND attempts>=3 AND escalated_at IS NULL RETURNING id,stage,attempts",
+      [plan.id, plan.generation_id]
+    );
+    for (const row of expired.rows)
+      await audit(
+        client,
+        plan.generation_id,
+        actor,
+        row.id,
+        "execution.stopped",
+        { stage: row.stage },
+        { code: "LEASE_EXPIRED", reasons: [] }
+      );
     const jobs = await client.query(
       "SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT 4",
       [plan.id, plan.generation_id]
@@ -32066,10 +32160,11 @@ async function executePlan(actor, planId, options = {}) {
         return claimed.rows[0];
       });
       if (!job) return { id, skipped: true };
-      const trace = job.checkpoint.nodeTrace ?? {};
-      job.checkpoint.nodeTrace = trace;
-      const runNode = createNodeRunner(trace);
+      const heartbeat = startLeaseHeartbeat(() => renewLease(job));
       try {
+        const trace = job.checkpoint.nodeTrace ?? {};
+        job.checkpoint.nodeTrace = trace;
+        const runNode = createNodeRunner(trace);
         const result = await executeReviewGraph(
           {
             Coordinator: () => ensureReviewRunning(actor, planId),
@@ -32156,6 +32251,12 @@ async function executePlan(actor, planId, options = {}) {
               await ensureReviewRunning(actor, planId);
               if (job.checkpoint.composed?.validation.escalated) {
                 await withCoreTransaction(async (client) => {
+                  const activePlan = await getPlan(client, actor, planId, true);
+                  if (activePlan.paused)
+                    throw new ConflictError(
+                      "PLAN_PAUSED",
+                      "Review paused before escalating to a mentor"
+                    );
                   const escalated = await client.query(
                     "UPDATE ch11_jobs SET status='failed',stage='needs_human',escalated_at=now(),failure_diagnosis=$2::jsonb,error_code='REPAIR_BUDGET_EXHAUSTED',lease_until=NULL WHERE id=$1 AND lease_token=$3 AND status='running' RETURNING id",
                     [
@@ -32223,37 +32324,38 @@ async function executePlan(actor, planId, options = {}) {
           delete job.checkpoint.evidenceRevision;
         }
         const code = error61 instanceof DataBlocked ? "DATA_BLOCKED" : error61 instanceof ConflictError ? error61.code : error61 instanceof Error && error61.message === "INJECTED_STOP" ? "INJECTED_STOP" : "EXECUTION_FAILED";
-        await withCoreTransaction(async (client) => {
-          const stopped = await client.query(
-            "UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3<>'PLAN_PAUSED' THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,checkpoint=$6::jsonb,attempts=CASE WHEN $3='PLAN_PAUSED' THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running' RETURNING id",
-            [
-              job.id,
-              code === "PLAN_PAUSED" ? "queued" : code === "DATA_BLOCKED" ? "blocked" : "failed",
-              code,
-              job.lease_token,
-              JSON.stringify({
+        heartbeat.stop();
+        const reasons = error61 instanceof DataBlocked ? error61.reasons : [];
+        await persistThenAudit(
+          () => withCoreTransaction(async (client) => {
+            const stopped = await client.query(
+              "UPDATE ch11_jobs SET status=$2,error_code=$3,escalated_at=CASE WHEN attempts>=3 AND $3<>'PLAN_PAUSED' THEN now() ELSE NULL END,failure_diagnosis=$5::jsonb,checkpoint=$6::jsonb,attempts=CASE WHEN $3='PLAN_PAUSED' THEN greatest(0,attempts-1) ELSE attempts END,lease_until=NULL,updated_at=now() WHERE id=$1 AND lease_token=$4 AND status='running' RETURNING id",
+              [
+                job.id,
+                code === "PLAN_PAUSED" ? "queued" : code === "DATA_BLOCKED" ? "blocked" : "failed",
                 code,
-                attempts: job.attempts,
-                reasons: error61 instanceof DataBlocked ? error61.reasons : []
-              }),
-              JSON.stringify(job.checkpoint)
-            ]
-          );
-          if (stopped.rowCount)
-            await audit(
+                job.lease_token,
+                JSON.stringify({ code, attempts: job.attempts, reasons }),
+                JSON.stringify(job.checkpoint)
+              ]
+            );
+            return (stopped.rowCount ?? 0) > 0;
+          }),
+          () => withCoreTransaction(
+            (client) => audit(
               client,
               job.generation_id,
               actor,
               job.id,
               "execution.stopped",
               { stage: job.stage },
-              {
-                code,
-                reasons: error61 instanceof DataBlocked ? error61.reasons : []
-              }
-            );
-        });
+              { code, reasons }
+            )
+          )
+        );
         return { id, error: code };
+      } finally {
+        heartbeat.stop();
       }
     }
   );
