@@ -65,6 +65,62 @@ export const demoPolicy: Policy = {
   placementMinimum: 1,
 };
 
+/** Student criteria the planner resolved server-side (stored for display; the
+ * resolved ids, not the criteria, are what the plan covers). */
+export const storedFilterSchema = z
+  .object({
+    allMine: z.boolean().optional(),
+    semesterMin: z.number().int().min(1).max(12).optional(),
+    semesterMax: z.number().int().min(1).max(12).optional(),
+    attendanceBelowPct: z.number().min(0).max(100).optional(),
+    markBelowPct: z.number().min(0).max(100).optional(),
+  })
+  .strict();
+export const agentTraceSchema = z
+  .object({
+    role: z.enum(["investigator", "planner"]),
+    mode: z.enum(["tools", "standard-evidence"]),
+    turns: z.number().int().min(0).max(10),
+    modelCalls: z.number().int().min(0).max(10),
+    budget: z
+      .object({ maxTurns: z.number().int(), maxToolCalls: z.number().int() })
+      .strict(),
+    toolCalls: z
+      .array(
+        z
+          .object({
+            seq: z.number().int(),
+            turn: z.number().int(),
+            tool: z.string().max(64),
+            args: z.unknown(),
+            status: z.enum(["ok", "refused", "error"]),
+            code: z.string().max(64).optional(),
+            resultHash: z.string().max(64).optional(),
+            resultBytes: z.number().int().optional(),
+          })
+          .strict(),
+      )
+      .max(16),
+    provider: z.string().max(40).nullable(),
+    model: z.string().max(80).nullable(),
+    tokens: z.number().nullable(),
+    latencyMs: z.number(),
+    fallbackReason: z.string().max(300).nullable(),
+    skippedReason: z.string().max(300).optional(),
+    evidenceValues: z.number().int(),
+    fallbacks: z
+      .array(
+        z.object({
+          provider: z.string(),
+          model: z.string(),
+          reason: z.string().max(300),
+        }),
+      )
+      .max(12),
+    /** where the clarifying questions came from */
+    questionSource: z.enum(["model", "rules", "model+rules"]).optional(),
+  })
+  .strict();
 export const planInputSchema = z
   .object({
     request: z.string().trim().min(3).max(2000),
@@ -73,6 +129,11 @@ export const planInputSchema = z
     policyId: z.string().uuid().optional(),
     feedback: z.string().trim().max(1000).default(""),
     mode: z.enum(["deterministic", "model"]).default("deterministic"),
+    /** server-set by the planner agent; stripped from every external save */
+    filter: storedFilterSchema.optional(),
+    agentQuestions: z.array(z.string().min(5).max(240)).max(5).optional(),
+    agentSteps: z.array(z.string().min(5).max(200)).max(6).optional(),
+    agent: agentTraceSchema.optional(),
   })
   .strict();
 export type PlanInput = z.infer<typeof planInputSchema>;
@@ -97,19 +158,35 @@ export function applyPlanningFeedback(input: PlanInput): PlanInput {
     ...(policy ? { policyId: policy } : {}),
   });
 }
+/** Agent-only fields never arrive from a browser or an RPC body. */
+export function withoutAgentFields(input: PlanInput): PlanInput {
+  const clean = { ...input };
+  delete clean.filter;
+  delete clean.agentQuestions;
+  delete clean.agentSteps;
+  delete clean.agent;
+  return clean;
+}
 export function planSkill(raw: PlanInput) {
   const input = applyPlanningFeedback(raw);
-  const questions: string[] = [];
+  const missing: string[] = [];
   if (!input.studentIds?.length)
-    questions.push("Which students should this review cover?");
+    missing.push("Which students should this review cover?");
   if (!input.domain)
-    questions.push(
+    missing.push(
       "Should this review focus on academics, attendance, or a wellbeing referral?",
     );
   if (!input.policyId)
-    questions.push(
+    missing.push(
       "Which mentor-approved threshold policy should this review use?",
     );
+  // The planner's request-specific questions come first. The rule questions for
+  // unresolved fields fill in when the model asked fewer than two, so a plan
+  // with a missing field can never look ready.
+  const asked = input.agentQuestions ?? [];
+  const questions = asked.length
+    ? [...asked, ...(asked.length < 2 ? missing : [])]
+    : missing;
   return {
     ...input,
     questions,

@@ -29,13 +29,13 @@ import { lmsCommand } from "../services/core-api/lib/lms-commands";
 import {
   overview,
   approvePolicy,
-  savePlan,
   lockPlan,
   executePlan,
   exportPlan,
   readSource,
   setReviewPaused,
 } from "../services/core-api/lib/chapter11/service";
+import { planWithAgent } from "../services/core-api/lib/chapter11/planning";
 import {
   editDraft,
   recordOutcome,
@@ -257,16 +257,13 @@ async function dispatch(
   if (action === "review_overview") return overview(a);
   if (action === "review_queue") return reviewQueue(a);
   if (action === "policy_approve") return approvePolicy(a, body, cmd);
-  if (action === "plan_save")
-    return savePlan(a, body, undefined, undefined, cmd);
+  if (action === "plan_save") return planWithAgent(a, body, { commandId: cmd });
   if (action === "plan_revise")
-    return savePlan(
-      a,
-      p.input,
-      uuid(p.planId),
-      z.number().int().nonnegative().parse(p.expectedRevision),
-      cmd,
-    );
+    return planWithAgent(a, p.input, {
+      id: uuid(p.planId),
+      expectedRevision: z.number().int().nonnegative().parse(p.expectedRevision),
+      commandId: cmd,
+    });
   if (action === "plan_lock")
     return lockPlan(
       a,

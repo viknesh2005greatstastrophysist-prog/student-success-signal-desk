@@ -23,6 +23,8 @@ import {
   parallelMap,
   planInputSchema,
   planSkill,
+  withoutAgentFields,
+  type PlanInput,
   policySchema,
   referenceLibrary,
   retrieve,
@@ -291,6 +293,7 @@ export async function approvePolicy(
   });
 }
 
+/** Mentor-facing save: agent-only fields in the body are discarded. */
 export async function savePlan(
   actor: ActorContext,
   raw: unknown,
@@ -298,9 +301,36 @@ export async function savePlan(
   expectedRevision?: number,
   commandId: string = randomUUID(),
 ) {
+  return persistPlan(
+    actor,
+    withoutAgentFields(planInputSchema.parse(raw)),
+    id,
+    expectedRevision,
+    commandId,
+  );
+}
+/** Planner-agent save (Brief 13): the same create/revise path, with the agent's
+ * questions and trace. Scope, policy ownership and locking are checked exactly
+ * as for a mentor's own save; the planner cannot lock or execute. */
+export async function savePlannedPlan(
+  actor: ActorContext,
+  input: PlanInput,
+  id?: string,
+  expectedRevision?: number,
+  commandId: string = randomUUID(),
+) {
+  return persistPlan(actor, planInputSchema.parse(input), id, expectedRevision, commandId);
+}
+async function persistPlan(
+  actor: ActorContext,
+  parsed: PlanInput,
+  id: string | undefined,
+  expectedRevision: number | undefined,
+  commandId: string,
+) {
   requireRole(actor, "faculty", "hod", "governance");
   z.string().uuid().parse(commandId);
-  const input = applyPlanningFeedback(planInputSchema.parse(raw));
+  const input = applyPlanningFeedback(parsed);
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     let department = actor.departmentId;
@@ -815,6 +845,64 @@ async function recordEgress(
       );
   });
 }
+/** Identities the egress guard must refuse to send (never sent themselves):
+ * the scoped students, their parents, the mentor, the department and college. */
+export async function loadGuardRoster(
+  client: PoolClient,
+  generation: string,
+  studentIds: string[],
+  facultyPersonId: string,
+  departmentId: string | null,
+): Promise<GuardRoster> {
+  const identities = await client.query<{
+    name: string | null;
+    email: string | null;
+    register: string | null;
+    phrase: string | null;
+  }>(
+    `SELECT p.display_name AS name,p.email,sp.register_number AS register,NULL AS phrase FROM student_profiles sp JOIN people p ON p.id=sp.person_id WHERE sp.generation_id=$1 AND sp.id=ANY($2::uuid[])
+       UNION ALL SELECT p.display_name,p.email,NULL,NULL FROM parent_links pl JOIN people p ON p.id=pl.parent_person_id WHERE pl.generation_id=$1 AND pl.student_id=ANY($2::uuid[])
+       UNION ALL SELECT p.display_name,p.email,NULL,NULL FROM people p WHERE p.id=$3
+       UNION ALL SELECT NULL,NULL,NULL,d.name FROM departments d WHERE d.id=$4
+       UNION ALL SELECT NULL,NULL,NULL,i.name FROM departments d JOIN institutions i ON i.id=d.institution_id WHERE d.id=$4`,
+    [generation, studentIds, facultyPersonId, departmentId],
+  );
+  return {
+    names: identities.rows.flatMap((r) => (r.name ? [r.name] : [])),
+    emails: identities.rows.flatMap((r) => (r.email ? [r.email] : [])),
+    registers: identities.rows.flatMap((r) => (r.register ? [r.register] : [])),
+    phrases: identities.rows.flatMap((r) => (r.phrase ? [r.phrase] : [])),
+  };
+}
+export async function loadPlan(actor: ActorContext, id: string) {
+  requireRole(actor, "faculty", "hod", "governance");
+  return withCoreTransaction((client) => getPlan(client, actor, id));
+}
+/** Audit rows for a planner run: one per tool call plus the sealed payloads. */
+export async function recordPlannerAudit(
+  actor: ActorContext,
+  planId: string,
+  summary: AgentRunSummary,
+) {
+  await withCoreTransaction(async (client) => {
+    const generation = await getCurrentGeneration(client);
+    for (const row of toolAuditRows(summary))
+      await audit(client, generation, actor, planId, row.event.replace("agent.", "planner."), row.input, row.output);
+    for (const row of summary.egress)
+      await audit(
+        client,
+        generation,
+        actor,
+        planId,
+        row.outcome === "blocked" ? "model.egress_blocked" : "model.egress",
+        row,
+        row.outcome === "blocked"
+          ? { code: "EGRESS_BLOCKED", category: row.category }
+          : { outcome: "sent" },
+      );
+  });
+}
+
 /** One durable audit row per investigator tool call, executed or refused. */
 async function recordAgentAudit(
   actor: ActorContext,
@@ -1096,30 +1184,13 @@ export async function executePlan(
     const approved = attestation.rows[0];
     const parsed = policySchema.parse(policy.rows[0]!.policy);
     // Identities the egress guard must refuse to send (never sent themselves).
-    const identities = await client.query<{
-      name: string | null;
-      email: string | null;
-      register: string | null;
-      phrase: string | null;
-    }>(
-      `SELECT p.display_name AS name,p.email,sp.register_number AS register,NULL AS phrase FROM student_profiles sp JOIN people p ON p.id=sp.person_id WHERE sp.generation_id=$1 AND sp.id=ANY($2::uuid[])
-       UNION ALL SELECT p.display_name,p.email,NULL,NULL FROM parent_links pl JOIN people p ON p.id=pl.parent_person_id WHERE pl.generation_id=$1 AND pl.student_id=ANY($2::uuid[])
-       UNION ALL SELECT p.display_name,p.email,NULL,NULL FROM people p WHERE p.id=$3
-       UNION ALL SELECT NULL,NULL,NULL,d.name FROM departments d WHERE d.id=$4
-       UNION ALL SELECT NULL,NULL,NULL,i.name FROM departments d JOIN institutions i ON i.id=d.institution_id WHERE d.id=$4`,
-      [
-        plan.generation_id,
-        plan.body.studentIds!,
-        policy.rows[0]!.faculty_person_id,
-        plan.department_id,
-      ],
+    const roster = await loadGuardRoster(
+      client,
+      plan.generation_id,
+      plan.body.studentIds!,
+      policy.rows[0]!.faculty_person_id,
+      plan.department_id,
     );
-    const roster: GuardRoster = {
-      names: identities.rows.flatMap((r) => (r.name ? [r.name] : [])),
-      emails: identities.rows.flatMap((r) => (r.email ? [r.email] : [])),
-      registers: identities.rows.flatMap((r) => (r.register ? [r.register] : [])),
-      phrases: identities.rows.flatMap((r) => (r.phrase ? [r.phrase] : [])),
-    };
     return {
       plan,
       roster,

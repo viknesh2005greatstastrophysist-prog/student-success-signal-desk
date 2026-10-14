@@ -179,3 +179,72 @@ export const draftReply = (payload: DraftPayload, usage = 300): MockReply => {
     usage: { prompt_tokens: usage, completion_tokens: 100, total_tokens: usage + 100 },
   };
 };
+
+/* ---- planner helpers (Brief 13) ---- */
+type ChatMsg = { role: string; content: string | null };
+/** Parsed results of every tool message in a request, in order. */
+export const toolResults = (body: unknown): Array<Record<string, unknown>> =>
+  ((body as { messages?: ChatMsg[] }).messages ?? [])
+    .filter((m) => m.role === "tool")
+    .map((m) => JSON.parse(m.content ?? "{}") as Record<string, unknown>);
+export type PlannerAnswer = {
+  domain?: string | null;
+  policy?: string | null;
+  allMine?: boolean;
+  basis?: "fresh" | "current";
+  filter?: Partial<{
+    semesterMin: number | null;
+    semesterMax: number | null;
+    attendanceBelowPct: number | null;
+    markBelowPct: number | null;
+    exclude: string[];
+  }>;
+  steps?: string[];
+  questions?: string[];
+};
+export const plannerJson = (a: PlannerAnswer) => ({
+  domain: a.domain ?? null,
+  policy: a.policy ?? null,
+  allMine: a.allMine ?? false,
+  basis: a.basis ?? "fresh",
+  filter: {
+    semesterMin: null,
+    semesterMax: null,
+    attendanceBelowPct: null,
+    markBelowPct: null,
+    exclude: [],
+    ...(a.filter ?? {}),
+  },
+  steps: a.steps ?? ["Check attendance for the selected students against the approved policy."],
+  questions: a.questions ?? [],
+});
+/** A scripted planner: one tool turn (count + policies), then "ready", then the
+ * answer computed from the request, the feedback and the policy alias it saw. */
+export function scriptedPlanner(
+  answer: (ctx: { request: string; feedback?: string; policyAlias?: string; body: unknown }) => PlannerAnswer,
+) {
+  return (body: unknown): MockReply => {
+    if (hasTools(body)) {
+      const seen = toolResults(body).length;
+      return seen
+        ? { content: "ready" }
+        : toolCallReply([
+            { name: "count_my_students", args: { filter: {} } },
+            { name: "list_policies", args: {} },
+          ]);
+    }
+    const payload = JSON.parse(
+      (body as { messages: ChatMsg[] }).messages.find((m) => m.role === "user")!.content!,
+    ) as { request: string; feedback?: string };
+    const policies = toolResults(body).find((r) => "policies" in r) as
+      | { policies: Array<{ policy: string }> }
+      | undefined;
+    return {
+      content: JSON.stringify(
+        plannerJson(
+          answer({ request: payload.request, feedback: payload.feedback, policyAlias: policies?.policies[0]?.policy, body }),
+        ),
+      ),
+    };
+  };
+}

@@ -7,12 +7,13 @@ import { resetSyntheticSeed } from "../lib/reset";
 import { closePool, withCoreTransaction } from "../lib/db";
 import { getCurrentGeneration } from "../lib/command-ledger";
 import { approvePolicy, executePlan, exportPlan, lockPlan, savePlan, seedChapterSources } from "../lib/chapter11/service";
+import { planWithAgent } from "../lib/chapter11/planning";
 import { demoPolicy } from "../lib/chapter11/engine";
 import { chainComposer, ModelLimiter } from "../lib/chapter11/provider";
 import { replayAgentRun } from "../lib/support-commands";
 import { lmsCommand } from "../lib/lms-commands";
 import { groqEndpoint } from "./agent-fixtures";
-import { draftReply, hasTools, route, startMockOpenAI, toolCallReply, userPayload, type MockReply } from "./mock-openai-server";
+import { draftReply, hasTools, route, scriptedPlanner, startMockOpenAI, toolCallReply, userPayload, type MockReply } from "./mock-openai-server";
 
 /** Brief 12 against real Postgres (disposable schema): the investigator's tools
  * resolve server-side, results land in the evidence snapshot, replay verifies
@@ -37,7 +38,22 @@ test(
       return draftReply(userPayload(body));
     };
     const mock = route(reply);
-    const server = await startMockOpenAI({ "/g": mock });
+    let semesterCut = 12;
+    const planner = route(
+      scriptedPlanner(({ feedback, policyAlias }) =>
+        feedback
+          ? { domain: "attendance", policy: policyAlias, basis: "current", filter: { semesterMax: semesterCut }, questions: [] }
+          : {
+              policy: policyAlias,
+              allMine: true,
+              questions: [
+                "Does 'this month' mean the last 30 days or the calendar month?",
+                "What should 'attendance dropped' be measured against: the policy minimum or an earlier figure?",
+              ],
+            },
+      ),
+    );
+    const server = await startMockOpenAI({ "/g": mock, "/p": planner });
     try {
       await migrateCoreDatabase();
       await resetSyntheticSeed("AURA-SYNTHETIC-SEED-V1", "chapter11-agents-isolated-test");
@@ -130,6 +146,75 @@ test(
       assert.equal(replay.replay.matched, true);
       // nothing but the frozen aliases and numbers left: no student id on the wire
       assert.ok(mock.requests.every((r) => !r.raw.includes(student)));
+
+      // ---- Brief 13: free text -> plan draft -> feedback revises the same plan ----
+      const assigned = await withCoreTransaction(async (client) =>
+        (
+          await client.query<{ id: string; semester: number }>(
+            "SELECT s.id,s.semester FROM mentor_assignments m JOIN student_profiles s ON s.id=m.student_id WHERE m.faculty_person_id=$1 AND m.generation_id=$2",
+            [faculty.personId, await getCurrentGeneration(client)],
+          )
+        ).rows,
+      );
+      const semesters = [...new Set(assigned.map((r) => r.semester))].sort((a, b) => a - b);
+      semesterCut = semesters.length > 1 ? semesters.at(-1)! - 1 : semesters[0]!;
+      const planEndpoint = groqEndpoint(server.url("/p"));
+      const chain = { limiter: new ModelLimiter(), maxWaitMs: 0 };
+      const request = "check my mentees whose attendance dropped this month";
+      const created = await planWithAgent(faculty, { request, mode: "model" }, { endpoints: [planEndpoint], chain, commandId: randomUUID() });
+      assert.equal(created.status, "clarifying");
+      assert.equal(created.body.ready, false);
+      assert.equal(created.body.agent!.mode, "tools");
+      assert.ok(created.body.questions.length >= 2);
+      assert.ok(created.body.questions.some((q: string) => /this month/.test(q)));
+      assert.equal(created.body.policyId, policy.id);
+      const mine = new Set(assigned.map((r) => r.id));
+      assert.ok(created.body.studentIds!.length > 0 && created.body.studentIds!.every((id: string) => mine.has(id)), "resolved server-side to in-scope students");
+      await assert.rejects(() => lockPlan(faculty, created.id, created.revision), /planning questions/);
+      // a retried command returns the same plan without another model call
+      const calls = planner.requests.length;
+      const again = await planWithAgent(faculty, { request, mode: "model" }, { endpoints: [planEndpoint], chain, commandId: created.id });
+      assert.equal(again.id, created.id);
+      assert.equal(planner.requests.length, calls);
+
+      const stale = { request, mode: "model", feedback: "x" };
+      const revised = await planWithAgent(
+        faculty,
+        {
+          request,
+          mode: "model",
+          feedback: "since mid-term; leave out final-years, focus attendance",
+          studentIds: created.body.studentIds,
+          domain: created.body.domain,
+          policyId: created.body.policyId,
+        },
+        { id: created.id, expectedRevision: created.revision, endpoints: [planEndpoint], chain },
+      );
+      assert.equal(revised.id, created.id, "the same plan, revised in place");
+      assert.equal(revised.revision, created.revision + 1);
+      assert.equal(revised.body.domain, "attendance");
+      assert.deepEqual(revised.body.questions, []);
+      assert.equal(revised.status, "ready");
+      assert.ok(revised.body.studentIds!.every((id: string) => created.body.studentIds!.includes(id)), "narrowed, never widened");
+      if (semesters.length > 1) assert.ok(revised.body.studentIds!.length < created.body.studentIds!.length);
+      await assert.rejects(
+        () => planWithAgent(faculty, stale, { id: created.id, expectedRevision: created.revision, endpoints: [planEndpoint], chain }),
+        /Reload the plan/,
+      );
+      // a student outside the mentor's assignments cannot be pinned in
+      const foreign = await withCoreTransaction(async (client) =>
+        (await client.query<{ id: string }>("SELECT id FROM student_profiles WHERE generation_id=$1 AND NOT id=ANY($2::uuid[]) LIMIT 1", [await getCurrentGeneration(client), [...mine]])).rows[0]!.id,
+      );
+      await assert.rejects(
+        () => planWithAgent(faculty, { request, mode: "model", studentIds: [foreign], domain: "attendance", policyId: policy.id }, { endpoints: [planEndpoint], chain, commandId: randomUUID() }),
+        /assigned|department/i,
+      );
+      // the planner only drafts: the mentor locks
+      const lockedPlan = await lockPlan(faculty, revised.id, revised.revision);
+      assert.equal(lockedPlan.status, "locked");
+      const exportedPlan = await exportPlan(faculty, created.id);
+      assert.ok(exportedPlan.events.some((e: { event_type: string }) => e.event_type === "planner.tool_call"));
+      assert.ok(planner.requests.every((r) => !r.raw.includes(student) && !r.raw.includes(policy.id)));
     } finally {
       await server.close();
       await closePool();
