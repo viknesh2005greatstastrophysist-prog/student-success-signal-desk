@@ -52,6 +52,12 @@ export const policySchema = z
     overdueMinimum: z.number().int().min(1).max(100).default(1),
     internshipMinimum: z.number().int().min(1).max(100).default(1),
     placementMinimum: z.number().int().min(1).max(100).default(1),
+    /** How a triggered signal earns points. `fixed` (the default, and what every
+     * policy approved before data refresh 2 uses) gives the whole weight as soon as
+     * the faculty-set threshold is crossed. `graded` scales the points with how far
+     * the value is beyond that threshold (see `gradedPoints`). The thresholds and
+     * weights stay faculty-set either way, and a version records which it uses. */
+    severity: z.enum(["fixed", "graded"]).optional(),
   })
   .strict()
   .refine(
@@ -59,6 +65,29 @@ export const policySchema = z
     "High threshold must exceed medium threshold",
   );
 export type Policy = z.infer<typeof policySchema>;
+/** Share of a signal's weight earned exactly at the threshold under graded scoring. */
+export const GRADED_FLOOR = 0.25;
+/** Distance beyond the threshold, as a fraction of the threshold, that earns the
+ * full weight: 50% under a "below" threshold, or twice the threshold (3 x) over an
+ * "at least" threshold. */
+export const GRADED_SPAN_BELOW = 0.5;
+export const GRADED_SPAN_ABOVE = 2;
+/** Points for a triggered signal under `severity: "graded"`: the floor plus the
+ * rest in proportion to the distance beyond the threshold, rounded to a whole
+ * point and never above the weight. Pure and monotonic in the distance. */
+export function gradedPoints(
+  weight: number,
+  value: number,
+  threshold: number,
+  below: boolean,
+): number {
+  const distance = below
+    ? (threshold - value) / Math.max(threshold, 1)
+    : (value - threshold) / Math.max(threshold, 1);
+  const span = below ? GRADED_SPAN_BELOW : GRADED_SPAN_ABOVE;
+  const share = Math.min(1, Math.max(0, distance) / span);
+  return Math.round(weight * (GRADED_FLOOR + (1 - GRADED_FLOOR) * share));
+}
 export const demoPolicy: Policy = {
   version: "CH11-DEMO-1",
   attendanceMinimum: 75,
@@ -358,7 +387,10 @@ export function riskAnalysis(evidence: Evidence, policy: Policy): Risk {
         path: `evidence.${source}.values.${key}`,
         value,
         threshold,
-        points,
+        points:
+          policy.severity === "graded"
+            ? gradedPoints(points, value, threshold, below)
+            : points,
         explanation: `${key} is ${value}; policy threshold is ${below ? "below" : "at least"} ${threshold}.`,
       });
   };
