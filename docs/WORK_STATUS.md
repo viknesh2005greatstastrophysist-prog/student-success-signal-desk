@@ -221,3 +221,7 @@ Still open, in priority order:
 4. Hosted live run and making the hosted app public: blocked while the Streamlit Cloud menu could not be driven (browser pane hidden). Settings → Sharing → public, then run `streamlit_app/e2e/live_run.py` against the hosted URL for one student.
 5. C4 repo tidy (move the first prototype under `legacy/`), C6 code hygiene (`ponytail-audit` + `simplify`, app.py split), round 3 rerun of `walk.py` and `live_run.py`.
 6. #36, #38, #39 (P3s) in `docs/E2E_TEST_LOG.md`.
+
+## Hosted database moved to the US (15 Oct)
+
+The hosted app's database moved from Neon Singapore (`aura-student-success-db`, ap-southeast-1) to a new free Neon project `aura-student-success-us` (Washington, D.C., aws-us-east-1), created through Vercel Storage because the Neon org is Vercel-managed. Streamlit Community Cloud runs in the US, and each Singapore round trip cost about 0.23 s. Schemas `aura_hosted_project_core` (57 tables, 69,643 rows) and `aura_hosted_project_identity` (15 tables, 1,348 rows) were created with the app's own migrations, then copied; row counts, md5 and sequences match on every table, verified twice (manifests in `runtime/backups/neon-us-migration-*.manifest.json`). The owner pasted the new Streamlit secrets and rebooted the app on 15 Oct. The Singapore project is untouched as a rollback: restore the old secrets to switch back. The migration scripts are in `runtime/streamlit-project/us-migration/` (git-ignored).
