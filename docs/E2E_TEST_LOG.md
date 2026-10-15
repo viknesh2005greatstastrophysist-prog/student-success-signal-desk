@@ -41,6 +41,7 @@ Severity: P1 blocks a core flow or is wrong data; P2 misleading or broken UI; P3
 | C4 | Repo tidy: the root still holds the first prototype (Next.js `app/`, `lib/`, `next.config.ts`, root `package.json`; Python `src/student_success`, `pyproject.toml`, `uv.lock`, `requirements.txt` (`-e .`), `runtime.txt`; `active/`, `artifacts/`, `fixtures/`, `migrations/`, `policies/`, `scripts/`, `tests/`). Move it under `legacy/` with `git mv` after proving the Streamlit app, Streamlit Cloud deploy (uses `streamlit_app/requirements.txt`) and CI do not depend on it. | open |
 | C5 | Red ✗ on every commit: the eight paused Vercel projects are still connected to the repo and post "Deployment was blocked" failures. Disconnect them (Vercel project → Settings → Git → Disconnect, or GitHub → Settings → Applications → Vercel → remove this repo). Owner action (no Vercel CLI login here). | done (14 Oct: Claude disconnected the 8 paused aura-* Vercel projects from the repo; owner-approved) |
 | C6 | Code hygiene: ponytail-audit on live code (`streamlit_app/`, `platform/services/core-api/`), apply cuts in small tested commits incl. the app.py split (audit 0.5), then a simplify pass. Deferred unless budget remains. | open |
+| C7 | Sign-in convenience (owner: "make it so that I don't need to enter the usernames and password again and again"): "Keep me signed in on this device" remembered per workspace (device-token table, hashed, 7 days, rotated, revoked on sign-out; one cookie per workspace), password-manager friendly form, and a one-click "Test accounts" panel that exists only locally (never on the hosted app, never student or parent 021). | done 15 Oct (section "C7: sign-in convenience" at the end; offline and live checks green; hosted cookie behaviour to be checked once after the deploy) |
 
 ## Pass 1 — broad walk (automated)
 
@@ -369,3 +370,20 @@ Findings from this run (small ones fixed in the harness):
 - #35 (judge not wired) and #37 (specialists and regenerator not exercised live) are closed by this run.
 
 **Read-only walk.** `walk.py --pass final` on my own server (8503, stopped afterwards): 9 role sessions, 140 views, 94 screenshots, 0 Streamlit exceptions, 0 error alerts, 0 console errors, 0 failed requests, 0 overflow, 0 truncated, 0 leaked-technical-text findings, 0 walk errors, 0 forbidden pages. Screenshots looked at: Today, the gate after the hosted approval, AI activity Runs and the sign-in card: no regression (the Runs table scrolls sideways to show its Issue column).
+
+## C7: sign-in convenience (15 Oct)
+
+Design, limits and the exact cookie are in `docs/WORK_STATUS.md` ("Sign-in convenience (C7)"). Zero live model calls; local Postgres only (disposable `aura_core_test_*` schemas, dropped afterwards); student 021 untouched; no secret printed or committed.
+
+| Check | Result |
+|---|---|
+| Core unit tests, `device-tokens.test.ts` (DB part on local Postgres, in CI): token issue (43-char base64url, 7 days), hashed at rest (the token itself is in no column), redeem with the same role and scope checks as a sign-in, rotation with a 120 s grace for the previous token, expiry, revocation per account and workspace (other workspaces stay), wrong-workspace token not found, a student token for the department-head workspace refused and revoked, password change ends the device, housekeeping, migration 012 equals the start-up statements | pass |
+| Core `tsc` and eslint; Core tests 200 pass (10 opt-in skipped); platform tests 7 pass | pass |
+| The four existing DB suites plus the new one, each in its own disposable local schema (`database.test.ts` now expects 55 tables: 54 plus `device_tokens`) | pass, schemas dropped |
+| `build:engine`, `check:engine` | pass (bundle rebuilt from the committed source) |
+| Every `verify_*.py` except `verify_local.py` and `verify_cloud.py` (new: `verify_device_signin.py`; `verify_read_cache.py` stub takes the new `logout` options) | pass |
+| `verify_device_signin.py` (offline): autocomplete `username` and `current-password`, checkbox on by default; a remembered device signs in without the form and writes the rotated token as the cookie; a dead token is dropped and its cookie cleared; an engine outage forgets nothing; Sign out revokes, clears and never signs back in alone; Switch workspace keeps the token and offers the workspace; Test accounts panel absent for `AURA_LOCAL_PROJECT` 0 or empty, for a non-local host, behind a proxy header and without a `.env`; 021 never offered; no password in the page | pass |
+| `e2e/c7_check.py` (live, own server on 8503, headless Chromium): 28 checks, among them the form attributes, the cookie (`Secure`, `SameSite=Strict`, `Path=/`, 7 days, 43-character token, no password in it), a reload and a new tab skip the form, the token rotates, Sign out clears the cookie and a reload shows the form, an unticked box sets no cookie, a test-account button signs in, Switch workspace then one click back in, nothing remembered after Sign out, 021 not offered, no password or fixture email in the page | 28 passed, 0 failed |
+| `walk.py --pass c7` (read-only, own server on 8503): 9 sessions, 138 views, 95 screenshots | 0 exceptions, 0 error alerts, 0 console errors, 0 failed requests, 0 overflow, 0 truncated, 0 leaked text, 0 walk errors, 0 forbidden pages |
+
+Not done here: the hosted Streamlit Cloud origin (cookie write and read, the engine creating `device_tokens` on first start). Check once after the deploy: sign in with the box ticked, reload, sign out.
