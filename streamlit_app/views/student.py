@@ -104,7 +104,7 @@ def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> Non
                     ],
                     flat=True,
                 )
-            ui.provenance_caption()
+            ui.provenance_caption(model_id=item.get("model_id"))
             if plan.get("citations"):
                 with st.expander("Why this plan was suggested", icon=":material/info:"):
                     ui.citation_chips(plan.get("citations", []))

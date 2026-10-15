@@ -597,6 +597,16 @@ def reviews_body(actor: dict[str, Any]) -> None:
         if r.get("latest", True)
     }
     awaiting = int(queue.get("awaitingCount", len(queue.get("drafts") or [])))
+    # A click on "Mentor gate" in an agent trace opens that student's draft at the gate.
+    gate_case = st.session_state.pop("open_gate_case", None)
+    if gate_case:
+        st.session_state["reviews_section"] = f"Drafts at the gate ({awaiting})"
+        match = next(
+            (d for d in queue.get("drafts") or [] if str(d.get("id")) == str(gate_case)),
+            None,
+        )
+        if match:
+            st.session_state["support_draft"] = match
     # "Review again with the latest figures" lands on Start a review with the student chosen.
     again = st.session_state.pop("rereview_student", None)
     if again:

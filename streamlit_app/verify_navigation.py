@@ -16,7 +16,7 @@ sys.path.insert(0, {app!r})
 import streamlit as st
 from views.pages import pages_for
 st.session_state["pages"] = {{
-    portal: [[p.url_path, p.title, bool(p._default)] for p in pages_for(portal)]
+    portal: [[getattr(p, "aura_path", p.url_path), p.title, bool(getattr(p, "aura_home", p._default))] for p in pages_for(portal)]
     for portal in ("student", "parent", "faculty", "hod", "governance", "lms")
 }}
 """

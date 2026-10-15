@@ -9,7 +9,22 @@ from views import hod, lms, mentor, operations, parent, student
 
 
 def _page(fn, title: str, icon: str, url_path: str, *, default: bool = False):
-    return st.Page(fn, title=title, icon=icon, url_path=url_path, default=default)
+    # Every page keeps its own address (/runs, /overview, ...): "/" is a hidden step that
+    # forwards to the workspace's home page (app.routing_pages), so a bookmark or a
+    # refresh of any page, the home page included, opens that page.
+    page = st.Page(fn, title=title, icon=icon, url_path=url_path)
+    page.aura_path = url_path
+    page.aura_home = default
+    return page
+
+
+def page_path(page: st.Page) -> str:
+    return getattr(page, "aura_path", "") or getattr(page, "_url_path", "") or page.url_path
+
+
+def all_paths(portals) -> set[str]:
+    """Every page address any workspace offers."""
+    return {page_path(page) for portal in portals for page in pages_for(portal)} - {""}
 
 
 def pages_for(portal: str) -> list[st.Page]:

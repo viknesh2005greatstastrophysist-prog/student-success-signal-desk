@@ -51,6 +51,7 @@ transport, clock = Transport(), Clock()
 ns["get_client"] = lambda: transport
 ns["time"] = clock
 st.rerun = lambda: None  # sign-out and save_action rerun the page; stay in this run
+st.switch_page = lambda page: None  # sign-out goes to the sign-in page; stay in this run
 load, save_action, KEY = ns["load"], ns["save_action"], ns["READ_CACHE_KEY"]
 TTL = ns["READ_CACHE_SECONDS"]
 load_many = ns["load_many"]

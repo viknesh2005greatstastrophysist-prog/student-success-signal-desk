@@ -58,7 +58,7 @@ def mentor_workload(
                 "Median wait for open drafts": (
                     labels.hours_phrase(statistics.median(waits))
                     if waits
-                    else "None waiting"
+                    else "Nothing waiting"
                 ),
                 "Decisions made": len(decided),
                 "Last decision": labels.nice_time(

@@ -4,6 +4,8 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 
 ## Current state
 
+- **Final loop (15 Oct):** walked all six workspaces on the live data and fixed F1–F8 (drafted-by model names, plain run tables, clickable replay, page addresses, mentor gate, approve confirmation). See `docs/E2E_TEST_LOG.md`, section "Final loop".
+
 **Data consistency (15 Oct, `docs/E2E_TEST_LOG.md`, "Rework: data consistency").** Owner bug: student001's overview (attendance 84.3%) contradicted the published plan (attendance 40%). Cause: the v2 and v3 refreshes retired only open drafts; approved plans, interventions and stored risk analyses stayed on the seed generation. Fixed once and for the class: a stored artifact is current only if its evidence was captured on the current data generation (`lib/data-refresh/generation.ts`). Students and parents get a plan only when current, else "Your mentor will review your plan again with the latest figures."; staff see "Based on earlier figures" and can start a re-review; the Risk view, department trends and AI activity read current reviews only. Data fix (additive, audited, no model call): plans withdrawn through `recordOutcome` (local 9, hosted 7) and every student's risk recomputed (320 on each database, student 021 excluded; case `d398bbc3` untouched). After any future refresh run `consistency-audit`, then `consistency-plans` and `consistency-risk` (backup first). Test: `tests/data-consistency.test.ts` (in CI).
 
 **What works (verified 15 Oct, local database and hosted app)**

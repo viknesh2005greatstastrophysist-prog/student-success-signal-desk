@@ -645,7 +645,12 @@ def provenance(note: str = "Drafted by AI · checked by your mentor", extra: str
     return f'<p class="aura-prov">{esc(note)}{more}</p>'
 
 
-def provenance_caption(note: str = "Drafted by AI · checked by your mentor", extra: str = "") -> None:
+def provenance_caption(
+    note: str = "Drafted by AI · checked by your mentor", extra: str = "", model_id: Any = None
+) -> None:
+    name = labels.model_name(model_id)
+    if name and note.startswith("Drafted by AI"):
+        note = note.replace("Drafted by AI", f"Drafted by AI ({name})", 1)
     st.html(provenance(note, extra))
 
 

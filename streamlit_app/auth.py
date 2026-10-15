@@ -205,7 +205,8 @@ def sign_out(forget: bool = True) -> None:
     st.session_state.clear()
     st.session_state.update(kept)
     st.session_state[device.NO_RESUME] = True
-    st.rerun()
+    # Back to the sign-in page itself ("/"), not the sign-in form under the old page's address.
+    st.switch_page(st.Page(login_view, title="Sign in", url_path="sign-in"))
 
 
 def sign_in_sidebar(actor: dict[str, Any]) -> None:

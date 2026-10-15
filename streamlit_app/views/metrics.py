@@ -10,7 +10,7 @@ import ui
 from views.freshness import render_earlier_reviews_note
 from common import pick
 from common import dataframe
-from views.reviews import provenance_rows, render_diagnoses, render_tool_calls
+from views.reviews import provenance_rows, render_diagnoses, render_gate_actions, render_tool_calls
 
 
 def rate(raw: Any) -> float | None:
@@ -104,23 +104,33 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
                 for row in cycle_rows
             ]
         )
-    with st.expander("Per-run metrics", icon=":material/table_rows:"):
+    with st.expander("Per-student results", icon=":material/table_rows:"):
+        st.caption(
+            "One row per drafted plan. Fix-ups are the times the validator sent a draft back to the model; "
+            "words changed counts how much the mentor edited before approving (0 means approved as drafted)."
+        )
+        jobs = {str(job.get("id")): job for job in review.get("jobs") or []}
+        names = {
+            str(s.get("id")): labels.pretty_name(s.get("display_name") or "Student")
+            for s in review.get("students") or []
+        }
         dataframe(
             [
                 {
-                    "Run": labels.short_ref(row.get("jobId")),
-                    "Cycle": f"{cycle_map.get(str(row.get('cycleId')), 'C?')} · {labels.short_ref(row.get('cycleId'))}",
-                    "Passed checks": "Yes" if row.get("validationPassed") else "No",
-                    "Repairs": row.get("repairsUsed"),
-                    "Rule-based fallback (retired)": "Yes"
-                    if row.get("fallback")
-                    else "No",
-                    "Escalated": "Yes" if row.get("escalated") else "No",
-                    "Mode": labels.mode_label(row.get("mode")),
-                    "Decision": labels.status_label(row.get("decision"))
+                    "Student": names.get(
+                        str((jobs.get(str(row.get("jobId"))) or {}).get("student_id")), "Student"
+                    ),
+                    "Review": cycle_map.get(str(row.get("cycleId")), "Earlier review"),
+                    "Drafted by": labels.drafted_by(
+                        row.get("mode"), (jobs.get(str(row.get("jobId"))) or {}).get("model_id")
+                    ),
+                    "Passed every check": "Yes" if row.get("validationPassed") else "No",
+                    "Fix-ups": row.get("repairsUsed"),
+                    "Handed to the mentor": "Yes" if row.get("escalated") else "No",
+                    "Mentor decision": labels.status_label(row.get("decision"))
                     if row.get("decision")
-                    else "Pending",
-                    "Mentor edit distance": row.get("mentorEditDistance"),
+                    else "Not decided yet",
+                    "Words changed by the mentor": row.get("mentorEditDistance"),
                 }
                 for row in per_run
             ]
@@ -313,14 +323,20 @@ def render_agent_graph(review: dict[str, Any]) -> None:
         "The executor runs this graph for every student. Validation can regenerate at most twice; publication waits for the assigned mentor's approval of the exact draft."
     )
     jobs = [job for job in review.get("jobs", []) if job.get("node_trace")]
+    names = {
+        str(s.get("id")): labels.pretty_name(s.get("display_name") or "Student")
+        for s in review.get("students") or []
+    }
     trace = None
     if jobs:
+        by_id = {str(job["id"]): job for job in jobs}
         job_id = pick(
             "Run",
-            [str(job["id"]) for job in jobs],
+            list(by_id),
             format_func=lambda jid: (
-                f"Run {labels.short_ref(jid)} · "
-                f"{labels.status_label(next(j for j in jobs if str(j['id']) == jid).get('status'))}"
+                f"{names.get(str(by_id[jid].get('student_id')), 'Student')} · "
+                f"{labels.run_outcome(by_id[jid].get('status'), by_id[jid].get('error_code'))} · "
+                f"run {labels.short_ref(jid)}"
             ),
             key="graph_job",
         )
@@ -334,6 +350,7 @@ def render_agent_graph(review: dict[str, Any]) -> None:
         else None,
     )
     if jobs:
+        render_gate_actions(selected_job, st.session_state.get("actor") or {}, review)
         validation = selected_job.get("validation") or {}
         with st.expander(
             "Model calls for this run", icon=":material/smart_toy:", expanded=True
@@ -342,7 +359,7 @@ def render_agent_graph(review: dict[str, Any]) -> None:
                 provenance_rows(
                     validation if isinstance(validation, dict) else {},
                     selected_job.get("mode"),
-                    None,
+                    selected_job.get("model_id"),
                 )
             )
             render_tool_calls(

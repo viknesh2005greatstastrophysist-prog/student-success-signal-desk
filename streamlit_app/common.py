@@ -591,21 +591,28 @@ def dataframe(
     empty: str = "No records to show.",
     key: str | None = None,
     column_config: dict[str, Any] | None = None,
-) -> None:
+    select_cell: bool = False,
+) -> tuple[int, str] | None:
+    """Show rows as a table. With select_cell, a click on a cell returns its (row, column)."""
     if not rows:
         st.caption(f":material/inbox: {empty}")
-        return
+        return None
     frame = pd.DataFrame(rows)
     for column in frame.columns[frame.dtypes == object]:
         frame[column] = frame[column].where(frame[column].notna(), "—")
-    st.dataframe(
+    event = st.dataframe(
         frame,
         hide_index=True,
         width="stretch",
         row_height=44,
         key=key,
         column_config=_sized_columns(rows, column_config),
+        **({"on_select": "rerun", "selection_mode": "single-cell"} if select_cell else {}),
     )
+    if not select_cell:
+        return None
+    cells = (getattr(event, "selection", None) or {}).get("cells") or []
+    return tuple(cells[0]) if cells else None
 
 
 def percent(raw: Any) -> float | None:

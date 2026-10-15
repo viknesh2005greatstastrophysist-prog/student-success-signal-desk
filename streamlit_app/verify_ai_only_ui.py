@@ -241,7 +241,7 @@ assert "Nothing was drafted by rules" in text
 reasons = next(df.value for df in at.dataframe if "What happened" in df.value.columns)
 assert list(reasons["Provider"]) == ["Groq", "Gemini"], reasons
 assert "MODEL_HTTP_503" in " ".join(reasons["What happened"])
-assert "AI unavailable, retry" in text
+assert "No AI model answered; waiting for a retry" in text
 retry = next(b for b in at.button if b.label == "Retry AI review")
 retry.click().run()
 assert at.session_state["calls"][-1] == ["plan_execute", {"planId": PLAN}]
@@ -307,7 +307,7 @@ assert (
     "Mentor review requested: attendance low." in text
     and "Rule-based summary kept on record." in text
 )
-assert "Undecided, read-only" in text and "Rule-based (retired)" in text
+assert "Undecided, read-only" in text and "Rules (retired, no AI model)" in text
 assert len([b for b in at.button if b.label == "Approve and publish"]) == 1, (
     "only the AI-written draft can be decided"
 )

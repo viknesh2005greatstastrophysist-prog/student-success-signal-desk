@@ -113,7 +113,7 @@ assert "&lt;script&gt;" in markup and "<script>alert" not in markup
 assert "threshold 75" in markup and "21CS501" in markup
 assert "What makes 21CS501 hard to attend?" in markup
 provenance = " ".join(str(df.value) for df in at.dataframe)
-assert "Groq" in provenance and "qwen/qwen3.8-27b" in provenance and "abababab" in provenance
+assert "Groq" in provenance and "Qwen3.8 27B on Groq" in provenance and "abababab" in provenance
 
 at = AppTest.from_string(script(1), default_timeout=30).run()
 assert not at.exception, [e.message for e in at.exception]

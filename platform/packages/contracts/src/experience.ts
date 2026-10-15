@@ -135,6 +135,8 @@ export type SupportPlan = {
   /** Status and outcome of the plan's intervention (staff only). */
   intervention_status?: string | null;
   intervention_outcome?: string | null;
+  /** Model that drafted the plan, as recorded on its agent run (null for retired rule-based drafts). */
+  model_id?: string | null;
 };
 export type Invoice = {
   payment_simulation_allowed?: boolean;

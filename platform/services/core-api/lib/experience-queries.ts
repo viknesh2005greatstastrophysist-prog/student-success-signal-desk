@@ -323,7 +323,7 @@ export async function experienceStudent(
               intervention_outcome: string | null;
             }
           >(
-            `SELECT p.id,c.id AS case_id,c.reason,c.risk_band,p.visible_to_student AS visible,p.created_at,p.plan,${caseEvidenceCapturedSql("c.id")} AS evidence_captured_at,i.status AS intervention_status,i.outcome AS intervention_outcome FROM support_plans p JOIN support_cases c ON c.id=p.support_case_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id AND i.generation_id=p.generation_id WHERE p.generation_id=$1 AND p.student_id=$2 ORDER BY p.created_at DESC`,
+            `SELECT p.id,c.id AS case_id,c.reason,c.risk_band,p.visible_to_student AS visible,p.created_at,p.plan,(SELECT ar.model_id FROM agent_runs ar WHERE ar.support_case_id=c.id ORDER BY ar.completed_at DESC NULLS LAST LIMIT 1) AS model_id,${caseEvidenceCapturedSql("c.id")} AS evidence_captured_at,i.status AS intervention_status,i.outcome AS intervention_outcome FROM support_plans p JOIN support_cases c ON c.id=p.support_case_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id AND i.generation_id=p.generation_id WHERE p.generation_id=$1 AND p.student_id=$2 ORDER BY p.created_at DESC`,
             [gen, id],
           )
         ).rows.map((row) => stampEvidence(clock, row))

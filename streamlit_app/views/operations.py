@@ -93,35 +93,110 @@ def runs_body(actor: dict[str, Any]) -> None:
                 "These reviews were planned and locked but have not been run, so they are not recorded runs. "
                 f"{paused} sit in a paused plan. Nothing is lost; they start when the mentor runs the plan."
             )
+            people = {str(s.get("id")): s for s in review.get("students") or []}
             dataframe(
                 [
                     {
-                        "Review": labels.short_ref(row.get("id")),
-                        "Plan": labels.short_ref(row.get("plan_id")),
-                        "Plan state": "Paused"
+                        "Student": labels.pretty_name(
+                            people.get(str(row.get("student_id")), {}).get("display_name")
+                            or "Student"
+                        ),
+                        "Mentor": labels.pretty_name(
+                            people.get(str(row.get("student_id")), {}).get("mentor_name")
+                            or "Not assigned"
+                        ),
+                        "Why it has not run": "The mentor paused the plan"
                         if row.get("plan_paused")
-                        else "Locked, not run",
-                        "Created": labels.nice_time(row.get("created_at")),
+                        else "Planned, waiting for the mentor to run it",
+                        "Planned on": labels.nice_time(row.get("created_at")),
                     }
                     for row in waiting
                 ]
             )
-    dataframe(
+    can_replay = actor.get("role") == "governance"
+    drafted = [row for row in jobs if row.get("run_id")]
+    view = pick(
+        "Show",
+        ["Plans drafted", "No plan needed", "All runs"],
+        key="runs_view",
+        label_visibility="collapsed",
+    )
+    shown = (
+        drafted
+        if view == "Plans drafted"
+        else [row for row in jobs if row.get("status") == "not_flagged"]
+        if view == "No plan needed"
+        else jobs
+    )
+    st.caption(
+        "Each row is one student the agents checked in a review. Students who needed support got a "
+        "plan drafted by an AI model; the rest were checked and left alone."
+        + (" Click **Open replay** to verify a drafted plan." if can_replay and drafted else "")
+    )
+    with st.expander("How each student is assessed", icon=":material/help:"):
+        st.markdown(
+            "1. A mentor starts a review for their students; the planner agent sets it up.\n"
+            "2. Collector agents gather the student's attendance (college records), marks, LMS activity, "
+            "internship and placement records, and an evidence check confirms they are complete and current.\n"
+            "3. The risk agent scores the student against the department's support policy.\n"
+            "4. **Not flagged:** the run ends as *Checked, no support needed*. Nothing is drafted, so there is "
+            "no model and no replay.\n"
+            "5. **Flagged:** specialist agents and an investigator build the case, an AI model drafts a plan, "
+            "a validator and a separate judge model check it, and it waits for the mentor.\n"
+            "6. The mentor approves, edits or declines. Students and parents see a plan only after approval.\n\n"
+            "**Replay** re-checks a saved run from its recorded inputs and compares fingerprints; it does not "
+            "call the model again. Each agent's step for a run is under *Plans and traces*. A student's score "
+            "and reasons are shown only to their own mentor."
+        )
+    people = {str(s.get("id")): s for s in review.get("students") or []}
+    clicked = dataframe(
         [
             {
-                "Run": labels.short_ref(row.get("id")),
-                "Status": labels.status_label(row.get("status")),
-                "Stage": labels.status_label(row.get("stage")),
-                "Drafted by": labels.mode_label(row.get("mode"))
-                if row.get("mode")
-                else "—",
-                "Replay record": "Available" if row.get("run_id") else "Not available",
-                "Issue": labels.issue_label(row.get("error_code")),
+                "Student": " · ".join(
+                    part
+                    for part in (
+                        labels.pretty_name(
+                            people.get(str(row.get("student_id")), {}).get("display_name")
+                            or "Student"
+                        ),
+                        people.get(str(row.get("student_id")), {}).get("register_number"),
+                    )
+                    if part
+                ),
+                "Mentor": labels.pretty_name(
+                    people.get(str(row.get("student_id")), {}).get("mentor_name") or "Not assigned"
+                ),
+                "When": labels.nice_time(row.get("updated_at") or row.get("created_at")),
+                "What happened": labels.run_outcome(row.get("status"), row.get("error_code")),
+                "Drafted by": labels.drafted_by(
+                    row.get("mode"), row.get("model_id"), row.get("status")
+                ),
+                "Replay": ("Open replay ›" if can_replay else "Available")
+                if row.get("run_id")
+                else "Not needed"
+                if row.get("status") == "not_flagged"
+                else "Not available",
             }
-            for row in jobs
+            for row in shown
         ],
-        empty="No runs have been recorded yet.",
+        empty="No runs of this kind have been recorded yet.",
+        key="runs_table",
+        select_cell=can_replay,
     )
+    if clicked and clicked[1] == "Replay" and 0 <= clicked[0] < len(shown):
+        run_id = shown[clicked[0]].get("run_id")
+        if run_id:
+            open_replay(str(run_id))
+
+
+def open_replay(run_id: str) -> None:
+    """Go to Audit and replay with this run chosen; the replay runs on arrival."""
+    from views.pages import pages_for
+
+    st.session_state["replay_open"] = run_id
+    target = next((p for p in pages_for("governance") if p.url_path == "audit"), None)
+    if target is not None:
+        st.switch_page(target)
 
 
 def graph_page() -> None:
@@ -149,6 +224,16 @@ def audit_page() -> None:
         "Verify a recorded run and read the policies the agents applied.",
     )
     replayable = [row for row in jobs if row.get("run_id")]
+    names = {
+        str(s.get("id")): labels.pretty_name(s.get("display_name") or "Student")
+        for s in review.get("students") or []
+    }
+    opened = st.session_state.pop("replay_open", None)
+    replay_ids = [str(row.get("run_id", "")) for row in replayable]
+    if opened in replay_ids:
+        # Arriving from "Open replay": choose that run even if another was chosen before.
+        st.session_state.pop("governance_replay_run", None)
+        st.session_state.pop("governance_replay_run__search", None)
     if actor.get("role") == "governance" and replayable:
         with ui.card("replay"):
             st.markdown("##### Verify a recorded run")
@@ -157,10 +242,13 @@ def audit_page() -> None:
             )
             run_id = pick(
                 "Completed run",
-                [str(row.get("run_id", "")) for row in replayable],
+                replay_ids,
+                index=replay_ids.index(opened) if opened in replay_ids else 0,
                 format_func=lambda rid: next(
                     (
-                        f"{labels.status_label(row.get('status', 'Run'))} · {labels.nice_time(row.get('updated_at'))} · run {labels.short_ref(rid)}"
+                        f"{names.get(str(row.get('student_id')), 'Student')} · "
+                        f"{labels.run_outcome(row.get('status'), row.get('error_code'))} · "
+                        f"{labels.nice_time(row.get('updated_at'))} · run {labels.short_ref(rid)}"
                         for row in replayable
                         if str(row.get("run_id", "")) == rid
                     ),
@@ -168,15 +256,13 @@ def audit_page() -> None:
                 ),
                 key="governance_replay_run",
             )
-            if (
-                st.button(
-                    "Replay saved run",
-                    type="primary",
-                    key="governance_replay",
-                    icon=":material/replay:",
-                )
-                and run_id
-            ):
+            pressed = st.button(
+                "Replay saved run",
+                type="primary",
+                key="governance_replay",
+                icon=":material/replay:",
+            )
+            if (pressed or (opened and opened == run_id)) and run_id:
                 result = save_action("replay", {"runId": run_id}, "Replay completed.")
                 if result:
                     replay = result.get("replay") or {}

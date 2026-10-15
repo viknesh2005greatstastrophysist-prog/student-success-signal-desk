@@ -382,6 +382,52 @@ def render_plan_scope(
             )
 
 
+GATE_WAITING = {"awaiting_faculty", "awaiting_review", "human_review"}
+
+
+def render_gate_actions(job: dict[str, Any], actor: dict[str, Any], review: dict[str, Any]) -> None:
+    """The yellow "Mentor gate" and "Publish" steps, made actionable. Only the student's
+    assigned mentor can decide (the Core scopes a mentor's jobs to their own students);
+    every other role sees who the run is waiting on. Publishing is part of the mentor's
+    "Approve and publish", so it is never offered on its own."""
+    if str(job.get("status") or "") not in GATE_WAITING or not job.get("support_case_id"):
+        return
+    student = next(
+        (s for s in review.get("students") or [] if str(s.get("id")) == str(job.get("student_id"))),
+        {},
+    )
+    mentor = labels.pretty_name(student.get("mentor_name") or "the assigned mentor")
+    since = labels.nice_time(job.get("updated_at"))
+    if actor.get("role") == "faculty":
+        if st.button(
+            "Mentor gate · Waiting: open this draft to approve and publish",
+            icon=":material/how_to_reg:",
+            type="primary",
+            key=f"gate_{job.get('id')}",
+        ):
+            from views.pages import pages_for
+
+            st.session_state["open_gate_case"] = str(job["support_case_id"])
+            target = next((p for p in pages_for("faculty") if p.url_path == "reviews"), None)
+            if target is not None:
+                st.switch_page(target)
+        st.caption("Publish follows your approval; nothing reaches the student before it.")
+        return
+    gate, publish = st.columns(2)
+    with gate:
+        with st.popover("Mentor gate · Waiting", icon=":material/hourglass_top:", width="stretch"):
+            st.markdown(f"Waiting on **{mentor}** since {since}.")
+            st.caption(
+                "Only the student's assigned mentor can approve or decline this exact draft. "
+                "This workspace observes and never decides."
+            )
+    with publish:
+        with st.popover("Publish · Waiting", icon=":material/send:", width="stretch"):
+            st.caption(
+                "Publishing happens when the mentor approves. The student and parent see the plan only after that."
+            )
+
+
 def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None:
     raw_policies = review.get("policies") or []
     policies = policy_rows(raw_policies)
@@ -784,19 +830,16 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             if isinstance(trace_job.get("validation"), dict)
             else None,
         )
+        render_gate_actions(trace_job, actor, review)
     render_ai_unavailable(selected_plan, review_jobs, can_plan)
     dataframe(
         [
             {
                 "Student": names.get(str(row.get("student_id")), "Student"),
-                "Status": labels.status_label(row.get("status")),
-                "Stage": labels.status_label(row.get("stage")),
-                "Drafted by": labels.mode_label(row.get("mode"))
-                if row.get("mode")
-                else "—",
-                "Issue": labels.issue_label(row.get("error_code"))
-                if row.get("error_code")
-                else "—",
+                "What happened": labels.run_outcome(row.get("status"), row.get("error_code")),
+                "Drafted by": labels.drafted_by(
+                    row.get("mode"), row.get("model_id"), row.get("status")
+                ),
             }
             for row in review_jobs
         ]
@@ -1240,7 +1283,7 @@ def _provenance_rows(
         return [
             {
                 "Step": "Drafted by",
-                "Detail": f"{labels.mode_label(mode)}{' · ' + str(model_id) if model_id else ''}",
+                "Detail": labels.drafted_by(mode, model_id),
             },
             {"Step": "Trace", "Detail": "Recorded before provider tracing (packet v1)"},
         ]
@@ -1254,7 +1297,15 @@ def _provenance_rows(
             if prov.get("provider")
             else labels.mode_label(mode),
         },
-        {"Step": "Model", "Detail": str(prov.get("model") or "not recorded")},
+        {
+            "Step": "Model",
+            "Detail": labels.model_name(
+                f"{prov.get('provider')}:{prov.get('model')}"
+                if prov.get("provider") in ("groq", "gemini") and prov.get("model")
+                else prov.get("model") or model_id
+            )
+            or "Not recorded",
+        },
         {"Step": "Specialist", "Detail": labels.domain_label(prov.get("specialist"))},
         {
             "Step": "Packet format",
@@ -1518,8 +1569,7 @@ def render_draft_provenance(
         for name in CHECK_LABELS:
             st.markdown(check_line(name, checks.get(name)))
         st.caption(
-            f"Drafted by: {labels.mode_label(selected.get('mode'))}"
-            + (f" · {selected.get('model_id')}" if selected.get("model_id") else "")
+            f"Drafted by: {labels.drafted_by(selected.get('mode'), selected.get('model_id'))}"
         )
         if validation.get("fallback"):
             st.caption(
@@ -1623,7 +1673,7 @@ def render_draft_reviews(
                     "Status": "Awaiting the assigned mentor"
                     if row.get("status") == "awaiting_faculty"
                     else labels.status_label(row.get("status")),
-                    "Drafted by": labels.mode_label(row.get("mode")),
+                    "Drafted by": labels.drafted_by(row.get("mode"), row.get("model_id")),
                     "Drafted": labels.nice_time(row.get("drafted_at")),
                     "Earlier drafts": row.get("earlier_count") or 0,
                 }
@@ -1688,7 +1738,7 @@ def render_draft_reviews(
             + ui.status_html(headline, tone)
             + "</div>"
         )
-        ui.provenance_caption()
+        ui.provenance_caption(model_id=selected.get("model_id"))
         if validation.get("mentorEdited"):
             st.caption(
                 ":material/edit: This version includes edits by the mentor account."
@@ -1808,22 +1858,42 @@ def render_draft_reviews(
         decision_head(selected)
         if edit_clicked:
             st.session_state[edit_key] = True
+        confirm_key = f"confirm_approve_{selected['id']}_{selected.get('artifact_id')}"
         if approved or declined:
             if len(rationale.strip()) < 8:
                 st.error("Enter a decision rationale of at least eight characters.")
             else:
-                save_action(
-                    "case_decide",
-                    {
-                        "caseId": selected["id"],
-                        "expectedRevision": int(selected["revision"]),
-                        "artifactId": selected["artifact_id"],
-                        "contentHash": selected["content_hash"],
-                        "decision": "approved" if approved else "rejected",
-                        "rationale": rationale.strip(),
-                    },
-                    "Decision saved against the displayed draft version.",
+                decision = {
+                    "caseId": selected["id"],
+                    "expectedRevision": int(selected["revision"]),
+                    "artifactId": selected["artifact_id"],
+                    "contentHash": selected["content_hash"],
+                    "decision": "approved" if approved else "rejected",
+                    "rationale": rationale.strip(),
+                }
+                if approved:
+                    # Publishing cannot be taken back quietly: confirm first.
+                    st.session_state[confirm_key] = decision
+                else:
+                    save_action("case_decide", decision, "Decision saved against the displayed draft version.")
+        pending = st.session_state.get(confirm_key)
+        if pending:
+            with st.container(border=True):
+                st.markdown(
+                    f"**Share this plan with {student_name} and their parent?** Approving publishes this exact draft."
                 )
+                yes, cancel = st.columns(2)
+                if yes.button(
+                    "Yes, approve and publish",
+                    type="primary",
+                    width="stretch",
+                    key=f"{confirm_key}_yes",
+                ):
+                    st.session_state.pop(confirm_key, None)
+                    save_action("case_decide", pending, "Approved and published: the student and parent can now see the plan.")
+                if cancel.button("Cancel", width="stretch", key=f"{confirm_key}_no"):
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
         with st.expander(
             "Edit the draft",
             icon=":material/edit_document:",
@@ -1951,7 +2021,7 @@ def render_legacy_drafts(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                     "Student": labels.pretty_name(row.get("display_name", "Student")),
                     "Register number": row.get("register_number", "Not listed"),
                     "Status": "Undecided, read-only",
-                    "Drafted by": labels.mode_label(row.get("mode")),
+                    "Drafted by": labels.drafted_by(row.get("mode"), row.get("model_id")),
                     "Drafted": labels.nice_time(row.get("drafted_at")),
                 }
                 for row in legacy

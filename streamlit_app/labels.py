@@ -26,7 +26,7 @@ STATUS = {
     "retrieved": ("References retrieved", "blue", ":material/travel_explore:"),
     "validated": ("Validated", "blue", ":material/verified:"),
     "human_review": ("At the mentor gate", "orange", ":material/front_hand:"),
-    "awaiting_faculty": ("Awaiting your review", "orange", ":material/front_hand:"),
+    "awaiting_faculty": ("Awaiting mentor review", "orange", ":material/front_hand:"),
     "awaiting_review": ("Awaiting review", "orange", ":material/front_hand:"),
     "needs_human": ("Needs your decision", "red", ":material/report:"),
     "ai_unavailable": ("AI unavailable, retry", "orange", ":material/cloud_off:"),
@@ -346,6 +346,75 @@ def mode_label(code: Any) -> str:
     if not code:
         return "Not recorded"
     return MODES.get(str(code), humanize(code))
+
+
+def model_name(model_id: Any) -> str:
+    """The model that wrote a draft, as stored on its agent run, in plain words."""
+    full = str(model_id or "")
+    raw = full.split(";")[0].strip()
+    if not raw:
+        return ""
+    if "shared action profiles" in full:
+        # Retired cross-student reuse: one model answer applied to students with the same signals.
+        return f"{model_name(raw)}, shared bulk draft"
+    provider, _, model = raw.partition(":") if raw.startswith(("groq:", "gemini:")) else ("", "", raw)
+    model = model.split("/")[-1]
+    qwen = re.match(r"qwen(\d+(?:\.\d+)?)[-:](\d+)b", model, re.I)
+    if qwen:
+        name = f"Qwen{qwen.group(1)} {qwen.group(2)}B"
+        if provider == "groq":
+            return f"{name} on Groq"
+        return f"{name} (local)" if not provider else f"{name} on {provider.capitalize()}"
+    if model.lower().startswith("gemini"):
+        words = model.split("-")
+        version = words[1] if len(words) > 1 else ""
+        rest = "-".join(w.capitalize() for w in words[2:])
+        return " ".join(part for part in ("Gemini", version, rest) if part)
+    return re.sub(r"[_\s]+", " ", model).strip()
+
+
+RUN_OUTCOMES = {
+    "not_flagged": "Checked, no support needed",
+    "awaiting_faculty": "Plan drafted, waiting for the mentor",
+    "awaiting_review": "Plan drafted, waiting for the mentor",
+    "human_review": "Plan drafted, waiting for the mentor",
+    "approved": "Plan approved by the mentor",
+    "published": "Plan approved and shared",
+    "rejected": "Plan declined by the mentor",
+    "declined": "Plan declined by the mentor",
+    "superseded": "Replaced after new data",
+    "withdrawn": "Withdrawn",
+    "needs_human": "Handed to the mentor to decide",
+    "ai_unavailable": "No AI model answered; waiting for a retry",
+    "running": "Agents working now",
+    "queued": "Not started yet",
+}
+
+
+def run_outcome(status: Any, error_code: Any = None) -> str:
+    """One plain sentence for what a review run ended with (replaces Status, Stage and Issue)."""
+    code = str(status or "")
+    if code in ("failed", "blocked"):
+        return f"Stopped: {issue_label(error_code).lower()}" if error_code else "Stopped before a draft"
+    return RUN_OUTCOMES.get(code, status_label(code))
+
+
+def drafted_by(mode: Any, model_id: Any = None, status: Any = None) -> str:
+    """Who wrote a draft: the real model when one did, otherwise why there is none."""
+    name = model_name(model_id)
+    if name:
+        return name
+    if mode in ("deterministic", "fallback"):
+        return "Rules (retired, no AI model)"
+    if mode == "unavailable" or status == "ai_unavailable":
+        return "No model answered"
+    if status == "not_flagged":
+        return "No draft needed"
+    if status in ("queued", "running", "blocked"):
+        return "Not drafted yet"
+    if mode == "model":
+        return "AI model (name not recorded)"
+    return "Not drafted"
 
 
 def node_label(node: Any) -> str:
