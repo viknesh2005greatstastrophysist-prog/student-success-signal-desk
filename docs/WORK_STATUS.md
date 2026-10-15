@@ -4,6 +4,8 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 
 ## Current state
 
+**Data consistency (15 Oct, `docs/E2E_TEST_LOG.md`, "Rework: data consistency").** Owner bug: student001's overview (attendance 84.3%) contradicted the published plan (attendance 40%). Cause: the v2 and v3 refreshes retired only open drafts; approved plans, interventions and stored risk analyses stayed on the seed generation. Fixed once and for the class: a stored artifact is current only if its evidence was captured on the current data generation (`lib/data-refresh/generation.ts`). Students and parents get a plan only when current, else "Your mentor will review your plan again with the latest figures."; staff see "Based on earlier figures" and can start a re-review; the Risk view, department trends and AI activity read current reviews only. Data fix (additive, audited, no model call): plans withdrawn through `recordOutcome` (local 9, hosted 7) and every student's risk recomputed (320 on each database, student 021 excluded; case `d398bbc3` untouched). After any future refresh run `consistency-audit`, then `consistency-plans` and `consistency-risk` (backup first). Test: `tests/data-consistency.test.ts` (in CI).
+
 **What works (verified 15 Oct, local database and hosted app)**
 
 - Per-role pages (student, parent, mentor, department head, AI activity), realistic generated data (v2) with attendance anchored to the college report (v3), the Apple-style design, non-typeable pickers. Read-only walk `walk.py --pass final`: 9 sessions, 140 views, 94 screenshots, 0 exceptions, 0 error alerts, 0 console errors, 0 failed requests, 0 overflow, 0 truncated, 0 leaked text, 0 walk errors, 0 forbidden pages.
@@ -28,7 +30,7 @@ Durable handoff note so no state lives only in a chat session. Update this file 
 
 1. Move Neon to a US region (owner, Neon console; steps in the E2E log). Until then hosted pages that read the database take 2.6 to 4.8 s.
 2. Fewer sequential queries inside the Core reads (`experienceOverview`, `experienceStudent`: about ten each); return the role's first batch from the sign-in call (about 0.9 s hosted).
-3. The mentor's Risk view shows the last stored evaluation, which can be stale against today's data (P3: show the evaluation date or refresh).
+3. Risk is now re-evaluated after a refresh by `consistency-risk` (see below); between refreshes it still shows the last stored evaluation, and LMS inactivity grows by a day each day (P3: show the evaluation date or refresh on demand).
 4. A rewrite that fixes one validator failure can create another (length limit); the length-failure instruction does not quote the sentence (P3).
 5. Parent-student pairing unchanged; LMS inactivity grows daily because the evidence reads the clock; attendance is "based on the college attendance report", not raw registers; the future option of the college's real course codes (rework 2b) is undecided.
 6. Vercel portals remain paused (503) by owner decision; Codex's subscription ended 14 Oct (Claude implements under a usage cap).

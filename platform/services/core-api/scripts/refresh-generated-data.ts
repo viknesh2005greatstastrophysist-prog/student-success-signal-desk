@@ -402,7 +402,7 @@ try {
     await emit(await withdrawStalePlans({ excludeStudentIds: await excluded(), dryRun: args.includes("--dry-run") }));
   } else if (command === "consistency-risk") {
     const label = await withCoreSnapshot(async (c) => (await c.query<{ label: string }>("SELECT label FROM data_generations ORDER BY created_at DESC LIMIT 1")).rows[0]!.label);
-    await emit(await recomputeRiskAnalyses({ label, excludeStudentIds: await excluded(), dryRun: args.includes("--dry-run") }));
+    await emit(await recomputeRiskAnalyses({ label, excludeStudentIds: await excluded(), dryRun: args.includes("--dry-run"), concurrency: Number(flag("--concurrency") ?? 6) }));
   } else if (command === "stats") {
     await emit(await stats());
   } else if (command === "candidates") {

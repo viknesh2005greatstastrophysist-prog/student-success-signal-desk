@@ -209,7 +209,7 @@ export async function recomputeRiskAnalyses(opts: RiskRefreshOptions) {
     return { generation, operator, mentors, done, revision };
   });
   const policyVersion = opts.policyVersion ?? "PROJECT-SUPPORT-V2";
-  const report = { evaluated: 0, flagged: 0, notFlagged: 0, skippedExcluded: 0, alreadyDone: 0, evidenceFailures: 0, cycles: 0, byBand: {} as Record<string, number> };
+  const report = { evaluated: 0, flagged: 0, notFlagged: 0, skippedExcluded: 0, alreadyDone: 0, evidenceFailures: 0, failureReasons: {} as Record<string, number>, cycles: 0, byBand: {} as Record<string, number> };
   for (const mentor of info.mentors) {
     const { policy, policyId, students } = await withCoreSnapshot(async (c) => {
       const row = (await c.query<{ id: string; policy: unknown }>(
@@ -232,18 +232,21 @@ export async function recomputeRiskAnalyses(opts: RiskRefreshOptions) {
     for (let from = 0; from < targets.length; from += 50) {
       const chunk = targets.slice(from, from + 50);
       // Evidence and risk first (read only); nothing is written if any student cannot be evaluated.
-      const capturedAt = new Date().toISOString();
-      const evaluated: Array<{ studentId: string; evidence: Evidence; risk: ReturnType<typeof riskAnalysis> }> = [];
+      const evaluated: Array<{ studentId: string; capturedAt: string; evidence: Evidence; risk: ReturnType<typeof riskAnalysis> }> = [];
       let cursor = 0;
       const worker = async () => {
         while (cursor < chunk.length) {
           const studentId = chunk[cursor++]!;
           try {
             const evidence = Object.fromEntries(await Promise.all((["academic", "lms", "internship", "placement"] as const).map(async (name) => [name, await readSource(actor, studentId, name)]))) as unknown as Evidence;
+            // Captured when this student's reads finished: the validator rejects evidence observed
+            // after (future) or long before (stale) the capture time, so a slow chunk must not share one time.
+            const capturedAt = new Date().toISOString();
             validateEvidence(evidence, studentId, policy, capturedAt, evidence.academic.semester);
-            evaluated.push({ studentId, evidence, risk: riskAnalysis(evidence, policy) });
-          } catch {
+            evaluated.push({ studentId, capturedAt, evidence, risk: riskAnalysis(evidence, policy) });
+          } catch (error) {
             report.evidenceFailures += 1;
+            bump(report.failureReasons, (error instanceof Error ? error.message : String(error)).replace(/postgres(ql)?:\/\/\S+/g, "<url>").slice(0, 120));
           }
         }
       };
@@ -269,7 +272,7 @@ export async function recomputeRiskAnalyses(opts: RiskRefreshOptions) {
           const e = byStudent.get(job.student_id);
           if (!e) continue;
           const checkpoint = {
-            evidence: e.evidence, risk: e.risk, policy, capturedAt, evidenceRevision: info.revision,
+            evidence: e.evidence, risk: e.risk, policy, capturedAt: e.capturedAt, evidenceRevision: info.revision,
             policyGuard: { version: policy.version, facultyApproved: true },
             riskRefresh: opts.label, dataGeneration: opts.label,
           };
