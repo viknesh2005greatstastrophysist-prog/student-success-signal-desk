@@ -68,6 +68,8 @@ try:
         "drafted_at",
         "earlier_count",
         "earlier_drafts",
+        "evidence_current",
+        "evidence_generation",
     }
     assert all(set(row) <= shown for row in queue["drafts"] + queue["legacyDrafts"])
     assert all(row["mode"] == "model" for row in queue["drafts"])

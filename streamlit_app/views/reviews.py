@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 import ui
 from common import pick
+from views.freshness import figures_label, render_earlier_reviews_note, render_rereview
 from common import (
     ACTION_OWNER_LABELS,
     CHECK_LABELS,
@@ -436,6 +437,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     format_func=lambda item: student_labels.get(item, item),
                     max_selections=50,
                     filter_mode=None,
+                    key="plan_students",
                 )
                 left, right = st.columns(2)
                 with left:
@@ -867,6 +869,7 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
         "Scores combine the four signals using your approved policy. A flag only opens a review path; it is never a label.",
     )
     rows = review.get("riskView") or []
+    render_earlier_reviews_note(review)
     plan_options = {p["id"]: plan_label(p) for p in review.get("plans", [])}
     filter_col, toggle_col = st.columns([3, 1], vertical_alignment="bottom")
     with filter_col:
@@ -1024,6 +1027,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             "Row": "Plan, current status",
             "Status": labels.status_label(row.get("status")),
             "Outcome": row.get("outcome"),
+            "Figures": figures_label(row),
             "Visible": "Yes" if row.get("visible_to_student") else "No",
             "Decision": labels.status_label(row.get("decision")),
             "Decided by": row.get("decided_by"),
@@ -1047,6 +1051,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
         }
         for event in queue.get("interventionLog", [])
     )
+    render_rereview(plans, role=str(actor.get("role")), key="outcomes_rereview")
     log_head, log_button = st.columns([3, 1], vertical_alignment="bottom")
     with log_head:
         st.markdown("##### Intervention log")
@@ -1586,6 +1591,7 @@ def render_draft_reviews(
 ) -> None:
     drafts = queue.get("drafts") or []
     is_mentor = actor.get("role") == "faculty"
+    render_rereview(drafts, role=str(actor.get("role")), key="drafts_rereview", noun="draft")
     ui.section(
         "Drafts at the gate" if is_mentor else "Drafts waiting on mentors",
         "Drafts the agents prepared for flagged students. Nothing reaches a student or family until you approve it."

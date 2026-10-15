@@ -7,6 +7,7 @@ import labels
 import pandas as pd
 import streamlit as st
 import ui
+from views.freshness import render_earlier_reviews_note
 from common import pick
 from common import dataframe
 from views.reviews import provenance_rows, render_diagnoses, render_tool_calls
@@ -164,6 +165,7 @@ def render_review_trends(review: dict[str, Any]) -> None:
         icon=":material/monitoring:",
     )
     rows = review.get("trends") or []
+    render_earlier_reviews_note(review)
     if not rows:
         ui.empty_state(
             "No evaluated review cycles yet",

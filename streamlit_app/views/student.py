@@ -60,6 +60,22 @@ def render_mentor_updates(followups: list[dict[str, Any]]) -> None:
             ui.plain_text(row.get("note"))
 
 
+def render_plan_notice(detail: dict[str, Any]) -> bool:
+    """The calm line shown instead of a plan whose evidence predates the current figures
+    (the Core only returns plans on the current data generation to students and parents)."""
+    notice = detail.get("support_notice")
+    if notice:
+        ui.insight("Your support plan", str(notice))
+    return bool(notice)
+
+
+def support_status(detail: dict[str, Any]) -> str:
+    """The value of the 'Support plan' figure on the overview pages."""
+    if detail.get("support"):
+        return "Agreed"
+    return "Being reviewed" if detail.get("support_notice") else "None yet"
+
+
 def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> None:
     """The approved support plan as plain, readable text."""
     if not support:
@@ -133,7 +149,7 @@ def overview_page() -> None:
                 },
                 {
                     "label": "Support plan",
-                    "value": "Agreed" if support else "None yet",
+                    "value": support_status(detail),
                 },
             ]
         )
@@ -147,6 +163,8 @@ def overview_page() -> None:
         )
     if support:
         render_support_cards(support[:1], audience="student")
+    else:
+        render_plan_notice(detail)
 
 
 def courses_page() -> None:
@@ -242,11 +260,14 @@ def support_page() -> None:
     support = detail.get("support") or []
     followups = detail.get("followups") or []
     if not support and not followups:
-        ui.empty_state(
-            "Nothing here yet",
-            "When your mentor approves support for you, it will appear here.",
-        )
+        if not render_plan_notice(detail):
+            ui.empty_state(
+                "Nothing here yet",
+                "When your mentor approves support for you, it will appear here.",
+            )
         return
+    if not support:
+        render_plan_notice(detail)
     render_support_cards(support, audience="student")
     render_mentor_updates(followups)
 

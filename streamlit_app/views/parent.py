@@ -22,7 +22,9 @@ from common import (
 from views.student import (
     render_course_cards,
     render_mentor_updates,
+    render_plan_notice,
     render_support_cards,
+    support_status,
 )
 
 
@@ -278,7 +280,7 @@ def overview_page() -> None:
                 "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
             },
             {"label": "Open fee balance", "value": _whole_rupees(money(open_balance))},
-            {"label": "Support plan", "value": "Agreed" if support else "None yet"},
+            {"label": "Support plan", "value": support_status(detail)},
         ]
     )
     if courses:
@@ -292,6 +294,8 @@ def overview_page() -> None:
         )
     if support:
         render_support_cards(support[:1], audience="family")
+    else:
+        render_plan_notice(detail)
 
 
 def support_page() -> None:
@@ -307,11 +311,14 @@ def support_page() -> None:
     support = detail.get("support") or []
     followups = detail.get("followups") or []
     if not support and not followups:
-        ui.empty_state(
-            "Nothing here yet",
-            "Approved support and mentor updates will appear here.",
-        )
+        if not render_plan_notice(detail):
+            ui.empty_state(
+                "Nothing here yet",
+                "Approved support and mentor updates will appear here.",
+            )
         return
+    if not support:
+        render_plan_notice(detail)
     render_support_cards(support, audience="family")
     render_mentor_updates(followups)
 

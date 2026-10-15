@@ -18,6 +18,7 @@ from common import (
     pick,
     sections,
 )
+from views.freshness import figures_label, render_rereview
 from views.sources import render_source_evidence
 from views.student import render_course_cards
 
@@ -97,6 +98,7 @@ def plan_rows(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
             ),
             "Status": labels.status_label(p.get("status")),
             "Outcome": p.get("outcome") or "Not recorded",
+            "Figures": figures_label(p),
             "Decided by": p.get("decided_by"),
             "Decision time": labels.nice_time(p.get("decided_at")),
         }
@@ -208,6 +210,7 @@ def render_profile(student_id: str, role: str) -> None:
                 "Open Reviews to approve, edit or decline.",
                 title="Needs you",
             )
+        render_rereview(mine, role=role, key="profile_rereview")
         dataframe(
             plan_rows(mine),
             empty="No approved plans for this student yet.",

@@ -597,6 +597,11 @@ def reviews_body(actor: dict[str, Any]) -> None:
         if r.get("latest", True)
     }
     awaiting = int(queue.get("awaitingCount", len(queue.get("drafts") or [])))
+    # "Review again with the latest figures" lands on Start a review with the student chosen.
+    again = st.session_state.pop("rereview_student", None)
+    if again:
+        st.session_state["reviews_section"] = "Start a review"
+        st.session_state["plan_students"] = [str(again)]
     section = sections(
         [f"Drafts at the gate ({awaiting})", "Start a review", "Policies"],
         key="reviews_section",
