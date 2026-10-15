@@ -967,7 +967,7 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
                 "Register number": row["registerNumber"],
                 "Score": row["score"],
                 "Band": labels.risk_label(row["band"]),
-                "Status": labels.status_label(row["status"]),
+                "Status": labels.run_outcome(row["status"]),
                 "Contributing signals": ", ".join(
                     labels.signal_label(signal["code"]) for signal in row["signals"]
                 ),
@@ -1036,6 +1036,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                 "label": "Approved plans",
                 "value": outcome["plans"],
                 "icon": ":material/verified:",
+                "help": "Every plan a mentor approved. The cards beside it split the same plans by where each stands now.",
             },
             {
                 "label": "Planned",
@@ -1625,8 +1626,10 @@ def plan_label(plan: dict[str, Any]) -> str:
     raw = value(
         plan, "created_at", "createdAt", "updated_at", "updatedAt", default=None
     )
+    students = body.get("studentIds") or []
     parts = [
         short,
+        f"{len(students)} student{'s' if len(students) != 1 else ''}" if students else "",
         labels.status_label(plan.get("status")) if plan.get("status") else "",
         labels.nice_time(raw) if raw else "",
         labels.short_ref(plan.get("id")),

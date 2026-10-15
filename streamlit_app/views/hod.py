@@ -94,7 +94,7 @@ def overview_page() -> None:
                 else []
             ),
             {
-                "label": "Reviews awaiting work",
+                "label": "Drafts waiting for a mentor",
                 "value": value(counts, "pending_reviews", default=0),
                 "icon": ":material/front_hand:",
             },

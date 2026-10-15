@@ -44,24 +44,28 @@ def runs_page() -> None:
     ui.kpi_row(
         [
             {
-                "label": "Recorded runs",
+                "label": "Students checked",
                 "value": len(jobs),
                 "icon": ":material/smart_toy:",
-                "help": f"Reviews that have started. {len(waiting)} more are waiting to start and are listed separately.",
+                "help": f"Students the agents have checked in a review. {len(waiting)} more are planned and waiting to start; they are listed separately.",
             },
             {
-                "label": "Passed validation",
-                "value": labels.percent_text(
-                    totals.get("validationPassed", 0), totals.get("evaluated", 0)
-                ),
+                "label": "Plans drafted",
+                "value": sum(1 for job in jobs if job.get("run_id")),
+                "icon": ":material/edit_document:",
+                "help": "Students the risk check flagged, for whom an AI model drafted a plan. The rest needed no plan.",
+            },
+            {
+                "label": "Drafts that passed every check",
+                "value": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)}",
                 "icon": ":material/verified:",
-                "help": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)} drafts that reached validation.",
+                "help": "Drafts that passed the privacy, citation and policy checks before reaching the mentor.",
             },
             {
-                "label": "Escalations",
+                "label": "Handed to a mentor",
                 "value": totals.get("escalated", 0),
                 "icon": ":material/front_hand:",
-                "help": "Reviews handed to a mentor because the agents could not finish them.",
+                "help": "Reviews the agents could not finish, so a mentor decides without a draft.",
             },
             {
                 "label": "Waiting for AI",

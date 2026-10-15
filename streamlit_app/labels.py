@@ -387,7 +387,7 @@ RUN_OUTCOMES = {
     "needs_human": "Handed to the mentor to decide",
     "ai_unavailable": "No AI model answered; waiting for a retry",
     "running": "Agents working now",
-    "queued": "Not started yet",
+    "queued": "Review planned, waiting for the mentor to run it",
 }
 
 

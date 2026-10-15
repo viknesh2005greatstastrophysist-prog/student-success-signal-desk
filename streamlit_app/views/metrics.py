@@ -42,29 +42,27 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
     ui.kpi_row(
         [
             {
-                "label": "Validation pass rate",
-                "value": labels.percent_text(
-                    totals.get("validationPassed", 0), totals.get("evaluated", 0)
-                ),
+                "label": "Passed every check",
+                "value": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)}",
                 "icon": ":material/verified:",
                 "help": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)} drafts passed every acceptance check before mentor review. Cycles are listed below.",
             },
             {
-                "label": "Targeted repairs",
+                "label": "Fix-ups by the model",
                 "value": sum(int(r.get("repairsUsed") or 0) for r in per_run),
                 "icon": ":material/build:",
             },
             {
-                "label": "Escalated to a mentor",
+                "label": "Handed to a mentor",
                 "value": totals.get("escalated", 0),
                 "icon": ":material/front_hand:",
-                "help": "Same count as the Escalations card on AI activity.",
+                "help": "Same count as the Handed to a mentor card on Runs.",
             },
             {
                 "label": "Approved as drafted",
-                "value": f"{round(100 * sum(1 for r in approved if r.get('approveAsIs')) / len(approved))}%"
+                "value": f"{sum(1 for r in approved if r.get('approveAsIs'))} of {len(approved)}"
                 if approved
-                else "—",
+                else "None decided yet",
                 "icon": ":material/thumb_up:",
                 "help": "Of approved drafts, how many mentors approved without editing.",
             },
