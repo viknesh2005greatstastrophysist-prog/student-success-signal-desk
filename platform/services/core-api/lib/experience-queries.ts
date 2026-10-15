@@ -16,6 +16,12 @@ import { AuthorizationError, requireRole } from "./security";
 import { NotFoundError } from "./http";
 import { lmsEvidence, requireLmsCourse } from "./lms-queries";
 import { awaitingCount } from "./chapter11/awaiting";
+import {
+  caseEvidenceCapturedSql,
+  guardPlansForFamily,
+  loadGenerationClock,
+  stampEvidence,
+} from "./data-refresh/generation";
 
 export async function requireExperienceStudent(
   client: PoolClient,
@@ -305,21 +311,50 @@ export async function experienceStudent(
           )
         ).rows[0] ?? null)
       : null;
-    const support = grants.includes("support")
+    // A plan is shown to a student or parent only when its evidence was captured on the
+    // current data generation (data-refresh/generation.ts). Staff see every plan, flagged.
+    const clock = await loadGenerationClock(client);
+    const supportRows = grants.includes("support")
       ? (
-          await client.query<StudentDetail["support"][number]>(
-            `SELECT p.id,c.id AS case_id,c.reason,c.risk_band,p.visible_to_student AS visible,p.created_at,p.plan FROM support_plans p JOIN support_cases c ON c.id=p.support_case_id WHERE p.generation_id=$1 AND p.student_id=$2 AND (p.visible_to_student OR $3) ORDER BY p.created_at DESC`,
-            [gen, id, privateView],
+          await client.query<
+            StudentDetail["support"][number] & {
+              evidence_captured_at: string | null;
+              intervention_status: string | null;
+              intervention_outcome: string | null;
+            }
+          >(
+            `SELECT p.id,c.id AS case_id,c.reason,c.risk_band,p.visible_to_student AS visible,p.created_at,p.plan,${caseEvidenceCapturedSql("c.id")} AS evidence_captured_at,i.status AS intervention_status,i.outcome AS intervention_outcome FROM support_plans p JOIN support_cases c ON c.id=p.support_case_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id AND i.generation_id=p.generation_id WHERE p.generation_id=$1 AND p.student_id=$2 ORDER BY p.created_at DESC`,
+            [gen, id],
           )
-        ).rows
+        ).rows.map((row) => stampEvidence(clock, row))
       : [];
+    let support: StudentDetail["support"] = [];
+    let supportNotice: string | null = null;
+    if (privateView) support = supportRows;
+    else {
+      const guarded = guardPlansForFamily(
+        supportRows.map((row) => ({ ...row, intervention_outcome: row.intervention_outcome })),
+      );
+      support = guarded.plans.map((row) => {
+        const rest: Partial<typeof row> = { ...row };
+        delete rest.intervention_status;
+        delete rest.intervention_outcome;
+        delete rest.evidence_captured_at;
+        return rest as StudentDetail["support"][number];
+      });
+      supportNotice = guarded.notice;
+    }
+    const currentPlanIds = new Set(supportRows.filter((row) => row.evidence_current).map((row) => row.id));
     const followups = grants.includes("support")
       ? (
           await client.query<StudentDetail["followups"][number]>(
-            `SELECT f.id,f.student_id,sp.display_name AS student_name,p.display_name AS mentor_name,f.due_on::text,f.note,f.shared,f.status,f.outcome,f.revision,(f.due_on<CURRENT_DATE AND f.status<>'completed') AS overdue FROM support_followups f JOIN people p ON p.id=f.mentor_person_id JOIN student_profiles s ON s.id=f.student_id JOIN people sp ON sp.id=s.person_id WHERE f.generation_id=$1 AND f.student_id=$2 AND (f.shared OR $3) ORDER BY f.due_on DESC`,
+            `SELECT f.id,f.student_id,sp.display_name AS student_name,p.display_name AS mentor_name,f.due_on::text,f.note,f.shared,f.status,f.outcome,f.revision,f.support_plan_id,(f.due_on<CURRENT_DATE AND f.status<>'completed') AS overdue FROM support_followups f JOIN people p ON p.id=f.mentor_person_id JOIN student_profiles s ON s.id=f.student_id JOIN people sp ON sp.id=s.person_id WHERE f.generation_id=$1 AND f.student_id=$2 AND (f.shared OR $3) ORDER BY f.due_on DESC`,
             [gen, id, privateView],
           )
         ).rows
+          .map((row) => ({ ...row, plan_stale: !!row.support_plan_id && !currentPlanIds.has(row.support_plan_id) }))
+          // A check-in that belongs to a plan on earlier figures is not shown to the family.
+          .filter((row) => privateView || !row.plan_stale)
       : [];
     const sources: StudentDetail["sources"] = [];
     if (privateView) {
@@ -388,6 +423,7 @@ export async function experienceStudent(
       mentor,
       invoices,
       support,
+      support_notice: supportNotice,
       followups,
       sources,
       history,

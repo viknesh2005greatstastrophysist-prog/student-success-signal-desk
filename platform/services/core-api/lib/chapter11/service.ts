@@ -65,6 +65,11 @@ import {
 import { createSourceRegistry, anonymousPriorReference } from "./connectors";
 import { evaluationMetrics } from "./metrics";
 import { compositeRiskView } from "./dashboard";
+import {
+  currentEvidenceSql,
+  jobEvidenceCapturedSql,
+  loadGenerationClock,
+} from "../data-refresh/generation";
 import { persistThenAudit, startLeaseHeartbeat } from "./lease";
 
 type PlanBody = ReturnType<typeof planSkill>;
@@ -1659,6 +1664,12 @@ export async function overview(actor: ActorContext) {
     const generation = await getCurrentGeneration(client);
     const department = actor.role === "governance" ? null : actor.departmentId;
     const mentor = actor.role === "faculty" ? actor.personId : null;
+    // Risk analyses, review cycles and AI-activity figures are read from the current
+    // data generation only. Reviews whose evidence was captured before the current
+    // generation was applied are history: kept, reachable by export, never counted
+    // next to today's figures (data-refresh/generation.ts).
+    const clock = await loadGenerationClock(client);
+    const currentJob = currentEvidenceSql(jobEvidenceCapturedSql("j.checkpoint"), "$4");
     const students = await client.query(
       `SELECT s.id,s.department_id,s.register_number,p.display_name,m.faculty_person_id AS mentor_id,mp.display_name AS mentor_name FROM student_profiles s JOIN people p ON p.id=s.person_id LEFT JOIN mentor_assignments m ON m.student_id=s.id LEFT JOIN people mp ON mp.id=m.faculty_person_id
       WHERE s.generation_id=$1 AND ($2::uuid IS NULL OR s.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(
@@ -1670,12 +1681,12 @@ export async function overview(actor: ActorContext) {
       [generation, department, mentor],
     );
     const plans = await client.query(
-      "SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC",
-      [generation, department, mentor],
+      "SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) AND (p.status<>'locked' OR EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.plan_id=p.id AND " + currentJob + ")) ORDER BY created_at DESC",
+      [generation, department, mentor, clock.since],
     );
     const jobs = await client.query(
-      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' WHEN j.status='failed' AND j.error_code='AI_UNAVAILABLE' THEN 'ai_unavailable' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.stage,j.error_code,j.support_case_id,j.updated_at,p.paused AS plan_paused,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC",
-      [generation, department, mentor],
+      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' WHEN j.status='failed' AND j.error_code='AI_UNAVAILABLE' THEN 'ai_unavailable' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.stage,j.error_code,j.support_case_id,j.updated_at,p.paused AS plan_paused,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) AND " + currentJob + " ORDER BY j.created_at DESC",
+      [generation, department, mentor, clock.since],
     );
     const trends = await client.query(
       `SELECT p.id AS cycle_id,
@@ -1700,9 +1711,19 @@ export async function overview(actor: ActorContext) {
       LEFT JOIN ch11_interventions i ON i.support_plan_id=sp.id
       WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2)
       AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=j.generation_id AND m.student_id=j.student_id AND m.faculty_person_id=$3))
+      AND ${currentJob}
       GROUP BY p.id ORDER BY p.created_at`,
-      [generation, department, mentor],
+      [generation, department, mentor, clock.since],
     );
+    const earlier = (
+      await client.query<{ jobs: number; cycles: number }>(
+        `SELECT count(*)::int AS jobs,count(DISTINCT j.plan_id)::int AS cycles FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id
+        WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2)
+        AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=j.generation_id AND m.student_id=j.student_id AND m.faculty_person_id=$3))
+        AND NOT ${currentJob}`,
+        [generation, department, mentor, clock.since],
+      )
+    ).rows[0]!;
     const metricFacts = await client.query(
       `SELECT j.id,j.plan_id,d.decision,d.decided_at,approved.recommendation AS approved_packet,approved.artifact_version,first.recommendation AS first_packet,first.created_at AS first_created FROM ch11_jobs j LEFT JOIN faculty_decisions d ON d.support_case_id=j.support_case_id LEFT JOIN agent_artifacts approved ON approved.id=d.agent_artifact_id LEFT JOIN LATERAL (SELECT a.recommendation,a.created_at FROM agent_artifacts a JOIN agent_runs r ON r.id=a.agent_run_id WHERE r.support_case_id=j.support_case_id ORDER BY a.created_at,a.artifact_version LIMIT 1) first ON true WHERE j.generation_id=$1 AND j.id=ANY($2::uuid[])`,
       [generation, jobs.rows.map((row) => row.id)],
@@ -1729,6 +1750,12 @@ export async function overview(actor: ActorContext) {
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
+      dataGeneration: {
+        current: clock.current,
+        since: clock.since,
+        earlierReviews: earlier.jobs,
+        earlierCycles: earlier.cycles,
+      },
     };
   });
 }

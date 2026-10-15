@@ -1,4 +1,5 @@
 import type { AuthenticatedActor } from "./authentication";
+import { caseEvidenceCapturedSql, currentEvidenceSql, loadGenerationClock } from "./data-refresh/generation";
 import { withCoreTransaction } from "./db";
 import { NotFoundError } from "./http";
 
@@ -227,8 +228,9 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChil
                 support_case.status, plan.plan, plan.created_at
          FROM support_plans plan JOIN support_cases support_case ON support_case.id = plan.support_case_id
          WHERE plan.generation_id = $1 AND plan.student_id = $2 AND plan.visible_to_student
+         AND ${currentEvidenceSql(caseEvidenceCapturedSql("support_case.id"), "$3")}
          ORDER BY plan.created_at DESC`,
-        [generationId, actor.studentId],
+        [generationId, actor.studentId, (await loadGenerationClock(client)).since],
       );
       roleData.supportPlans = supportPlans.rows;
     }
@@ -304,8 +306,9 @@ export async function loadPortalSnapshot(actor: AuthenticatedActor, selectedChil
                     support_case.status, plan.plan, plan.created_at
              FROM support_plans plan JOIN support_cases support_case ON support_case.id = plan.support_case_id
              WHERE plan.generation_id = $1 AND plan.student_id = $2 AND plan.visible_to_student
+             AND ${currentEvidenceSql(caseEvidenceCapturedSql("support_case.id"), "$3")}
              ORDER BY plan.created_at DESC`,
-            [generationId, child.id],
+            [generationId, child.id, (await loadGenerationClock(client)).since],
           );
           roleData.childSupportPlans = supportPlans.rows;
         }

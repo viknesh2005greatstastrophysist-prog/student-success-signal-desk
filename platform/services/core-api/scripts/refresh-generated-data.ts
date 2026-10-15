@@ -14,6 +14,9 @@
  *   candidates list students per mentor with their graded risk signals (to choose drafts)
  *   att-plan   realistic-v3: print the attendance plan (anchors, courses, sessions), write nothing
  *   att-apply  realistic-v3: rebuild the generated attendance from the college attendance report (additive)
+ *   consistency-audit   read only: count every stored artifact by the data generation it was computed on
+ *   consistency-plans   withdraw approved plans on earlier figures (audited outcome command); --dry-run counts only
+ *   consistency-risk    recompute every student's risk on the current data (deterministic, no model call); --dry-run counts only
  *   att-supersede  realistic-v3: mark open drafts computed on the old attendance as superseded
  *   att-stats  measure the live attendance: anchor coverage, per-course mean and SD, shape, distance from the anchor
  *   drafts     run the real agent pipeline (Groq first) for chosen students, one plan per
@@ -80,6 +83,7 @@ const { demoPolicy, riskAnalysis, policySchema } = await import("../lib/chapter1
 type Policy = import("../lib/chapter11/engine").Policy;
 const { readSource } = await import("../lib/chapter11/service");
 const { getCurrentGeneration } = await import("../lib/command-ledger");
+const { auditStaleArtifacts, withdrawStalePlans, recomputeRiskAnalyses } = await import("../lib/data-refresh/consistency");
 
 const hour = 3600000;
 const asOf = flag("--as-of") ?? new Date(Math.floor(Date.now() / hour) * hour).toISOString();
@@ -392,6 +396,13 @@ try {
     await emit(result);
   } else if (command === "att-stats") {
     await emit(await attStats());
+  } else if (command === "consistency-audit") {
+    await emit(await withCoreSnapshot((c) => auditStaleArtifacts(c)));
+  } else if (command === "consistency-plans") {
+    await emit(await withdrawStalePlans({ excludeStudentIds: await excluded(), dryRun: args.includes("--dry-run") }));
+  } else if (command === "consistency-risk") {
+    const label = await withCoreSnapshot(async (c) => (await c.query<{ label: string }>("SELECT label FROM data_generations ORDER BY created_at DESC LIMIT 1")).rows[0]!.label);
+    await emit(await recomputeRiskAnalyses({ label, excludeStudentIds: await excluded(), dryRun: args.includes("--dry-run") }));
   } else if (command === "stats") {
     await emit(await stats());
   } else if (command === "candidates") {

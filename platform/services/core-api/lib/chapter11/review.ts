@@ -11,6 +11,7 @@ import {
 import { ConflictError, NotFoundError } from "../http";
 import { requireRole } from "../security";
 import { awaitingCases } from "./awaiting";
+import { caseEvidenceCapturedSql, loadGenerationClock, stampEvidence } from "../data-refresh/generation";
 import { hashJson } from "../support-commands";
 import {
   anyPacketSchema,
@@ -275,9 +276,12 @@ export async function reviewQueue(actor: ActorContext) {
   requireRole(actor, "faculty", "hod");
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
+    // Plans and drafts carry the data generation their evidence was captured on, so
+    // staff can see which ones are based on earlier figures.
+    const clock = await loadGenerationClock(client);
     const plans = await client.query(
       `SELECT p.id,p.student_id,p.visible_to_student,p.plan,s.register_number,person.display_name,d.decision,d.rationale,d.decided_at,dp.display_name AS decided_by,
-      COALESCE(i.status,'planned') AS status,COALESCE(i.revision,0) AS revision,COALESCE(i.outcome,'') AS outcome
+      COALESCE(i.status,'planned') AS status,COALESCE(i.revision,0) AS revision,COALESCE(i.outcome,'') AS outcome,${caseEvidenceCapturedSql("p.support_case_id")} AS evidence_captured_at
       FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN people dp ON dp.id=d.faculty_person_id JOIN student_profiles s ON s.id=p.student_id
       JOIN people person ON person.id=s.person_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id
       WHERE p.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$2))) ORDER BY p.created_at DESC`,
@@ -288,7 +292,7 @@ export async function reviewQueue(actor: ActorContext) {
     const groups = await awaitingCases(client, generation, actor);
     const DRAFT_SELECT = `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.artifact_version,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
       jsonb_build_object('academic',es.evidence->'academic'->'values','lms',es.evidence->'lms'->'values','internship',es.evidence->'internship'->'values','placement',es.evidence->'placement'->'values') AS evidence_values,
-      es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy
+      es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy,es.captured_at AS evidence_captured_at
       FROM support_cases c JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
       JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id`;
     const currentIds = groups.map((group) => group.current.artifact_id);
@@ -353,15 +357,18 @@ export async function reviewQueue(actor: ActorContext) {
                 drafted_at: row.drafted_at,
                 earlier_count: row.earlier_count,
                 earlier_drafts: row.earlier_drafts,
+                evidence_current: row.evidence_current,
+                evidence_generation: row.evidence_generation,
               }) as unknown as T,
           );
     return {
       versions: versions.rows,
-      plans: plans.rows,
-      drafts: shape(active),
+      plans: plans.rows.map((row) => stampEvidence(clock, row)),
+      drafts: shape(active.map((row) => stampEvidence(clock, row))),
       awaitingCount: groups.length,
-      legacyDrafts: shape(legacy),
+      legacyDrafts: shape(legacy.map((row) => stampEvidence(clock, row))),
       interventionLog: log.rows,
+      dataGeneration: { current: clock.current, since: clock.since },
     };
   });
 }

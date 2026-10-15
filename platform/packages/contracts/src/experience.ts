@@ -116,6 +116,9 @@ export type Followup = {
   outcome: string;
   revision: number;
   overdue: boolean;
+  support_plan_id?: string | null;
+  /** Staff only: the plan this check-in belongs to was computed on earlier figures. */
+  plan_stale?: boolean;
 };
 export type SupportPlan = {
   id: string;
@@ -125,6 +128,13 @@ export type SupportPlan = {
   visible: boolean;
   created_at: string;
   plan: Record<string, unknown>;
+  /** Data generation the plan's evidence was captured on, and whether it is the current one. */
+  evidence_generation?: string;
+  evidence_current?: boolean;
+  evidence_captured_at?: string | null;
+  /** Status and outcome of the plan's intervention (staff only). */
+  intervention_status?: string | null;
+  intervention_outcome?: string | null;
 };
 export type Invoice = {
   payment_simulation_allowed?: boolean;
@@ -164,6 +174,8 @@ export type StudentDetail = {
   mentor: { name: string; email: string } | null;
   invoices: Invoice[];
   support: SupportPlan[];
+  /** Set for a student or parent when a plan is held back because its evidence predates the current data. */
+  support_notice?: string | null;
   followups: Followup[];
   sources: {
     source: string;

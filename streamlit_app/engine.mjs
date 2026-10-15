@@ -29628,6 +29628,61 @@ async function awaitingCount(client, generation, actor) {
   return (await awaitingCases(client, generation, actor)).length;
 }
 
+// services/core-api/lib/data-refresh/generation.ts
+var BASELINE_GENERATION = "seed-v1";
+var STUDENT_REREVIEW_NOTICE = "Your mentor will review your plan again with the latest figures.";
+var WITHDRAWN_BY_REFRESH_PREFIX = "Superseded by data refresh";
+var asDate = (value) => value instanceof Date ? value : new Date(value);
+function buildClock(rows) {
+  const marks = rows.map((row) => ({ label: row.label, createdAt: asDate(row.created_at) })).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  const latest = marks[marks.length - 1];
+  return {
+    marks,
+    current: latest?.label ?? BASELINE_GENERATION,
+    since: latest?.createdAt ?? null
+  };
+}
+function generationAt(clock, at) {
+  if (at == null) return clock.current;
+  const time4 = asDate(at).getTime();
+  let label = BASELINE_GENERATION;
+  for (const mark of clock.marks) if (mark.createdAt.getTime() <= time4) label = mark.label;
+  return label;
+}
+function isCurrentEvidence(clock, capturedAt) {
+  if (capturedAt == null || clock.since == null) return true;
+  return asDate(capturedAt).getTime() >= clock.since.getTime();
+}
+function stampEvidence(clock, row) {
+  const captured = row.evidence_captured_at ?? null;
+  return {
+    ...row,
+    evidence_captured_at: captured,
+    evidence_generation: generationAt(clock, captured),
+    evidence_current: isCurrentEvidence(clock, captured)
+  };
+}
+var currentEvidenceSql = (captured, since) => `(${since}::timestamptz IS NULL OR ${captured} IS NULL OR ${captured} >= ${since}::timestamptz)`;
+var caseEvidenceCapturedSql = (caseId) => `(SELECT max(es.captured_at) FROM evidence_snapshots es WHERE es.support_case_id=${caseId})`;
+var jobEvidenceCapturedSql = (checkpoint) => `NULLIF(${checkpoint}->>'capturedAt','')::timestamptz`;
+async function loadGenerationClock(client) {
+  const exists = await client.query(
+    "SELECT to_regclass('data_generations') IS NOT NULL AS present"
+  );
+  if (!exists.rows[0]?.present) return buildClock([]);
+  const rows = await client.query(
+    "SELECT label,created_at FROM data_generations ORDER BY created_at"
+  );
+  return buildClock(rows.rows);
+}
+function guardPlansForFamily(rows) {
+  const plans = rows.filter((row) => row.visible && row.evidence_current);
+  const held = rows.some(
+    (row) => row.visible && !row.evidence_current || !row.visible && (row.intervention_outcome ?? "").startsWith(WITHDRAWN_BY_REFRESH_PREFIX)
+  );
+  return { plans, notice: held && plans.length === 0 ? STUDENT_REREVIEW_NOTICE : null };
+}
+
 // services/core-api/lib/experience-queries.ts
 async function requireExperienceStudent(client, generation, actor, id) {
   external_exports.string().uuid().parse(id);
@@ -29829,14 +29884,32 @@ async function experienceStudent(actor, id) {
       `SELECT p.display_name AS name,p.email FROM mentor_assignments m JOIN people p ON p.id=m.faculty_person_id WHERE m.generation_id=$1 AND m.student_id=$2`,
       [gen, id]
     )).rows[0] ?? null : null;
-    const support = grants.includes("support") ? (await client.query(
-      `SELECT p.id,c.id AS case_id,c.reason,c.risk_band,p.visible_to_student AS visible,p.created_at,p.plan FROM support_plans p JOIN support_cases c ON c.id=p.support_case_id WHERE p.generation_id=$1 AND p.student_id=$2 AND (p.visible_to_student OR $3) ORDER BY p.created_at DESC`,
-      [gen, id, privateView]
-    )).rows : [];
+    const clock = await loadGenerationClock(client);
+    const supportRows = grants.includes("support") ? (await client.query(
+      `SELECT p.id,c.id AS case_id,c.reason,c.risk_band,p.visible_to_student AS visible,p.created_at,p.plan,${caseEvidenceCapturedSql("c.id")} AS evidence_captured_at,i.status AS intervention_status,i.outcome AS intervention_outcome FROM support_plans p JOIN support_cases c ON c.id=p.support_case_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id AND i.generation_id=p.generation_id WHERE p.generation_id=$1 AND p.student_id=$2 ORDER BY p.created_at DESC`,
+      [gen, id]
+    )).rows.map((row) => stampEvidence(clock, row)) : [];
+    let support = [];
+    let supportNotice = null;
+    if (privateView) support = supportRows;
+    else {
+      const guarded = guardPlansForFamily(
+        supportRows.map((row) => ({ ...row, intervention_outcome: row.intervention_outcome }))
+      );
+      support = guarded.plans.map((row) => {
+        const rest = { ...row };
+        delete rest.intervention_status;
+        delete rest.intervention_outcome;
+        delete rest.evidence_captured_at;
+        return rest;
+      });
+      supportNotice = guarded.notice;
+    }
+    const currentPlanIds = new Set(supportRows.filter((row) => row.evidence_current).map((row) => row.id));
     const followups = grants.includes("support") ? (await client.query(
-      `SELECT f.id,f.student_id,sp.display_name AS student_name,p.display_name AS mentor_name,f.due_on::text,f.note,f.shared,f.status,f.outcome,f.revision,(f.due_on<CURRENT_DATE AND f.status<>'completed') AS overdue FROM support_followups f JOIN people p ON p.id=f.mentor_person_id JOIN student_profiles s ON s.id=f.student_id JOIN people sp ON sp.id=s.person_id WHERE f.generation_id=$1 AND f.student_id=$2 AND (f.shared OR $3) ORDER BY f.due_on DESC`,
+      `SELECT f.id,f.student_id,sp.display_name AS student_name,p.display_name AS mentor_name,f.due_on::text,f.note,f.shared,f.status,f.outcome,f.revision,f.support_plan_id,(f.due_on<CURRENT_DATE AND f.status<>'completed') AS overdue FROM support_followups f JOIN people p ON p.id=f.mentor_person_id JOIN student_profiles s ON s.id=f.student_id JOIN people sp ON sp.id=s.person_id WHERE f.generation_id=$1 AND f.student_id=$2 AND (f.shared OR $3) ORDER BY f.due_on DESC`,
       [gen, id, privateView]
-    )).rows : [];
+    )).rows.map((row) => ({ ...row, plan_stale: !!row.support_plan_id && !currentPlanIds.has(row.support_plan_id) })).filter((row) => privateView || !row.plan_stale) : [];
     const sources = [];
     if (privateView) {
       const lms = await lmsEvidence(client, gen, id);
@@ -29887,6 +29960,7 @@ async function experienceStudent(actor, id) {
       mentor,
       invoices,
       support,
+      support_notice: supportNotice,
       followups,
       sources,
       history,
@@ -34368,6 +34442,8 @@ async function overview(actor) {
     const generation = await getCurrentGeneration(client);
     const department = actor.role === "governance" ? null : actor.departmentId;
     const mentor = actor.role === "faculty" ? actor.personId : null;
+    const clock = await loadGenerationClock(client);
+    const currentJob = currentEvidenceSql(jobEvidenceCapturedSql("j.checkpoint"), "$4");
     const students = await client.query(
       `SELECT s.id,s.department_id,s.register_number,p.display_name,m.faculty_person_id AS mentor_id,mp.display_name AS mentor_name FROM student_profiles s JOIN people p ON p.id=s.person_id LEFT JOIN mentor_assignments m ON m.student_id=s.id LEFT JOIN people mp ON mp.id=m.faculty_person_id
       WHERE s.generation_id=$1 AND ($2::uuid IS NULL OR s.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(
@@ -34379,12 +34455,12 @@ async function overview(actor) {
       [generation, department, mentor]
     );
     const plans = await client.query(
-      "SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) ORDER BY created_at DESC",
-      [generation, department, mentor]
+      "SELECT * FROM ch11_plans p WHERE generation_id=$1 AND ($2::uuid IS NULL OR department_id=$2) AND ($3::uuid IS NULL OR ((created_by=$3 OR body->>'policyId' IN (SELECT id::text FROM ch11_policies WHERE faculty_person_id=$3)) AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(p.body->'studentIds','[]'::jsonb)) selected(student_id) WHERE NOT EXISTS (SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$1 AND m.student_id::text=selected.student_id AND m.faculty_person_id=$3)))) AND (p.status<>'locked' OR EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.plan_id=p.id AND " + currentJob + ")) ORDER BY created_at DESC",
+      [generation, department, mentor, clock.since]
     );
     const jobs = await client.query(
-      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' WHEN j.status='failed' AND j.error_code='AI_UNAVAILABLE' THEN 'ai_unavailable' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.stage,j.error_code,j.support_case_id,j.updated_at,p.paused AS plan_paused,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) ORDER BY j.created_at DESC",
-      [generation, department, mentor]
+      "SELECT j.id,(SELECT ar.id FROM agent_runs ar WHERE ar.support_case_id=j.support_case_id AND ar.generation_id=j.generation_id ORDER BY ar.completed_at DESC LIMIT 1) AS run_id,j.plan_id,j.student_id,j.created_at,j.attempts,j.faculty_person_id,COALESCE((SELECT e.detail->'output'->'reasons' FROM ch11_events e WHERE e.subject_id=j.id AND e.event_type='execution.stopped' ORDER BY e.created_at DESC LIMIT 1),'[]') AS failure_reasons,CASE WHEN j.escalated_at IS NOT NULL THEN 'needs_human' WHEN j.status='failed' AND j.error_code='AI_UNAVAILABLE' THEN 'ai_unavailable' ELSE COALESCE(c.status,j.status) END AS status,j.failure_diagnosis,j.stage,j.error_code,j.support_case_id,j.updated_at,p.paused AS plan_paused,j.checkpoint->'nodeTrace' AS node_trace,j.checkpoint->'retrieval' AS retrieval,j.checkpoint->'sourceTimings' AS source_timings,j.checkpoint->>'evidenceRevision' AS evidence_revision,j.checkpoint->'risk' AS risk,j.checkpoint->'composed'->'validation' AS validation,j.checkpoint->'composed'->>'mode' AS mode FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN support_cases c ON c.id=j.support_case_id WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2) AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=j.student_id AND m.faculty_person_id=$3)) AND " + currentJob + " ORDER BY j.created_at DESC",
+      [generation, department, mentor, clock.since]
     );
     const trends = await client.query(
       `SELECT p.id AS cycle_id,
@@ -34409,9 +34485,17 @@ async function overview(actor) {
       LEFT JOIN ch11_interventions i ON i.support_plan_id=sp.id
       WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2)
       AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=j.generation_id AND m.student_id=j.student_id AND m.faculty_person_id=$3))
+      AND ${currentJob}
       GROUP BY p.id ORDER BY p.created_at`,
-      [generation, department, mentor]
+      [generation, department, mentor, clock.since]
     );
+    const earlier = (await client.query(
+      `SELECT count(*)::int AS jobs,count(DISTINCT j.plan_id)::int AS cycles FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id
+        WHERE j.generation_id=$1 AND ($2::uuid IS NULL OR p.department_id=$2)
+        AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=j.generation_id AND m.student_id=j.student_id AND m.faculty_person_id=$3))
+        AND NOT ${currentJob}`,
+      [generation, department, mentor, clock.since]
+    )).rows[0];
     const metricFacts = await client.query(
       `SELECT j.id,j.plan_id,d.decision,d.decided_at,approved.recommendation AS approved_packet,approved.artifact_version,first.recommendation AS first_packet,first.created_at AS first_created FROM ch11_jobs j LEFT JOIN faculty_decisions d ON d.support_case_id=j.support_case_id LEFT JOIN agent_artifacts approved ON approved.id=d.agent_artifact_id LEFT JOIN LATERAL (SELECT a.recommendation,a.created_at FROM agent_artifacts a JOIN agent_runs r ON r.id=a.agent_run_id WHERE r.support_case_id=j.support_case_id ORDER BY a.created_at,a.artifact_version LIMIT 1) first ON true WHERE j.generation_id=$1 AND j.id=ANY($2::uuid[])`,
       [generation, jobs.rows.map((row) => row.id)]
@@ -34432,7 +34516,13 @@ async function overview(actor) {
       jobs: assignedMentor ? jobs.rows : jobs.rows.map((row) => ({ ...row, risk: null })),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
-      synthetic: process.env.CORE_IDENTITY_REALM !== "institutional"
+      synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
+      dataGeneration: {
+        current: clock.current,
+        since: clock.since,
+        earlierReviews: earlier.jobs,
+        earlierCycles: earlier.cycles
+      }
     };
   });
 }
@@ -35339,9 +35429,10 @@ async function reviewQueue(actor) {
   requireRole(actor, "faculty", "hod");
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
+    const clock = await loadGenerationClock(client);
     const plans = await client.query(
       `SELECT p.id,p.student_id,p.visible_to_student,p.plan,s.register_number,person.display_name,d.decision,d.rationale,d.decided_at,dp.display_name AS decided_by,
-      COALESCE(i.status,'planned') AS status,COALESCE(i.revision,0) AS revision,COALESCE(i.outcome,'') AS outcome
+      COALESCE(i.status,'planned') AS status,COALESCE(i.revision,0) AS revision,COALESCE(i.outcome,'') AS outcome,${caseEvidenceCapturedSql("p.support_case_id")} AS evidence_captured_at
       FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN people dp ON dp.id=d.faculty_person_id JOIN student_profiles s ON s.id=p.student_id
       JOIN people person ON person.id=s.person_id LEFT JOIN ch11_interventions i ON i.support_plan_id=p.id
       WHERE p.generation_id=$1 AND (($3='hod' AND s.department_id=$4) OR ($3='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$2))) ORDER BY p.created_at DESC`,
@@ -35350,7 +35441,7 @@ async function reviewQueue(actor) {
     const groups = await awaitingCases(client, generation, actor);
     const DRAFT_SELECT = `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.artifact_version,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
       jsonb_build_object('academic',es.evidence->'academic'->'values','lms',es.evidence->'lms'->'values','internship',es.evidence->'internship'->'values','placement',es.evidence->'placement'->'values') AS evidence_values,
-      es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy
+      es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy,es.captured_at AS evidence_captured_at
       FROM support_cases c JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
       JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id`;
     const currentIds = groups.map((group) => group.current.artifact_id);
@@ -35401,16 +35492,19 @@ async function reviewQueue(actor) {
         model_id: row.model_id,
         drafted_at: row.drafted_at,
         earlier_count: row.earlier_count,
-        earlier_drafts: row.earlier_drafts
+        earlier_drafts: row.earlier_drafts,
+        evidence_current: row.evidence_current,
+        evidence_generation: row.evidence_generation
       })
     );
     return {
       versions: versions.rows,
-      plans: plans.rows,
-      drafts: shape(active),
+      plans: plans.rows.map((row) => stampEvidence(clock, row)),
+      drafts: shape(active.map((row) => stampEvidence(clock, row))),
       awaitingCount: groups.length,
-      legacyDrafts: shape(legacy),
-      interventionLog: log.rows
+      legacyDrafts: shape(legacy.map((row) => stampEvidence(clock, row))),
+      interventionLog: log.rows,
+      dataGeneration: { current: clock.current, since: clock.since }
     };
   });
 }
