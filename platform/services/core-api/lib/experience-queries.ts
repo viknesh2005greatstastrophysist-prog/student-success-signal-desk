@@ -312,7 +312,8 @@ export async function experienceStudent(
         ).rows[0] ?? null)
       : null;
     // A plan is shown to a student or parent only when its evidence was captured on the
-    // current data generation (data-refresh/generation.ts). Staff see every plan, flagged.
+    // current data generation, and only the newest such plan (data-refresh/generation.ts).
+    // Staff see every plan, flagged.
     const clock = await loadGenerationClock(client);
     const supportRows = grants.includes("support")
       ? (

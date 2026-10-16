@@ -118,12 +118,24 @@ export function describeEvidence(stamp: Pick<EvidenceStamp, "evidence_current" |
 }
 
 /** What a student or parent is allowed to see of their support plans: only plans whose
- * evidence is current. Anything else is replaced by one calm line. Pure, so the rule
+ * evidence is current, and of those only the newest (review R-07): after a second
+ * approval the family sees one plan, while the mentor and the department head keep
+ * the full history. Anything else is replaced by one calm line. Pure, so the rule
  * can be tested without a database. */
 export function guardPlansForFamily<
-  T extends { visible: boolean; evidence_current: boolean; intervention_outcome?: string | null },
+  T extends {
+    visible: boolean;
+    evidence_current: boolean;
+    intervention_outcome?: string | null;
+    created_at?: Date | string | null;
+  },
 >(rows: T[]): { plans: T[]; notice: string | null } {
-  const plans = rows.filter((row) => row.visible && row.evidence_current);
+  const at = (row: T) => (row.created_at == null ? -Infinity : asDate(row.created_at).getTime());
+  // Rows without a time keep their order (the query lists the newest first).
+  const newest = rows
+    .filter((row) => row.visible && row.evidence_current)
+    .reduce<T | undefined>((best, row) => (!best || at(row) > at(best) ? row : best), undefined);
+  const plans = newest ? [newest] : [];
   const held = rows.some(
     (row) =>
       (row.visible && !row.evidence_current) ||

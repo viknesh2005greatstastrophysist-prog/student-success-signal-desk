@@ -29723,7 +29723,9 @@ async function loadGenerationClock(client) {
   return buildClock(rows.rows);
 }
 function guardPlansForFamily(rows) {
-  const plans = rows.filter((row) => row.visible && row.evidence_current);
+  const at = (row) => row.created_at == null ? -Infinity : asDate(row.created_at).getTime();
+  const newest = rows.filter((row) => row.visible && row.evidence_current).reduce((best, row) => !best || at(row) > at(best) ? row : best, void 0);
+  const plans = newest ? [newest] : [];
   const held = rows.some(
     (row) => row.visible && !row.evidence_current || !row.visible && (row.intervention_outcome ?? "").startsWith(WITHDRAWN_BY_REFRESH_PREFIX)
   );

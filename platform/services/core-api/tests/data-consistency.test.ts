@@ -69,6 +69,23 @@ test("a student or parent never receives a plan on earlier figures; they get one
   assert.deepEqual(guardPlansForFamily([plan("draft", "2026-10-14T23:08:33Z", false)]).plans, []);
 });
 
+test("after a second approval the student and parent see only the newest plan", () => {
+  const plan = (id: string, created: string, visible = true) => ({
+    id, visible, created_at: created, intervention_outcome: null,
+    ...stampEvidence(clock, { evidence_captured_at: "2026-10-14T23:08:33Z" }),
+  });
+  const first = plan("first", "2026-10-15T09:00:00Z");
+  const second = plan("second", "2026-10-16T09:00:00Z");
+  for (const rows of [[second, first], [first, second]])
+    assert.deepEqual(guardPlansForFamily(rows), { plans: [second], notice: null });
+  // A newer plan the mentor withdrew does not hide the one still shared.
+  assert.deepEqual(guardPlansForFamily([plan("withdrawn", "2026-10-17T09:00:00Z", false), first]).plans, [first]);
+  // A newer plan on current figures wins over an older one on earlier figures, and the
+  // older one is never shown on its own.
+  const earlier = { ...plan("earlier", "2026-10-13T09:00:00Z"), ...stampEvidence(clock, { evidence_captured_at: "2026-10-12T10:54:48Z" }) };
+  assert.deepEqual(guardPlansForFamily([earlier, first]).plans, [first]);
+});
+
 test("metric and risk queries share one current-evidence predicate", () => {
   assert.equal(
     currentEvidenceSql("x", "$4"),
