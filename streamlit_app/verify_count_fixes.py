@@ -12,7 +12,9 @@ check are listed apart as "Reviews that stopped early".
 R-10: the department head's Mentors table counts declines as decisions and its last
 decision time includes them; the page caption promises only what the table shows.
 R-11: the student and parent "Attendance this term" card shows the Core's pooled
-figure (the value the risk check and the plan cite), not a mean of course percentages."""
+figure (the value the risk check and the plan cite), not a mean of course percentages.
+Batch B2, P2-3: the mentor's Today lists the reviews that stopped and wait on the mentor
+(each student's latest review only) and opens that plan under Reviews > Start a review."""
 
 import json
 import sys
@@ -166,5 +168,51 @@ at = run(
     "import views.parent\nviews.parent.overview_page()"
 )
 assert {m.label: m.value for m in at.metric}["Attendance this term"] == "66.7%", [(m.label, m.value) for m in at.metric]
+
+# P2-3: Today's "Needs your decision" lists each student's latest stopped review
+TODAY = {"students": STUDENTS, "riskView": [], "jobs": [
+    job("s1", "needs_human", "2026-10-16T10:00:00Z", plan_id="p1", error_code="REPAIR_BUDGET_EXHAUSTED"),
+    job("s2", "ai_unavailable", "2026-10-16T09:00:00Z", plan_id="p2", error_code="AI_UNAVAILABLE"),
+    job("s3", "ai_unavailable", "2026-10-14T09:00:00Z", plan_id="p3", error_code="AI_UNAVAILABLE"),
+    job("s3", "awaiting_faculty", "2026-10-16T08:00:00Z", plan_id="p4"),
+    job("s4", "not_flagged", "2026-10-16T08:00:00Z", plan_id="p4"),
+]}
+TODAY_SCRIPT = (
+    f"REVIEW = {data(TODAY)}\n"
+    "st.session_state['actor'] = {'role': 'faculty', 'displayName': 'Mentor One'}\n"
+    "ns['load_many'] = lambda requests: [{'followups': []} if name == 'overview' else "
+    "({'drafts': []} if name == 'review_queue' else REVIEW) for name, _ in requests]\n"
+    "st.switch_page = lambda page: st.session_state.__setitem__('switched', page.url_path)\n"
+    "import views.mentor\nviews.mentor.today_page()"
+)
+at = run(TODAY_SCRIPT)
+assert "Needs your decision (2)" in [h.value for h in at.subheader], [h.value for h in at.subheader]
+shown = "\n".join(str(h.proto.body) for h in at.get("html"))
+assert "failed its checks after every repair" in shown and "No AI model answered" in shown, shown
+opens = [b for b in at.button if b.label.startswith("Open the review for")]
+assert [b.label for b in opens] == ["Open the review for Fictional Student 1", "Open the review for Fictional Student 2"], [b.label for b in opens]
+opens[0].click()
+at.run()
+assert not at.exception, [e.message for e in at.exception]
+assert at.session_state["open_review_plan"] == "p1" and at.session_state["switched"] == "reviews"
+# nothing stopped: a calm empty state
+at = run(TODAY_SCRIPT.replace("REVIEW = ", "REVIEW = {'students': [], 'jobs': []} or "))
+assert "Needs your decision" in [h.value for h in at.subheader]
+assert "Nothing needs a decision" in "\n".join(str(h.proto.body) for h in at.get("html"))
+# Reviews opens Start a review with that plan chosen
+PLANS = [
+    {"id": pid, "revision": 1, "status": "locked", "paused": False,
+     "body": {"request": f"Review plan {pid}", "studentIds": ["s1"], "questions": []}}
+    for pid in ("p1", "p2")
+]
+at = run(
+    f"REVIEW = {data({'students': STUDENTS, 'policies': [], 'plans': PLANS, 'jobs': []})}\n"
+    "st.session_state['open_review_plan'] = 'p2'\n"
+    "ns['load_many'] = lambda requests: [{'drafts': []} if name == 'review_queue' else REVIEW for name, _ in requests]\n"
+    "import views.mentor\nviews.mentor.reviews_body({'role': 'faculty'})"
+)
+from apptest_util import picker  # noqa: E402
+
+assert picker(at, "Plan").value == "p2", picker(at, "Plan").value
 
 print("verify_count_fixes: ok")

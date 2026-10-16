@@ -25,6 +25,7 @@ from common import (
     select_id,
     today_local,
 )
+from views.operations import latest_per_student
 from views.profile import pick_student, render_profile
 from views.reviews import (
     render_composite_risk,
@@ -435,6 +436,72 @@ def _open_review(draft: dict[str, Any]) -> None:
         st.switch_page(target)
 
 
+def _open_plan(plan_id: Any) -> None:
+    """Go to Reviews > Start a review with this plan already chosen."""
+    from views.pages import pages_for
+
+    st.session_state["open_review_plan"] = str(plan_id)
+    target = next((p for p in pages_for("faculty") if p.url_path == "reviews"), None)
+    if target is not None:
+        st.switch_page(target)
+
+
+def _needs_decision(review: dict[str, Any]) -> list[dict[str, Any]]:
+    """This mentor's reviews that stopped before a draft and wait on the mentor: handed
+    over when the checks or the attempts ran out, or no AI model answered. Each
+    student's latest review only, so a newer review replaces an older stop."""
+    return [
+        job
+        for job in latest_per_student(review.get("jobs") or [])
+        if job.get("status") in ("needs_human", "ai_unavailable")
+    ]
+
+
+def _stop_reason(job: dict[str, Any]) -> str:
+    """What stopped a review, in plain words."""
+    if job.get("status") == "ai_unavailable":
+        return "No AI model answered. Retry the review when one is available."
+    code = str(job.get("error_code") or "")
+    if code == "REPAIR_BUDGET_EXHAUSTED":
+        return "The draft still failed its checks after every repair, so nothing was sent on."
+    if code == "LEASE_EXPIRED":
+        return "The review stopped part-way three times."
+    if code:
+        return f"The review stopped after three tries ({labels.issue_label(code).lower()})."
+    return "The review stopped after three tries."
+
+
+def render_needs_decision(review: dict[str, Any]) -> None:
+    """Stopped reviews, each opening its plan under Reviews > Start a review."""
+    stopped = _needs_decision(review)
+    ui.section(
+        f"Needs your decision ({len(stopped)})" if stopped else "Needs your decision",
+        "Reviews that stopped before a draft. Open one to see why and retry or revise it.",
+    )
+    if not stopped:
+        ui.empty_state(
+            "Nothing needs a decision",
+            "A review that stops before a draft, for example when no AI model answers, appears here.",
+        )
+        return
+    names = {
+        str(s.get("id")): labels.pretty_name(s.get("display_name") or "Student")
+        for s in review.get("students") or []
+    }
+    rows = [
+        {
+            "title": names.get(str(job.get("student_id")), "Student"),
+            "sub": _stop_reason(job),
+            "end": labels.nice_time(job.get("updated_at") or job.get("created_at")),
+            "action": f"Open the review for {names.get(str(job.get('student_id')), 'this student')}",
+        }
+        for job in stopped
+    ]
+    tapped = ui.row_list("needs_decision", rows)
+    if tapped is not None:
+        _open_plan(stopped[tapped].get("plan_id"))
+
+
 def _draft_reason(draft: dict[str, Any], risk: dict[str, Any]) -> str:
     """What this draft is about, in plain words: the signals that flagged the student,
     else the plan summary."""
@@ -504,6 +571,7 @@ def today_page() -> None:
         ui.empty_state(
             "Nothing waiting", "No support drafts need your decision right now."
         )
+    render_needs_decision(review)
     today_followups(overview)
 
 
@@ -610,6 +678,14 @@ def reviews_body(actor: dict[str, Any]) -> None:
         )
         if match:
             st.session_state["support_draft"] = match
+    # "Needs your decision" on Today lands on Start a review with that plan chosen.
+    open_plan = st.session_state.pop("open_review_plan", None)
+    if open_plan:
+        st.session_state["reviews_section"] = "Start a review"
+        st.session_state["review_selected_id"] = open_plan
+        st.session_state["review_plan_selector_revision"] = (
+            st.session_state.get("review_plan_selector_revision", 0) + 1
+        )
     # "Review again with the latest figures" lands on Start a review with the student chosen.
     again = st.session_state.pop("rereview_student", None)
     if again:
