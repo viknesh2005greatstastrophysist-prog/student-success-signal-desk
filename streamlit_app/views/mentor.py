@@ -16,6 +16,7 @@ from common import (
     display_name,
     load,
     load_many,
+    paged,
     percent,
     person_id,
     pick,
@@ -438,7 +439,7 @@ def _draft_reason(draft: dict[str, Any], risk: dict[str, Any]) -> str:
     """What this draft is about, in plain words: the signals that flagged the student,
     else the plan summary."""
     names = [
-        labels.signal_label(sig.get("code")).lower()
+        labels.signal_label(sig.get("code")).lower().replace("lms", "LMS")
         for sig in (risk.get("signals") or [])[:3]
         if isinstance(sig, dict)
     ]
@@ -480,9 +481,13 @@ def today_page() -> None:
             action="Review",
         ):
             _open_review(first)
-        rest = waiting[1:7]
-        if rest:
-            ui.section("Also waiting")
+        rest_all = waiting[1:]
+        if rest_all:
+            ui.section(
+                f"Also waiting ({len(rest_all)})",
+                f"{len(waiting)} drafts are waiting for you in all, highest risk first.",
+            )
+            rest = paged(rest_all, "today_waiting_page", noun="more drafts waiting")
             rows = [
                 {
                     "title": labels.pretty_name(d.get("display_name")),
@@ -495,8 +500,6 @@ def today_page() -> None:
             tapped = ui.row_list("waiting", rows)
             if tapped is not None:
                 _open_review(rest[tapped])
-            if len(waiting) > 7:
-                st.caption(f"{len(waiting) - 7} more are in Reviews.")
     else:
         ui.empty_state(
             "Nothing waiting", "No support drafts need your decision right now."

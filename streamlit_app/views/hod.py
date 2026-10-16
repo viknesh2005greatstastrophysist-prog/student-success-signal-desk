@@ -10,7 +10,7 @@ import streamlit as st
 
 import labels
 import ui
-from common import dataframe, load, load_many, value
+from common import dataframe, load, load_many, paged, value
 from views.metrics import render_review_trends
 from views.profile import pick_student, render_profile
 from views.reviews import render_policies
@@ -71,6 +71,65 @@ def mentor_workload(
     return rows
 
 
+FLAG_OUTCOMES = {"awaiting_faculty", "awaiting_review", "human_review", "approved", "published",
+                 "rejected", "declined", "needs_human", "ai_unavailable", "failed", "blocked"}
+
+
+def render_flagged_students(review: dict[str, Any], waiting_total: int = 0) -> None:
+    """Every student whose latest review flagged them, a page at a time. No score,
+    band or draft content: those stay with the student's own mentor."""
+    from views.operations import latest_per_student
+
+    jobs = [j for j in review.get("jobs") or [] if j.get("status") != "queued"]
+    flagged = [
+        j
+        for j in latest_per_student(jobs)
+        if j.get("run_id") or str(j.get("status") or "") in FLAG_OUTCOMES - {"not_flagged"}
+    ]
+    people = {str(s.get("id")): s for s in review.get("students") or []}
+    order = {"needs_human": 0, "ai_unavailable": 0, "failed": 0, "awaiting_faculty": 1}
+    flagged.sort(
+        key=lambda j: (
+            order.get(str(j.get("status")), 2),
+            labels.pretty_name(people.get(str(j.get("student_id")), {}).get("display_name") or ""),
+        )
+    )
+    ui.section(
+        f"Flagged students ({len(flagged)})",
+        "Every student the agents flagged in their latest review, and where their plan stands. "
+        "Scores, reasons and draft content are visible only to the student's mentor.",
+    )
+    if not flagged:
+        ui.empty_state("No flagged students", "The latest reviews flagged nobody.")
+        return
+    in_list = sum(1 for j in flagged if str(j.get("status")) in ("awaiting_faculty", "awaiting_review", "human_review"))
+    if waiting_total > in_list:
+        extra = waiting_total - in_list
+        st.caption(
+            f"The Drafts waiting card also counts {extra} older draft{'s' if extra != 1 else ''} from a review on "
+            "earlier figures. It is kept on record unchanged and is not part of anyone's latest review."
+        )
+    page = paged(flagged, "hod_flagged_page", noun="flagged students")
+    dataframe(
+        [
+            {
+                "Student": labels.pretty_name(
+                    people.get(str(j.get("student_id")), {}).get("display_name") or "Student"
+                ),
+                "Register number": people.get(str(j.get("student_id")), {}).get("register_number")
+                or "Not listed",
+                "Mentor": labels.pretty_name(
+                    people.get(str(j.get("student_id")), {}).get("mentor_name") or "Not assigned"
+                ),
+                "Where it stands": labels.run_outcome(j.get("status"), j.get("error_code")),
+                "Drafted by": labels.drafted_by(j.get("mode"), j.get("model_id"), j.get("status")),
+                "Reviewed": labels.nice_time(j.get("updated_at") or j.get("created_at")),
+            }
+            for j in page
+        ]
+    )
+
+
 def overview_page() -> None:
     overview, review = load_many([("overview", None), ("review_overview", None)])
     ui.page_header(
@@ -100,6 +159,7 @@ def overview_page() -> None:
             },
         ]
     )
+    render_flagged_students(review, int(value(counts, "pending_reviews", default=0) or 0))
     render_review_trends(review)
     ui.section("Mentor workload", "Mentees per mentor. Details are under Mentors.")
     dataframe(

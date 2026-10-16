@@ -622,6 +622,26 @@ def dataframe(
     return tuple(cells[0]) if cells else None
 
 
+def paged(items: list[Any], key: str, *, per_page: int = 10, noun: str = "students") -> list[Any]:
+    """Show a long list a page at a time: returns this page's items and draws
+    Previous / Next with "Page 2 of 4 · 35 students", so every item can be reached."""
+    pages = max(1, -(-len(items) // per_page))
+    page = min(max(int(st.session_state.get(key, 0)), 0), pages - 1)
+    st.session_state[key] = page
+    if pages > 1:
+        back, where, forward = st.columns([1, 2, 1], vertical_alignment="center")
+        if back.button("Previous", key=f"{key}_prev", disabled=page == 0, width="stretch", icon=":material/chevron_left:"):
+            st.session_state[key] = page - 1
+            st.rerun()
+        where.caption(f"Page {page + 1} of {pages} · {len(items)} {noun}")
+        if forward.button("Next", key=f"{key}_next", disabled=page >= pages - 1, width="stretch", icon=":material/chevron_right:"):
+            st.session_state[key] = page + 1
+            st.rerun()
+    else:
+        st.caption(f"{len(items)} {noun}")
+    return items[page * per_page : (page + 1) * per_page]
+
+
 def percent(raw: Any) -> float | None:
     try:
         return None if raw is None else float(raw)
