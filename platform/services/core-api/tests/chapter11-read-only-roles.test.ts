@@ -3,7 +3,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import type { ActorContext } from "@aura/contracts";
 import { AuthorizationError } from "../lib/security";
-import { executePlan, lockPlan, safeValidation, savePlan, savePlannedPlan, setReviewPaused } from "../lib/chapter11/service";
+import { executePlan, lockPlan, safeJobRow, safeValidation, savePlan, savePlannedPlan, setReviewPaused } from "../lib/chapter11/service";
 import { loadPlanningScope, planWithAgent } from "../lib/chapter11/planning";
 import { editDraft, recordOutcome } from "../lib/chapter11/review";
 
@@ -112,4 +112,16 @@ test("review R-01: the department head and AI activity get the review mechanics,
   assert.equal(shapedJudge.mean, 4.5);
   assert.equal(shapedJudge.previous.repair, "applied");
   assert.equal(safeValidation(null), null);
+});
+
+test("review R-09: other roles learn whether a review flagged the student, never the score", () => {
+  const risk = { score: 72, band: "high", flagged: true, signals: [{ explanation: "Attendance 61% in CS201" }] };
+  const flagged = safeJobRow({ id: "j1", status: "awaiting_faculty", risk });
+  assert.equal(flagged.flagged, true);
+  assert.equal(flagged.risk, null);
+  assert.ok(!JSON.stringify(flagged).includes("72") && !JSON.stringify(flagged).includes("CS201"));
+  assert.equal(safeJobRow({ id: "j2", status: "not_flagged", risk: { ...risk, flagged: false } }).flagged, false);
+  // Stopped before the risk check: no analysis, so not flagged.
+  for (const status of ["blocked", "failed"])
+    assert.equal(safeJobRow({ id: "j3", status, risk: null }).flagged, false);
 });

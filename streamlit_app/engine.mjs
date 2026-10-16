@@ -34550,6 +34550,18 @@ function safeValidation(raw) {
     } : {}
   };
 }
+function riskFlagged(risk) {
+  return looseObject2(risk)?.flagged === true;
+}
+function safeJobRow(row) {
+  return {
+    ...row,
+    risk: null,
+    flagged: riskFlagged(row.risk),
+    validation: safeValidation(row.validation),
+    failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis)
+  };
+}
 async function overview(actor) {
   requireRole(actor, "faculty", "governance", "hod");
   return withCoreTransaction(async (client) => {
@@ -34627,12 +34639,7 @@ async function overview(actor) {
       students: students.rows,
       policies: policies.rows,
       plans: plans.rows,
-      jobs: assignedMentor ? jobs.rows : jobs.rows.map((row) => ({
-        ...row,
-        risk: null,
-        validation: safeValidation(row.validation),
-        failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis)
-      })),
+      jobs: assignedMentor ? jobs.rows.map((row) => ({ ...row, flagged: riskFlagged(row.risk) })) : jobs.rows.map((row) => safeJobRow(row)),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",

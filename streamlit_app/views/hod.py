@@ -71,8 +71,8 @@ def mentor_workload(
     return rows
 
 
-FLAG_OUTCOMES = {"awaiting_faculty", "awaiting_review", "human_review", "approved", "published",
-                 "rejected", "declined", "needs_human", "ai_unavailable", "failed", "blocked"}
+# A review that ended in one of these without a risk analysis flagged nobody (review R-09).
+STOPPED_OUTCOMES = {"failed", "blocked", "needs_human", "ai_unavailable"}
 AWAITING_OUTCOMES = ("awaiting_faculty", "awaiting_review", "human_review")
 
 
@@ -114,17 +114,30 @@ def waiting_gap_note(listed: set[str], queue: dict[str, Any]) -> str | None:
 
 
 def render_flagged_students(review: dict[str, Any], queue: dict[str, Any] | None = None) -> None:
-    """Every student whose latest review flagged them, a page at a time. No score,
-    band or draft content: those stay with the student's own mentor."""
+    """Every student whose latest review flagged them, a page at a time, then the
+    reviews that stopped before the risk check. No score, band or draft content:
+    those stay with the student's own mentor."""
     from views.operations import latest_per_student
 
     jobs = [j for j in review.get("jobs") or [] if j.get("status") != "queued"]
-    flagged = [
-        j
-        for j in latest_per_student(jobs)
-        if j.get("run_id") or str(j.get("status") or "") in FLAG_OUTCOMES - {"not_flagged"}
+    latest = latest_per_student(jobs)
+    # Flagged is the risk check's own verdict (the Core sends `flagged`, never the score).
+    flagged = [j for j in latest if j.get("flagged") is True]
+    stopped = [
+        j for j in latest
+        if j.get("flagged") is not True and str(j.get("status") or "") in STOPPED_OUTCOMES
     ]
     people = {str(s.get("id")): s for s in review.get("students") or []}
+
+    def student(j: dict[str, Any]) -> dict[str, Any]:
+        person = people.get(str(j.get("student_id")), {})
+        return {
+            "Student": labels.pretty_name(person.get("display_name") or "Student"),
+            "Register number": person.get("register_number") or "Not listed",
+            "Mentor": labels.pretty_name(person.get("mentor_name") or "Not assigned"),
+            "Where it stands": labels.run_outcome(j.get("status"), j.get("error_code")),
+        }
+
     order = {"needs_human": 0, "ai_unavailable": 0, "failed": 0, "awaiting_faculty": 1}
     flagged.sort(
         key=lambda j: (
@@ -141,28 +154,33 @@ def render_flagged_students(review: dict[str, Any], queue: dict[str, Any] | None
     note = waiting_gap_note(listed, queue or {})
     if note:
         st.caption(note)
-    if not flagged:
+    if flagged:
+        page = paged(flagged, "hod_flagged_page", noun="flagged students")
+        dataframe(
+            [
+                {
+                    **student(j),
+                    "Drafted by": labels.drafted_by(j.get("mode"), j.get("model_id"), j.get("status")),
+                    "Reviewed": labels.nice_time(j.get("updated_at") or j.get("created_at")),
+                }
+                for j in page
+            ]
+        )
+    else:
         ui.empty_state("No flagged students", "The latest reviews flagged nobody.")
-        return
-    page = paged(flagged, "hod_flagged_page", noun="flagged students")
-    dataframe(
-        [
-            {
-                "Student": labels.pretty_name(
-                    people.get(str(j.get("student_id")), {}).get("display_name") or "Student"
-                ),
-                "Register number": people.get(str(j.get("student_id")), {}).get("register_number")
-                or "Not listed",
-                "Mentor": labels.pretty_name(
-                    people.get(str(j.get("student_id")), {}).get("mentor_name") or "Not assigned"
-                ),
-                "Where it stands": labels.run_outcome(j.get("status"), j.get("error_code")),
-                "Drafted by": labels.drafted_by(j.get("mode"), j.get("model_id"), j.get("status")),
-                "Reviewed": labels.nice_time(j.get("updated_at") or j.get("created_at")),
-            }
-            for j in page
-        ]
-    )
+    if stopped:
+        ui.section(
+            f"Reviews that stopped early ({len(stopped)})",
+            "These reviews stopped before the risk check finished, so they are not counted as flagged. "
+            "Each row says why.",
+        )
+        page = paged(stopped, "hod_stopped_page", noun="reviews")
+        dataframe(
+            [
+                {**student(j), "Reviewed": labels.nice_time(j.get("updated_at") or j.get("created_at"))}
+                for j in page
+            ]
+        )
 
 
 def overview_page() -> None:

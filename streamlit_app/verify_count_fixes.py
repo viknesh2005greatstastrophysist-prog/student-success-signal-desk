@@ -5,7 +5,10 @@ R-06: the department head's Drafts waiting card and the flagged list give the re
 reason when they differ (a draft on earlier figures, a newer review still running,
 or a draft from the retired rule-based path), and say nothing when they agree.
 R-08: AI activity "Waiting for AI" counts each student's latest review only, like the
-other cards on the Runs page."""
+other cards on the Runs page.
+R-09: the department head's "Flagged students" lists only reviews the risk check
+flagged (the Core's `flagged`, never the score); reviews that stopped before the risk
+check are listed apart as "Reviews that stopped early"."""
 
 import json
 import sys
@@ -87,5 +90,25 @@ at = run(f"REVIEW = {data(RUNS)}\nns['load'] = lambda action, payload=None: REVI
 metrics = {m.label: m.value for m in at.metric}
 assert metrics["Waiting for AI"] == "2", metrics
 assert metrics["Students checked"] == "3", metrics
+
+# R-09: flagged means the risk check flagged the student; stopped reviews are listed apart
+FLAGS = {"students": STUDENTS, "jobs": [
+    job("s1", "awaiting_faculty", "2026-10-16T10:00:00Z", run_id="r1", flagged=True),
+    job("s2", "blocked", "2026-10-16T10:00:00Z", error_code="DATA_BLOCKED", flagged=False),
+    job("s3", "needs_human", "2026-10-16T10:00:00Z", error_code="LEASE_EXPIRED", flagged=False),
+    job("s4", "ai_unavailable", "2026-10-16T10:00:00Z", flagged=True),
+    job("s5", "not_flagged", "2026-10-16T10:00:00Z", flagged=False),
+    job("s5", "failed", "2026-10-15T10:00:00Z", flagged=False),
+]}
+at = run(f"ns['render_flagged_students']({data(FLAGS)}, {data({'awaitingCount': 1, 'drafts': [draft('s1')]})})")
+heads = [h.value for h in at.subheader]
+assert heads == ["Flagged students (2)", "Reviews that stopped early (2)"], heads
+tables = [t.value for t in at.dataframe]
+assert sorted(tables[0]["Register number"]) == ["REG001", "REG004"], tables[0]
+assert sorted(tables[1]["Register number"]) == ["REG002", "REG003"], tables[1]
+assert "Drafts waiting card" not in captions(at), captions(at)
+# nobody flagged: the empty state, and the stopped reviews still listed
+at = run(f"ns['render_flagged_students']({data({'students': STUDENTS, 'jobs': FLAGS['jobs'][1:3]})})")
+assert [h.value for h in at.subheader] == ["Flagged students (0)", "Reviews that stopped early (2)"], [h.value for h in at.subheader]
 
 print("verify_count_fixes: ok")

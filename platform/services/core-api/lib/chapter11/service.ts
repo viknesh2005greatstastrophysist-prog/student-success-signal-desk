@@ -1752,6 +1752,27 @@ export function safeValidation(raw: unknown): Loose | null {
   };
 }
 
+/** Whether the risk check flagged the student, without the score (review R-09). A
+ * review that stopped before the risk check (blocked, failed, handed over early)
+ * has no risk analysis, so it is not flagged. */
+export function riskFlagged(risk: unknown): boolean {
+  return looseObject(risk)?.flagged === true;
+}
+
+/** A review job as the department head and AI activity receive it: the review
+ * mechanics and whether the student was flagged, never the score, band or signals
+ * (E2E log #8) and never draft-derived text (review R-01). */
+type SafeJobFields = { risk: null; flagged: boolean; validation: Loose | null; failure_diagnosis: Loose | null };
+export function safeJobRow<T extends Loose>(row: T): Omit<T, keyof SafeJobFields> & SafeJobFields {
+  return {
+    ...row,
+    risk: null,
+    flagged: riskFlagged(row.risk),
+    validation: safeValidation(row.validation),
+    failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis),
+  };
+}
+
 export async function overview(actor: ActorContext) {
   requireRole(actor, "faculty", "governance", "hod");
   return withCoreTransaction(async (client) => {
@@ -1841,13 +1862,8 @@ export async function overview(actor: ActorContext) {
       policies: policies.rows,
       plans: plans.rows,
       jobs: assignedMentor
-        ? jobs.rows
-        : jobs.rows.map((row) => ({
-            ...row,
-            risk: null,
-            validation: safeValidation(row.validation),
-            failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis),
-          })),
+        ? jobs.rows.map((row) => ({ ...row, flagged: riskFlagged(row.risk) }))
+        : jobs.rows.map((row) => safeJobRow(row)),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
