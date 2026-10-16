@@ -14,3 +14,10 @@ test("real name parts and the whole placeholder name are still blocked", () => {
   assert.equal(scanForIdentifiers("Kulkarni needs a follow-up", roster), "roster_name");
   assert.equal(scanForIdentifiers("message for Family account 001", roster), "roster_name");
 });
+
+test("words from the operations service account do not block a payload (final loop: internship role text)", () => {
+  const withOps = { names: [...roster.names, "Academic Operations"] };
+  assert.equal(scanForIdentifiers("Internship role: operations analyst, academic year 3", withOps), undefined);
+  assert.equal(scanForIdentifiers("message for Academic Operations", withOps), "roster_name");
+  assert.equal(scanForIdentifiers("Asha was absent on Monday", withOps), "roster_name");
+});
