@@ -19,6 +19,7 @@ import {
   requireOpenSubmission,
 } from "./registration-commands";
 import { digest } from "./chapter11/engine";
+import { assertStudentNotFrozen } from "./chapter11/frozen";
 const uuid = z.string().uuid();
 const revision = z.number().int().nonnegative();
 const reason = z.string().trim().min(5).max(1000);
@@ -723,6 +724,7 @@ export async function experienceCommand(
         input.studentId,
       );
       studentId = input.studentId;
+      await assertStudentNotFrozen(client, studentId);
       facultyId = student.mentor_id ?? undefined;
       if (!facultyId)
         throw new ConflictError(

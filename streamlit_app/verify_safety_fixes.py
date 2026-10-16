@@ -5,7 +5,9 @@ R-01: the judge's written reasons quote draft sentences and student figures, so 
 the assigned mentor (role faculty) sees them; the department head and AI activity see
 the scores.
 R-02: a search that matches nothing keeps a selection instead of stopping the page, and
-a cleared "Due in days" cell in "Edit the draft" gives a plain error, not a crash."""
+a cleared "Due in days" cell in "Edit the draft" gives a plain error, not a crash.
+R-03: a frozen record (the Core marks the queue row frozen) is shown read-only at the
+gate and is never offered for a new review."""
 
 import json
 import sys
@@ -135,5 +137,17 @@ rerun(at)
 errors = " ".join(e.value for e in at.error)
 assert "Enter the number of days (1 to 14) for every action" in errors, errors
 assert "calls" not in at.session_state, "nothing was saved"
+
+# R-03: a frozen case at the gate is read-only, and no new review is offered for it
+FROZEN = {**DRAFT, "frozen": True, "evidence_current": False}
+at = run(f"ns['render_draft_reviews'](json.loads({json.dumps(json.dumps({'drafts': [FROZEN]}))}), {{'role': 'faculty'}}, {{}})")
+buttons = [b.label for b in at.button]
+for label in ("Approve and publish", "Edit", "Decline", "Save new draft version"):
+    assert label not in buttons, (label, buttons)
+assert any("kept unchanged for the project presentation" in i.value for i in at.info), [i.value for i in at.info]
+assert not [b for b in buttons if b.startswith("Review ")], buttons
+# the same draft without the flag offers the re-review button (so the check above means something)
+at = run(f"ns['render_draft_reviews'](json.loads({json.dumps(json.dumps({'drafts': [{**FROZEN, 'frozen': False}]}))}), {{'role': 'faculty'}}, {{}})")
+assert any(b.label.startswith("Review ") for b in at.button), [b.label for b in at.button]
 
 print("verify_safety_fixes: ok")

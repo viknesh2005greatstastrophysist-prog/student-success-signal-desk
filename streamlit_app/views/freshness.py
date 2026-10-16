@@ -43,7 +43,8 @@ def render_rereview(rows: list[dict[str, Any]] | None, *, role: str, key: str, n
     if role != "faculty":
         return
     seen: list[str] = []
-    for row in stale:
+    # A frozen record (the Core marks it frozen) is kept unchanged: no new review.
+    for row in [r for r in stale if not r.get("frozen")]:
         student_id = str(row.get("student_id"))
         if student_id in seen or len(seen) >= 3:
             continue

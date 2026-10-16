@@ -71,8 +71,10 @@ import {
   loadGenerationClock,
 } from "../data-refresh/generation";
 import { persistThenAudit, startLeaseHeartbeat } from "./lease";
+import { frozenLeftOutNote, frozenRecordError, frozenStudentIds } from "./frozen";
 
-type PlanBody = ReturnType<typeof planSkill>;
+/** frozenNote: set when frozen students (frozen.ts) were left out of the plan. */
+type PlanBody = ReturnType<typeof planSkill> & { frozenNote?: string };
 type PlanRow = {
   id: string;
   generation_id: string;
@@ -396,7 +398,17 @@ async function persistPlan(
           "Every student must belong to the policy department",
         );
     }
-    const body = planSkill(input);
+    // Frozen students (frozen.ts) are left out of every new or revised plan; the
+    // plan says so. With nobody left the plan asks which students to cover.
+    const frozen = await frozenStudentIds(client, input.studentIds ?? []);
+    if (frozen.size) {
+      const kept = input.studentIds!.filter((student) => !frozen.has(student));
+      input.studentIds = kept.length ? kept : undefined;
+    }
+    const body: PlanBody = {
+      ...planSkill(input),
+      ...(frozen.size ? { frozenNote: frozenLeftOutNote(frozen.size) } : {}),
+    };
     if (id) {
       const previous = await getPlan(client, actor, id, true);
       if (previous.status === "locked")
@@ -492,11 +504,19 @@ export async function lockPlan(
         "POLICY_REQUIRED",
         "A mentor-approved policy is required",
       );
+    // A plan saved before a student was frozen still names them: lock without
+    // them and record why on the plan (frozen.ts).
+    const frozen = await frozenStudentIds(client, plan.body.studentIds ?? []);
+    const students = (plan.body.studentIds ?? []).filter((student) => !frozen.has(student));
+    if (frozen.size && !students.length) throw frozenRecordError();
+    const body: PlanBody = frozen.size
+      ? { ...plan.body, studentIds: students, frozenNote: frozenLeftOutNote(frozen.size) }
+      : plan.body;
     await client.query(
-      "UPDATE ch11_plans SET status='locked',plan_hash=$2,locked_at=now(),revision=revision+1 WHERE id=$1",
-      [id, digest(plan.body)],
+      "UPDATE ch11_plans SET status='locked',body=$3::jsonb,plan_hash=$2,locked_at=now(),revision=revision+1 WHERE id=$1",
+      [id, digest(body), JSON.stringify(body)],
     );
-    for (const student of plan.body.studentIds!)
+    for (const student of students)
       await client.query(
         "INSERT INTO ch11_jobs(id,generation_id,plan_id,student_id,faculty_person_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
         [
@@ -514,7 +534,7 @@ export async function lockPlan(
       id,
       "plan.locked",
       plan.body,
-      { hash: digest(plan.body), students: plan.body.studentIds },
+      { hash: digest(body), students },
     );
     return getPlan(client, actor, id);
   });
@@ -1249,9 +1269,11 @@ export async function executePlan(
         { stage: row.stage },
         { code: "LEASE_EXPIRED", reasons: [] },
       );
+    // A job for a frozen student (frozen.ts), locked before the freeze, is never run.
+    const frozen = await frozenStudentIds(client, plan.body.studentIds!);
     const jobs = await client.query<{ id: string }>(
-      `SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT ${batchSize}`,
-      [plan.id, plan.generation_id],
+      `SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) AND NOT student_id=ANY($3::uuid[]) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT ${batchSize}`,
+      [plan.id, plan.generation_id, [...frozen]],
     );
     const attestation = await client.query(
       "SELECT approved_role,policy_version FROM ch11_policy_attestations WHERE policy_id=$1 AND generation_id=$2",

@@ -28,12 +28,15 @@ import {
 } from "./planner";
 import { modelEndpoints, type ChainOptions, type Endpoint } from "./provider";
 import { AiUnavailableError, QuotaWaitError, quotaWaitSeconds, unavailableReasons } from "./unavailable";
+import { frozenLeftOutNote, frozenStudentIds } from "./frozen";
 
 const TERM = "2026-ODD";
 
 /** The actor's own students (same visibility as the review overview) with two
  * aggregate figures, and the actor's approved policies. Nothing here leaves the
- * server except as counts, aliases and threshold numbers. */
+ * server except as counts, aliases and threshold numbers. Frozen students
+ * (frozen.ts) are left out, so no criteria-based plan can pull them in; the
+ * response says how many. */
 export async function loadPlanningScope(actor: ActorContext) {
   requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
@@ -47,7 +50,9 @@ export async function loadPlanningScope(actor: ActorContext) {
        ORDER BY s.register_number`,
       [generation, department, mentor],
     );
-    const ids = students.rows.map((r) => r.id);
+    const everyone = students.rows.map((r) => r.id);
+    const frozen = await frozenStudentIds(client, everyone);
+    const ids = everyone.filter((id) => !frozen.has(id));
     const attendance = await client.query<{ student_id: string; pct: number }>(
       `SELECT r.student_id,avg(CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END)::float AS pct
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
@@ -75,7 +80,7 @@ export async function loadPlanningScope(actor: ActorContext) {
     const att = pct(attendance.rows),
       mark = pct(marks.rows);
     const scope: PlanningScope = {
-      students: students.rows.map((r) => ({
+      students: students.rows.filter((r) => !frozen.has(r.id)).map((r) => ({
         id: r.id,
         semester: r.semester,
         attendancePct: att.get(r.id) ?? null,
@@ -89,8 +94,14 @@ export async function loadPlanningScope(actor: ActorContext) {
           : [];
       }),
     };
-    const roster = await loadGuardRoster(client, generation, ids, actor.personId, department);
-    return { scope, roster };
+    // The privacy guard still knows every mentee's name, frozen or not.
+    const roster = await loadGuardRoster(client, generation, everyone, actor.personId, department);
+    return {
+      scope,
+      roster,
+      frozenLeftOut: frozen.size,
+      ...(frozen.size ? { frozenNote: frozenLeftOutNote(frozen.size) } : {}),
+    };
   });
 }
 

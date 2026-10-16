@@ -374,7 +374,7 @@ test(
         assert.equal(queue.drafts.length, 1);
         assert.equal(queue.awaitingCount, 1);
         assert.equal((await experienceOverview(actor)).counts.pending_reviews, queue.awaitingCount);
-        assert.deepEqual(Object.keys(queue.drafts[0]!).sort(), ["display_name", "drafted_at", "earlier_count", "earlier_drafts", "evidence_current", "evidence_generation", "id", "mode", "model_id", "register_number", "revision", "status", "student_id"]);
+        assert.deepEqual(Object.keys(queue.drafts[0]!).sort(), ["display_name", "drafted_at", "earlier_count", "earlier_drafts", "evidence_current", "evidence_generation", "frozen", "id", "mode", "model_id", "register_number", "revision", "status", "student_id"]);
       }
       const ownView = await overview(faculty);
       assert.ok(ownView.riskView.length > 0 && ownView.riskView.some((r) => r.score !== null));

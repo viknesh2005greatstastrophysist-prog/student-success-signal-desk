@@ -7,6 +7,7 @@ import { withCoreTransaction } from "./db";
 import { ConflictError, NotFoundError } from "./http";
 import { requireRole, requireDemoInstitution } from "./security";
 import { validateAnyPacket, riskAnalysis, digest, type Evidence, type Risk, type Policy, type domainNames } from "./chapter11/engine";
+import { assertCaseNotFrozen, assertStudentNotFrozen } from "./chapter11/frozen";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
 export const supportDecisionInput = z.object({
@@ -252,6 +253,8 @@ export async function decideSupportCase(
   assertCommandId(commandId);
   z.string().uuid().parse(caseId);
   requireRole(actor, "faculty");
+  // A frozen record (chapter11/frozen.ts) stays pending and untouched.
+  assertCaseNotFrozen(caseId);
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
@@ -287,6 +290,7 @@ export async function decideSupportCase(
     );
     if (!result.rowCount) throw new NotFoundError("Assigned support case not found");
     const current = result.rows[0]!;
+    await assertStudentNotFrozen(client, current.student_id);
     if (current.status !== "awaiting_faculty") throw new ConflictError("CASE_NOT_AWAITING_DECISION", "This support case is no longer awaiting a decision");
     // Chapter 11 drafts from the retired rule-based path stay viewable but are never decided.
     if (current.source.startsWith("chapter11:") && current.run_mode !== "model") throw new ConflictError("LEGACY_DRAFT_READ_ONLY", "This draft was written by the retired rule-based path. It stays viewable, but only AI-written drafts can be decided.");

@@ -292,6 +292,9 @@ def render_plan_scope(
             f":material/filter_alt: Narrowed from {scope['narrowedFrom']} selected students to "
             f"{len(scoped)} by the criteria in your request."
         )
+    if body.get("frozenNote"):
+        # Set by the Core when it left a frozen record out of this plan.
+        st.caption(f":material/lock: {body['frozenNote']}")
     conflict = body.get("scopeConflict")
     if isinstance(conflict, dict) and not conflict.get("resolution"):
         selected = int(conflict.get("selected") or len(scoped))
@@ -1549,6 +1552,10 @@ def repair_diagnosis_rows(validation: Any) -> tuple[list[dict[str, str]], bool]:
     return rows, fallback
 
 
+FROZEN_NOTE = (
+    "This record is kept unchanged for the project presentation. It stays pending "
+    "and cannot be approved, edited or declined."
+)
 DIAGNOSIS_FALLBACK_NOTE = (
     "Recorded before targeted diagnoses were stored, so this shows the standard wording "
     "for each failed check."
@@ -1850,6 +1857,11 @@ def render_draft_reviews(
                 )
         if actor.get("role") != "faculty":
             st.info("This view is read-only for your role.", icon=":material/visibility:")
+            return
+        if selected.get("frozen"):
+            # The Core refuses any change to a frozen record (FROZEN_RECORD).
+            st.info(FROZEN_NOTE, icon=":material/lock:")
+            decision_head(selected)
             return
         with st.form(
             f"decide_draft_{selected['id']}_{selected.get('artifact_id')}", border=False

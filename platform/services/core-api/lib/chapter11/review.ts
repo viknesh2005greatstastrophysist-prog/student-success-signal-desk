@@ -11,6 +11,12 @@ import {
 import { ConflictError, NotFoundError } from "../http";
 import { requireRole } from "../security";
 import { awaitingCases } from "./awaiting";
+import {
+  assertCaseNotFrozen,
+  assertStudentNotFrozen,
+  isFrozenCase,
+  isFrozenRegisterNumber,
+} from "./frozen";
 import { caseEvidenceCapturedSql, loadGenerationClock, stampEvidence } from "../data-refresh/generation";
 import { hashJson } from "../support-commands";
 import {
@@ -41,6 +47,7 @@ export async function editDraft(
   assertCommandId(commandId);
   z.string().uuid().parse(caseId);
   const input = editSchema.parse(raw);
+  assertCaseNotFrozen(caseId);
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(
@@ -83,6 +90,7 @@ export async function editDraft(
     if (!result.rowCount)
       throw new NotFoundError("Assigned Chapter 11 draft not found");
     const current = result.rows[0]!;
+    await assertStudentNotFrozen(client, current.student_id);
     if (current.run_mode !== "model")
       throw new ConflictError(
         "LEGACY_DRAFT_READ_ONLY",
@@ -213,6 +221,7 @@ export async function recordOutcome(
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned approved plan not found");
+    await assertStudentNotFrozen(client, result.rows[0]!.student_id);
     const prior = await client.query<{ revision: number }>(
       "SELECT revision FROM ch11_interventions WHERE support_plan_id=$1 AND generation_id=$2 FOR UPDATE",
       [planId, generation],
@@ -340,6 +349,16 @@ export async function reviewQueue(actor: ActorContext) {
     // Individual risk scores, signals and evidence values are visible only to the
     // student's assigned mentor (E2E log #8). The department head sees who is
     // waiting on a mentor and the draft's state, never its evidence.
+    // Frozen records (frozen.ts) stay visible; the flag lets the screens show them
+    // read-only without knowing which ids are frozen.
+    const frozen = <T extends Record<string, unknown>>(row: T) => ({
+      ...row,
+      frozen:
+        isFrozenRegisterNumber(row.register_number) ||
+        isFrozenCase(row.id) ||
+        (Array.isArray(row.earlier_drafts) &&
+          row.earlier_drafts.some((e: { case_id?: unknown }) => isFrozenCase(e.case_id))),
+    });
     const shape = <T extends Record<string, unknown>>(rows: T[]): T[] =>
       actor.role === "faculty"
         ? rows
@@ -359,14 +378,15 @@ export async function reviewQueue(actor: ActorContext) {
                 earlier_drafts: row.earlier_drafts,
                 evidence_current: row.evidence_current,
                 evidence_generation: row.evidence_generation,
+                frozen: row.frozen,
               }) as unknown as T,
           );
     return {
       versions: versions.rows,
-      plans: plans.rows.map((row) => stampEvidence(clock, row)),
-      drafts: shape(active.map((row) => stampEvidence(clock, row))),
+      plans: plans.rows.map((row) => frozen(stampEvidence(clock, row))),
+      drafts: shape(active.map((row) => frozen(stampEvidence(clock, row)))),
       awaitingCount: groups.length,
-      legacyDrafts: shape(legacy.map((row) => stampEvidence(clock, row))),
+      legacyDrafts: shape(legacy.map((row) => frozen(stampEvidence(clock, row)))),
       interventionLog: log.rows,
       dataGeneration: { current: clock.current, since: clock.since },
     };
@@ -414,6 +434,7 @@ export async function restoreVersion(
       )
     ).rows[0];
     if (!plan) throw new NotFoundError("Assigned approved plan not found");
+    await assertStudentNotFrozen(client, plan.student_id);
     // New approvals are included lazily, without modifying the original decision.
     await client.query(
       `INSERT INTO ch11_publications(id,generation_id,support_plan_id,artifact_id,original_decision_id,version,actor_person_id) SELECT p.id,p.generation_id,p.id,d.agent_artifact_id,d.id,1,d.faculty_person_id FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id WHERE p.id=$1 AND d.decision='approved' ON CONFLICT DO NOTHING`,

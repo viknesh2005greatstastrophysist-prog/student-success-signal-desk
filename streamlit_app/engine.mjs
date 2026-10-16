@@ -3372,21 +3372,21 @@ var require_split2 = __commonJS({
     var kLast = Symbol("last");
     var kDecoder = Symbol("decoder");
     function transform2(chunk, enc, cb) {
-      let list;
+      let list2;
       if (this.overflow) {
         const buf = this[kDecoder].write(chunk);
-        list = buf.split(this.matcher);
-        if (list.length === 1) return cb();
-        list.shift();
+        list2 = buf.split(this.matcher);
+        if (list2.length === 1) return cb();
+        list2.shift();
         this.overflow = false;
       } else {
         this[kLast] += this[kDecoder].write(chunk);
-        list = this[kLast].split(this.matcher);
+        list2 = this[kLast].split(this.matcher);
       }
-      this[kLast] = list.pop();
-      for (let i = 0; i < list.length; i++) {
+      this[kLast] = list2.pop();
+      for (let i = 0; i < list2.length; i++) {
         try {
-          push(this, this.mapper(list[i]));
+          push(this, this.mapper(list2[i]));
         } catch (error61) {
           return cb(error61);
         }
@@ -6645,9 +6645,9 @@ var require_pg_pool = __commonJS({
     var EventEmitter = __require("events").EventEmitter;
     var NOOP = function() {
     };
-    var removeWhere = (list, predicate) => {
-      const i = list.findIndex(predicate);
-      return i === -1 ? void 0 : list.splice(i, 1)[0];
+    var removeWhere = (list2, predicate) => {
+      const i = list2.findIndex(predicate);
+      return i === -1 ? void 0 : list2.splice(i, 1)[0];
     };
     var IdleItem = class {
       constructor(client, idleListener, timeoutId) {
@@ -28216,8 +28216,8 @@ function diagnose(failures, ctx = {}) {
   const signalPaths = new Set((ctx.risk?.signals ?? []).map((s) => s.path));
   const signalRefs = formatRefs((ctx.risk?.signals ?? []).map((s) => resolve(s.path)));
   const itemOf = (loc) => {
-    const list = record2?.[loc.field];
-    return loc.index !== void 0 && Array.isArray(list) ? asRecord(list[loc.index]) : void 0;
+    const list2 = record2?.[loc.field];
+    return loc.index !== void 0 && Array.isArray(list2) ? asRecord(list2[loc.index]) : void 0;
   };
   const citedRefs = (loc) => {
     const cites = itemOf(loc)?.citations;
@@ -28226,8 +28226,8 @@ function diagnose(failures, ctx = {}) {
   const uncitedRefs = () => {
     const cited = /* @__PURE__ */ new Set();
     for (const field of ["rationale", "actions"]) {
-      const list = record2?.[field];
-      for (const item of Array.isArray(list) ? list : []) {
+      const list2 = record2?.[field];
+      for (const item of Array.isArray(list2) ? list2 : []) {
         const cites = asRecord(item)?.citations;
         for (const token of Array.isArray(cites) ? cites : [])
           if (typeof token === "string")
@@ -29601,8 +29601,8 @@ function collapseAwaiting(rows) {
   const byStudent = /* @__PURE__ */ new Map();
   for (const row of rows)
     byStudent.set(row.student_id, [...byStudent.get(row.student_id) ?? [], row]);
-  return [...byStudent.values()].map((list) => {
-    const sorted = [...list].sort(
+  return [...byStudent.values()].map((list2) => {
+    const sorted = [...list2].sort(
       (a, b) => time3(b.drafted_at) - time3(a.drafted_at) || time3(b.opened_at) - time3(a.opened_at)
     );
     return { current: sorted[0], earlier: sorted.slice(1) };
@@ -29827,17 +29827,17 @@ function calculateGpa(courses) {
   const byTerm = /* @__PURE__ */ new Map();
   for (const c of graded)
     byTerm.set(c.term_id, [...byTerm.get(c.term_id) ?? [], c]);
-  const mean = (list) => Math.round(
-    list.reduce((s, c) => s + c.credits * c.grade_point, 0) / list.reduce((s, c) => s + c.credits, 0) * 100
+  const mean = (list2) => Math.round(
+    list2.reduce((s, c) => s + c.credits * c.grade_point, 0) / list2.reduce((s, c) => s + c.credits, 0) * 100
   ) / 100;
   return {
     cgpa: graded.length ? mean(graded) : null,
-    terms: [...byTerm.entries()].map(([id, list]) => ({
+    terms: [...byTerm.entries()].map(([id, list2]) => ({
       id,
-      name: list[0].term_name,
-      sgpa: mean(list),
-      credits: list.reduce((s, c) => s + c.credits, 0),
-      graded_courses: list.length,
+      name: list2[0].term_name,
+      sgpa: mean(list2),
+      credits: list2.reduce((s, c) => s + c.credits, 0),
+      graded_courses: list2.length,
       registered_courses: courses.filter((c) => c.term_id === id).length
     })),
     label: "Demonstration 10-point scale. Only published course results count; LMS assignment marks are separate."
@@ -30180,6 +30180,49 @@ async function withdrawRegistration(actor, registrationId, commandId, transactio
 async function requireOpenSubmission(client, generation, studentId, termId) {
   const status = await client.query("SELECT status FROM registration_submissions WHERE generation_id=$1 AND student_id=$2 AND term_id=$3", [generation, studentId, termId]);
   if (status.rows[0]?.status === "submitted") throw new ConflictError("REGISTRATION_SUBMITTED", "Your course selection has been submitted. Ask your HoD to reopen it for changes.");
+}
+
+// services/core-api/lib/chapter11/frozen.ts
+var DEFAULT_FROZEN_CASE_IDS = ["d398bbc3-60b1-4843-aabc-4d7f1e0d2a3b"];
+var DEFAULT_FROZEN_REGISTER_NUMBERS = ["01FE23BCI103"];
+function list(value, fallback) {
+  return (value === void 0 ? fallback : value.split(",")).map((item) => item.trim()).filter(Boolean);
+}
+function frozenCaseIds(env = process.env) {
+  return list(env.CORE_FROZEN_CASE_IDS, DEFAULT_FROZEN_CASE_IDS).map((id) => id.toLowerCase());
+}
+function frozenRegisterNumbers(env = process.env) {
+  return list(env.CORE_FROZEN_REGISTER_NUMBERS, DEFAULT_FROZEN_REGISTER_NUMBERS).map((number4) => number4.toUpperCase());
+}
+function isFrozenCase(caseId, env = process.env) {
+  return typeof caseId === "string" && frozenCaseIds(env).includes(caseId.toLowerCase());
+}
+function isFrozenRegisterNumber(registerNumber, env = process.env) {
+  return typeof registerNumber === "string" && frozenRegisterNumbers(env).includes(registerNumber.trim().toUpperCase());
+}
+var FROZEN_MESSAGE = "This record is kept unchanged for the project presentation. It can be read, but not changed.";
+function frozenRecordError() {
+  return new ConflictError("FROZEN_RECORD", FROZEN_MESSAGE);
+}
+function assertCaseNotFrozen(caseId, env = process.env) {
+  if (isFrozenCase(caseId, env)) throw frozenRecordError();
+}
+function frozenLeftOutNote(count) {
+  return `${count} student${count === 1 ? " was" : "s were"} left out: ${count === 1 ? "their record is" : "their records are"} kept unchanged for the project presentation.`;
+}
+async function frozenStudentIds(client, studentIds, env = process.env) {
+  const registers = frozenRegisterNumbers(env);
+  const cases = frozenCaseIds(env);
+  if (!studentIds.length || !registers.length && !cases.length) return /* @__PURE__ */ new Set();
+  const rows = await client.query(
+    `SELECT s.id FROM student_profiles s WHERE s.id=ANY($1::uuid[])
+     AND (upper(s.register_number)=ANY($2::text[]) OR EXISTS(SELECT 1 FROM support_cases c WHERE c.student_id=s.id AND lower(c.id::text)=ANY($3::text[])))`,
+    [studentIds, registers, cases]
+  );
+  return new Set(rows.rows.map((row) => row.id));
+}
+async function assertStudentNotFrozen(client, studentId, env = process.env) {
+  if ((await frozenStudentIds(client, [studentId], env)).size) throw frozenRecordError();
 }
 
 // services/core-api/lib/experience-commands.ts
@@ -30763,6 +30806,7 @@ async function experienceCommand(actor, commandId, raw) {
         input2.studentId
       );
       studentId = input2.studentId;
+      await assertStudentNotFrozen(client, studentId);
       facultyId = student.mentor_id ?? void 0;
       if (!facultyId)
         throw new ConflictError(
@@ -31949,6 +31993,7 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
   assertCommandId(commandId);
   external_exports.string().uuid().parse(caseId);
   requireRole(actor, "faculty");
+  assertCaseNotFrozen(caseId);
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(client, generationId, commandId, actor.personId);
@@ -31983,6 +32028,7 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
     );
     if (!result.rowCount) throw new NotFoundError("Assigned support case not found");
     const current = result.rows[0];
+    await assertStudentNotFrozen(client, current.student_id);
     if (current.status !== "awaiting_faculty") throw new ConflictError("CASE_NOT_AWAITING_DECISION", "This support case is no longer awaiting a decision");
     if (current.source.startsWith("chapter11:") && current.run_mode !== "model") throw new ConflictError("LEGACY_DRAFT_READ_ONLY", "This draft was written by the retired rule-based path. It stays viewable, but only AI-written drafts can be decided.");
     if (current.assigned_faculty_person_id !== actor.personId) {
@@ -33437,7 +33483,15 @@ async function persistPlan(actor, parsed, id, expectedRevision, commandId) {
           "Every student must belong to the policy department"
         );
     }
-    const body = planSkill(input2);
+    const frozen = await frozenStudentIds(client, input2.studentIds ?? []);
+    if (frozen.size) {
+      const kept = input2.studentIds.filter((student) => !frozen.has(student));
+      input2.studentIds = kept.length ? kept : void 0;
+    }
+    const body = {
+      ...planSkill(input2),
+      ...frozen.size ? { frozenNote: frozenLeftOutNote(frozen.size) } : {}
+    };
     if (id) {
       const previous = await getPlan(client, actor, id, true);
       if (previous.status === "locked")
@@ -33526,11 +33580,15 @@ async function lockPlan(actor, id, expectedRevision) {
         "POLICY_REQUIRED",
         "A mentor-approved policy is required"
       );
+    const frozen = await frozenStudentIds(client, plan.body.studentIds ?? []);
+    const students = (plan.body.studentIds ?? []).filter((student) => !frozen.has(student));
+    if (frozen.size && !students.length) throw frozenRecordError();
+    const body = frozen.size ? { ...plan.body, studentIds: students, frozenNote: frozenLeftOutNote(frozen.size) } : plan.body;
     await client.query(
-      "UPDATE ch11_plans SET status='locked',plan_hash=$2,locked_at=now(),revision=revision+1 WHERE id=$1",
-      [id, digest(plan.body)]
+      "UPDATE ch11_plans SET status='locked',body=$3::jsonb,plan_hash=$2,locked_at=now(),revision=revision+1 WHERE id=$1",
+      [id, digest(body), JSON.stringify(body)]
     );
-    for (const student of plan.body.studentIds)
+    for (const student of students)
       await client.query(
         "INSERT INTO ch11_jobs(id,generation_id,plan_id,student_id,faculty_person_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
         [
@@ -33548,7 +33606,7 @@ async function lockPlan(actor, id, expectedRevision) {
       id,
       "plan.locked",
       plan.body,
-      { hash: digest(plan.body), students: plan.body.studentIds }
+      { hash: digest(body), students }
     );
     return getPlan(client, actor, id);
   });
@@ -34086,9 +34144,10 @@ async function executePlan(actor, planId, options = {}) {
         { stage: row.stage },
         { code: "LEASE_EXPIRED", reasons: [] }
       );
+    const frozen = await frozenStudentIds(client, plan.body.studentIds);
     const jobs = await client.query(
-      `SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT ${batchSize}`,
-      [plan.id, plan.generation_id]
+      `SELECT id FROM ch11_jobs WHERE plan_id=$1 AND generation_id=$2 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) AND NOT student_id=ANY($3::uuid[]) ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END,updated_at,student_id LIMIT ${batchSize}`,
+      [plan.id, plan.generation_id, [...frozen]]
     );
     const attestation = await client.query(
       "SELECT approved_role,policy_version FROM ch11_policy_attestations WHERE policy_id=$1 AND generation_id=$2",
@@ -35063,7 +35122,9 @@ async function loadPlanningScope(actor) {
        ORDER BY s.register_number`,
       [generation, department, mentor]
     );
-    const ids = students.rows.map((r) => r.id);
+    const everyone = students.rows.map((r) => r.id);
+    const frozen = await frozenStudentIds(client, everyone);
+    const ids = everyone.filter((id) => !frozen.has(id));
     const attendance = await client.query(
       `SELECT r.student_id,avg(CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END)::float AS pct
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
@@ -35089,7 +35150,7 @@ async function loadPlanningScope(actor) {
     const pct = (rows) => new Map(rows.map((r) => [r.student_id, r.pct]));
     const att = pct(attendance.rows), mark = pct(marks.rows);
     const scope = {
-      students: students.rows.map((r) => ({
+      students: students.rows.filter((r) => !frozen.has(r.id)).map((r) => ({
         id: r.id,
         semester: r.semester,
         attendancePct: att.get(r.id) ?? null,
@@ -35101,8 +35162,13 @@ async function loadPlanningScope(actor) {
         return parsed.success ? [{ id: r.id, facultyId: r.faculty_person_id, policy: parsed.data }] : [];
       })
     };
-    const roster = await loadGuardRoster(client, generation, ids, actor.personId, department);
-    return { scope, roster };
+    const roster = await loadGuardRoster(client, generation, everyone, actor.personId, department);
+    return {
+      scope,
+      roster,
+      frozenLeftOut: frozen.size,
+      ...frozen.size ? { frozenNote: frozenLeftOutNote(frozen.size) } : {}
+    };
   });
 }
 var trace = (summary, questionSource) => {
@@ -35285,6 +35351,7 @@ async function editDraft(actor, caseId, commandId, raw) {
   assertCommandId(commandId);
   external_exports.string().uuid().parse(caseId);
   const input2 = editSchema.parse(raw);
+  assertCaseNotFrozen(caseId);
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     const duplicate = await findDuplicateCommand(
@@ -35311,6 +35378,7 @@ async function editDraft(actor, caseId, commandId, raw) {
     if (!result.rowCount)
       throw new NotFoundError("Assigned Chapter 11 draft not found");
     const current = result.rows[0];
+    await assertStudentNotFrozen(client, current.student_id);
     if (current.run_mode !== "model")
       throw new ConflictError(
         "LEGACY_DRAFT_READ_ONLY",
@@ -35421,6 +35489,7 @@ async function recordOutcome(actor, planId, commandId, raw) {
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned approved plan not found");
+    await assertStudentNotFrozen(client, result.rows[0].student_id);
     const prior = await client.query(
       "SELECT revision FROM ch11_interventions WHERE support_plan_id=$1 AND generation_id=$2 FOR UPDATE",
       [planId, generation]
@@ -35531,6 +35600,10 @@ async function reviewQueue(actor) {
       `SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`,
       [generation, plans.rows.map((row) => row.id)]
     );
+    const frozen = (row) => ({
+      ...row,
+      frozen: isFrozenRegisterNumber(row.register_number) || isFrozenCase(row.id) || Array.isArray(row.earlier_drafts) && row.earlier_drafts.some((e) => isFrozenCase(e.case_id))
+    });
     const shape = (rows) => actor.role === "faculty" ? rows : rows.map(
       (row) => ({
         id: row.id,
@@ -35545,15 +35618,16 @@ async function reviewQueue(actor) {
         earlier_count: row.earlier_count,
         earlier_drafts: row.earlier_drafts,
         evidence_current: row.evidence_current,
-        evidence_generation: row.evidence_generation
+        evidence_generation: row.evidence_generation,
+        frozen: row.frozen
       })
     );
     return {
       versions: versions.rows,
-      plans: plans.rows.map((row) => stampEvidence(clock, row)),
-      drafts: shape(active.map((row) => stampEvidence(clock, row))),
+      plans: plans.rows.map((row) => frozen(stampEvidence(clock, row))),
+      drafts: shape(active.map((row) => frozen(stampEvidence(clock, row)))),
       awaitingCount: groups.length,
-      legacyDrafts: shape(legacy.map((row) => stampEvidence(clock, row))),
+      legacyDrafts: shape(legacy.map((row) => frozen(stampEvidence(clock, row)))),
       interventionLog: log.rows,
       dataGeneration: { current: clock.current, since: clock.since }
     };
@@ -35588,6 +35662,7 @@ async function restoreVersion(actor, planId, commandId, raw) {
       [planId, generation, actor.personId]
     )).rows[0];
     if (!plan) throw new NotFoundError("Assigned approved plan not found");
+    await assertStudentNotFrozen(client, plan.student_id);
     await client.query(
       `INSERT INTO ch11_publications(id,generation_id,support_plan_id,artifact_id,original_decision_id,version,actor_person_id) SELECT p.id,p.generation_id,p.id,d.agent_artifact_id,d.id,1,d.faculty_person_id FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id WHERE p.id=$1 AND d.decision='approved' ON CONFLICT DO NOTHING`,
       [planId]
