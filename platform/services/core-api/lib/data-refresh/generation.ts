@@ -69,6 +69,32 @@ export function isCurrentEvidence(
   return asDate(capturedAt).getTime() >= clock.since.getTime();
 }
 
+/** Review checkpoint fields computed from the evidence a review collected. */
+export const EVIDENCE_DERIVED_KEYS = [
+  "evidence",
+  "evidenceRevision",
+  "risk",
+  "composed",
+  "retrieval",
+  "toolEvidence",
+] as const;
+
+/** A review resumed after a refresh (paused, failed, waiting for AI, or pre-filled by
+ * the refresh itself) must not carry figures captured before the current generation
+ * into a draft (review R-04). Its collected evidence and everything computed from it
+ * is dropped, so the review collects today's figures again; the old capture time stays
+ * until the new collection replaces it. A checkpoint on current figures is returned
+ * unchanged. */
+export function withoutEarlierEvidence<T extends { capturedAt?: Date | string | null }>(
+  clock: GenerationClock,
+  checkpoint: T,
+): T {
+  if (isCurrentEvidence(clock, checkpoint.capturedAt)) return checkpoint;
+  const fresh: Record<string, unknown> = { ...checkpoint };
+  for (const key of EVIDENCE_DERIVED_KEYS) delete fresh[key];
+  return fresh as T;
+}
+
 export type EvidenceStamp = {
   evidence_generation: string;
   evidence_current: boolean;

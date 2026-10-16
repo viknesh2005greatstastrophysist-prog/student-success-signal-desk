@@ -29700,6 +29700,20 @@ function isCurrentEvidence(clock, capturedAt) {
   if (capturedAt == null || clock.since == null) return true;
   return asDate(capturedAt).getTime() >= clock.since.getTime();
 }
+var EVIDENCE_DERIVED_KEYS = [
+  "evidence",
+  "evidenceRevision",
+  "risk",
+  "composed",
+  "retrieval",
+  "toolEvidence"
+];
+function withoutEarlierEvidence(clock, checkpoint) {
+  if (isCurrentEvidence(clock, checkpoint.capturedAt)) return checkpoint;
+  const fresh2 = { ...checkpoint };
+  for (const key of EVIDENCE_DERIVED_KEYS) delete fresh2[key];
+  return fresh2;
+}
 function stampEvidence(clock, row) {
   const captured = row.evidence_captured_at ?? null;
   return {
@@ -34050,14 +34064,15 @@ async function publishDraft(actor, job, plan) {
         "Recollect evidence before publishing this resumed job"
       );
     await client.query(
-      "INSERT INTO evidence_snapshots(id,generation_id,support_case_id,institution_revision,input_hash,evidence) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
+      "INSERT INTO evidence_snapshots(id,generation_id,support_case_id,institution_revision,input_hash,evidence,captured_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,COALESCE($7::timestamptz,now()))",
       [
         snapshotId,
         job.generation_id,
         caseId,
         cp.evidenceRevision,
         inputHash,
-        JSON.stringify(evidence)
+        JSON.stringify(evidence),
+        cp.capturedAt ?? null
       ]
     );
     await client.query(
@@ -34203,7 +34218,9 @@ async function executePlan(actor, planId, options = {}) {
           "UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *",
           [id, lease]
         );
-        return claimed.rows[0];
+        const row = claimed.rows[0];
+        if (row) row.checkpoint = withoutEarlierEvidence(await loadGenerationClock(client), row.checkpoint);
+        return row;
       });
       if (!job) return { id, skipped: true };
       const heartbeat = startLeaseHeartbeat(() => renewLease(job));

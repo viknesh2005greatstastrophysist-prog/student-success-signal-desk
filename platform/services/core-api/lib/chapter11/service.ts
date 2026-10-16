@@ -69,6 +69,7 @@ import {
   currentEvidenceSql,
   jobEvidenceCapturedSql,
   loadGenerationClock,
+  withoutEarlierEvidence,
 } from "../data-refresh/generation";
 import { persistThenAudit, startLeaseHeartbeat } from "./lease";
 import { frozenLeftOutNote, frozenRecordError, frozenStudentIds } from "./frozen";
@@ -1134,8 +1135,10 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
         "EVIDENCE_REVISION_REQUIRED",
         "Recollect evidence before publishing this resumed job",
       );
+    // The snapshot carries the time the evidence was collected, not the publish time,
+    // so a draft is "Current figures" only when its numbers are (review R-04).
     await client.query(
-      "INSERT INTO evidence_snapshots(id,generation_id,support_case_id,institution_revision,input_hash,evidence) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
+      "INSERT INTO evidence_snapshots(id,generation_id,support_case_id,institution_revision,input_hash,evidence,captured_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,COALESCE($7::timestamptz,now()))",
       [
         snapshotId,
         job.generation_id,
@@ -1143,6 +1146,7 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
         cp.evidenceRevision,
         inputHash,
         JSON.stringify(evidence),
+        cp.capturedAt ?? null,
       ],
     );
     await client.query(
@@ -1312,7 +1316,11 @@ export async function executePlan(
           "UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *",
           [id, lease],
         );
-        return claimed.rows[0];
+        const row = claimed.rows[0];
+        // Evidence collected before the current data generation is never reused
+        // (review R-04): the review collects today's figures again.
+        if (row) row.checkpoint = withoutEarlierEvidence(await loadGenerationClock(client), row.checkpoint);
+        return row;
       });
       if (!job) return { id, skipped: true };
       // Keep the lease alive through slow collection and model calls.

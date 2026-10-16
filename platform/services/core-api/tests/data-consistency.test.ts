@@ -12,6 +12,7 @@ import {
   guardPlansForFamily,
   isCurrentEvidence,
   stampEvidence,
+  withoutEarlierEvidence,
 } from "../lib/data-refresh/generation";
 
 // A stored artifact (plan, draft, risk analysis) belongs to the data generation that was
@@ -84,6 +85,29 @@ test("after a second approval the student and parent see only the newest plan", 
   // older one is never shown on its own.
   const earlier = { ...plan("earlier", "2026-10-13T09:00:00Z"), ...stampEvidence(clock, { evidence_captured_at: "2026-10-12T10:54:48Z" }) };
   assert.deepEqual(guardPlansForFamily([earlier, first]).plans, [first]);
+});
+
+test("a review resumed after a refresh collects today's figures again", () => {
+  const collected = {
+    capturedAt: "2026-10-14T20:00:00Z",
+    evidence: { academic: { values: { attendancePct: 61 } } },
+    evidenceRevision: "41",
+    risk: { score: 70, flagged: true },
+    retrieval: [{ id: "ref" }],
+    composed: { packet: { summary: "Draft on earlier figures" } },
+    toolEvidence: { attendance: 61 },
+    policy: { version: "p1" },
+    nodeTrace: { Coordinator: { status: "completed" } },
+  };
+  // Captured before realistic-v3 was applied: everything computed from the evidence goes.
+  const resumed = withoutEarlierEvidence(clock, collected);
+  assert.deepEqual(Object.keys(resumed).sort(), ["capturedAt", "nodeTrace", "policy"]);
+  assert.equal(collected.evidence.academic.values.attendancePct, 61, "the stored checkpoint object is not mutated");
+  // Captured on the current generation, or nothing captured yet: kept as it is.
+  const current = { ...collected, capturedAt: "2026-10-14T23:08:33Z" };
+  assert.equal(withoutEarlierEvidence(clock, current), current);
+  const queued: { capturedAt?: string; policy: { version: string } } = { policy: { version: "p1" } };
+  assert.equal(withoutEarlierEvidence(clock, queued), queued);
 });
 
 test("metric and risk queries share one current-evidence predicate", () => {

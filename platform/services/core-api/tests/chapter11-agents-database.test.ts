@@ -348,6 +348,9 @@ test(
       assert.equal(drafted.status, "awaiting_faculty");
       assert.equal(drafted.checkpoint.composed.mode, "model");
       const caseId: string = drafted.support_case_id;
+      // Review R-04: the snapshot carries the time the evidence was collected, not the publish time.
+      const snapshotAt = await withCoreTransaction(async (c) => (await c.query<{ captured_at: Date }>("SELECT captured_at FROM evidence_snapshots WHERE support_case_id=$1", [caseId])).rows[0]!.captured_at);
+      assert.equal(new Date(snapshotAt).toISOString(), new Date(drafted.checkpoint.capturedAt).toISOString());
 
       // ---- #12: only the assigned mentor runs plan commands ----
       for (const actor of [hod, governance]) {
