@@ -12,7 +12,9 @@ R-05: a draft on earlier figures offers no Approve button, and the confirmation 
 success message name who can actually see an approved plan.
 Batch B2: stop reasons (a blocked data check, a model that did not answer) stay with the
 assigned mentor; the department head and AI activity see "N reasons, kept with the
-assigned mentor". A frozen record's card is headed "Kept unchanged", not a question."""
+assigned mentor". A frozen record's card is headed "Kept unchanged", not a question.
+P2-2: in "Edit the draft" the Action and Owner columns are read-only (the Core refuses any
+other catalogue label or owner); the summary and the due days are what a mentor edits."""
 
 import json
 import sys
@@ -142,6 +144,34 @@ rerun(at)
 errors = " ".join(e.value for e in at.error)
 assert "Enter the number of days (1 to 14) for every action" in errors, errors
 assert "calls" not in at.session_state, "nothing was saved"
+
+# P2-2: Action and Owner are read-only, and a save keeps the drafted code, label and owner
+from common import ACTION_OWNER_LABELS  # noqa: E402
+
+assert list(ACTION_OWNER_LABELS) == ["assigned_faculty"], "no owner the Core would refuse is offered"
+TAMPERED = """
+_editor = st.data_editor
+def tampered(data, **kwargs):
+    st.session_state["editor_disabled"] = sorted(kwargs.get("disabled") or [])
+    frame = _editor(data, **kwargs)
+    if "Due in days" in frame:
+        frame.loc[0, "Action"] = "Call the parent today"
+        frame.loc[0, "Owner"] = "Student"
+        frame.loc[0, "Due in days"] = 3
+    return frame
+st.data_editor = tampered
+"""
+at = run(TAMPERED + f"ns['render_draft_reviews'](json.loads({json.dumps(json.dumps(QUEUE))}), {{'role': 'faculty'}}, {{}})")
+assert at.session_state["editor_disabled"] == ["Action", "Owner"], at.session_state["editor_disabled"]
+assert "Actions come from the policy catalogue; to change them, decline and start a new review." in captions(at), captions(at)
+next(t for t in at.text_area if t.label == "Reason for this edit").set_value("Shorter deadline for this week.")
+next(b for b in at.button if b.label == "Save new draft version").click()
+rerun(at)
+action, data, _ = at.session_state["calls"][-1]
+assert action == "draft_edit", action
+assert data["packet"]["actions"] == [
+    {"code": "faculty-check-in", "label": "Schedule a 20-minute check-in", "owner": "assigned_faculty", "dueInDays": 3}
+], data["packet"]["actions"]
 
 # R-03: a frozen case at the gate is read-only, and no new review is offered for it
 FROZEN = {**DRAFT, "frozen": True, "evidence_current": False}

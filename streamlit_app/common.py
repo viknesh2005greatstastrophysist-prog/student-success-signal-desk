@@ -50,7 +50,9 @@ SCOPE_BASIS = {"selected": "Your selection", "criteria": "From the request"}
 UUID_TEXT = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
 )
-ACTION_OWNER_LABELS = {"assigned_faculty": "Assigned faculty", "student": "Student"}
+# Every saved action is owned by the assigned faculty member: the Core refuses any
+# other owner when a draft is checked or edited (ADVISOR_REVIEW_REQUIRED).
+ACTION_OWNER_LABELS = {"assigned_faculty": "Assigned faculty"}
 
 
 def today_local() -> date:

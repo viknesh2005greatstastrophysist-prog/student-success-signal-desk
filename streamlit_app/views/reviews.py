@@ -1978,6 +1978,9 @@ def render_draft_reviews(
             st.caption(
                 "Saving creates a new version that is validated again. The decision above always applies to the version shown."
             )
+            st.caption(
+                ":material/lock: Actions come from the policy catalogue; to change them, decline and start a new review."
+            )
             with st.form(
                 f"edit_draft_{selected['id']}_{selected.get('artifact_id')}",
                 border=False,
@@ -1991,21 +1994,20 @@ def render_draft_reviews(
                     {
                         "Action": row.get("label", ""),
                         "Owner": ACTION_OWNER_LABELS.get(
-                            row.get("owner"), "Assigned faculty"
+                            row.get("owner"), labels.humanize(row.get("owner"))
                         ),
                         "Due in days": int(row.get("dueInDays") or 7),
                     }
                     for row in actions
                 ]
+                # Action and Owner are fixed by the policy catalogue: the Core refuses
+                # any other label or owner on revalidation, so only the summary and
+                # the due days can change here (spec conformance P2-2).
                 edited_actions = st.data_editor(
                     pd.DataFrame(action_rows),
                     column_config={
-                        "Action": st.column_config.TextColumn("Action", max_chars=180),
-                        "Owner": st.column_config.SelectboxColumn(
-                            "Owner",
-                            options=list(ACTION_OWNER_LABELS.values()),
-                            required=True,
-                        ),
+                        "Action": st.column_config.TextColumn("Action", disabled=True),
+                        "Owner": st.column_config.TextColumn("Owner", disabled=True),
                         "Due in days": st.column_config.NumberColumn(
                             "Due in days",
                             min_value=1,
@@ -2014,6 +2016,7 @@ def render_draft_reviews(
                             required=True,
                         ),
                     },
+                    disabled=["Action", "Owner"],
                     hide_index=True,
                     num_rows="fixed",
                     width="stretch",
@@ -2031,22 +2034,17 @@ def render_draft_reviews(
                     for index, row in enumerate(edited)
                     if pd.isna(row.get("Due in days"))
                 ]
-                original_codes = [row.get("code") for row in actions]
                 for index, row in enumerate(edited):
                     # packet-v2 keeps each action's personalisation, talking
                     # points and citations; the edit is revalidated server-side.
-                    for key, value in (actions[index] or {}).items():
-                        if key not in {"code", "label", "owner", "dueInDays"}:
+                    # Code, label and owner stay as drafted (read-only above).
+                    original = actions[index] or {}
+                    for key, value in original.items():
+                        if key != "dueInDays":
                             row[key] = value
-                    row["code"] = original_codes[index]
-                    row["label"] = str(row.pop("Action", "")).strip()
-                    row["owner"] = {
-                        label: code for code, label in ACTION_OWNER_LABELS.items()
-                    }.get(
-                        str(row.get("Owner", "Assigned faculty")), "assigned_faculty"
-                    )
                     due = row.get("Due in days")
                     row["dueInDays"] = 7 if pd.isna(due) else int(due)
+                    row.pop("Action", None)
                     row.pop("Owner", None)
                     row.pop("Due in days", None)
                 updated_packet = {
