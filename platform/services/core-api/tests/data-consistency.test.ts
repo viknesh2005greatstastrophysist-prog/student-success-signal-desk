@@ -190,6 +190,24 @@ test(
       assert.equal((await decide(earlierDraft, "rejected")).supportCase.status, "rejected");
       const currentDraft = await draftCaptured("2");
       assert.ok((await decide(currentDraft, "approved")).plan, "a draft on current figures is approved as before");
+
+      // Review R-06: an open draft leaves the gate once the same student has a newer
+      // review that finished (here: checked, no support needed). Read-side only.
+      const review = (status: string, caseId: string | null = null) =>
+        withCoreTransaction(async (c) => {
+          const plan = randomUUID();
+          await c.query("INSERT INTO ch11_plans(id,generation_id,created_by,department_id,status,body,plan_hash) VALUES($1,$2,$3,$4,'locked',$5::jsonb,'h')", [plan, world.generation, world.facultyId, world.departmentId, JSON.stringify({ studentIds: [world.student] })]);
+          await c.query("INSERT INTO ch11_jobs(id,generation_id,plan_id,student_id,faculty_person_id,status,stage,checkpoint,support_case_id) VALUES($1,$2,$3,$4,$5,$6,'complete','{}'::jsonb,$7)", [randomUUID(), world.generation, plan, world.student, world.facultyId, status, caseId]);
+        });
+      const gateDraft = await draftCaptured("2");
+      await review("awaiting_faculty", gateDraft.caseId);
+      const atGate = async () => ((await reviewQueue(world.faculty)).drafts as Array<{ id: string }>).map((d) => d.id);
+      assert.deepEqual(await atGate(), [gateDraft.caseId], "a draft from the student's latest review is at the gate");
+      await review("queued");
+      assert.deepEqual(await atGate(), [gateDraft.caseId], "a newer review that has not run yet changes nothing");
+      await review("not_flagged");
+      assert.deepEqual(await atGate(), [], "a newer finished review supersedes the older draft");
+      assert.equal((await reviewQueue(world.faculty)).awaitingCount, 0);
     } finally {
       await closePool();
     }

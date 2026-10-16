@@ -29595,6 +29595,49 @@ async function lmsEvidence(client, generation, studentId) {
   });
 }
 
+// services/core-api/lib/chapter11/frozen.ts
+var DEFAULT_FROZEN_CASE_IDS = ["d398bbc3-60b1-4843-aabc-4d7f1e0d2a3b"];
+var DEFAULT_FROZEN_REGISTER_NUMBERS = ["01FE23BCI103"];
+function list(value, fallback) {
+  return (value === void 0 ? fallback : value.split(",")).map((item) => item.trim()).filter(Boolean);
+}
+function frozenCaseIds(env = process.env) {
+  return list(env.CORE_FROZEN_CASE_IDS, DEFAULT_FROZEN_CASE_IDS).map((id) => id.toLowerCase());
+}
+function frozenRegisterNumbers(env = process.env) {
+  return list(env.CORE_FROZEN_REGISTER_NUMBERS, DEFAULT_FROZEN_REGISTER_NUMBERS).map((number4) => number4.toUpperCase());
+}
+function isFrozenCase(caseId, env = process.env) {
+  return typeof caseId === "string" && frozenCaseIds(env).includes(caseId.toLowerCase());
+}
+function isFrozenRegisterNumber(registerNumber, env = process.env) {
+  return typeof registerNumber === "string" && frozenRegisterNumbers(env).includes(registerNumber.trim().toUpperCase());
+}
+var FROZEN_MESSAGE = "This record is kept unchanged for the project presentation. It can be read, but not changed.";
+function frozenRecordError() {
+  return new ConflictError("FROZEN_RECORD", FROZEN_MESSAGE);
+}
+function assertCaseNotFrozen(caseId, env = process.env) {
+  if (isFrozenCase(caseId, env)) throw frozenRecordError();
+}
+function frozenLeftOutNote(count) {
+  return `${count} student${count === 1 ? " was" : "s were"} left out: ${count === 1 ? "their record is" : "their records are"} kept unchanged for the project presentation.`;
+}
+async function frozenStudentIds(client, studentIds, env = process.env) {
+  const registers = frozenRegisterNumbers(env);
+  const cases = frozenCaseIds(env);
+  if (!studentIds.length || !registers.length && !cases.length) return /* @__PURE__ */ new Set();
+  const rows = await client.query(
+    `SELECT s.id FROM student_profiles s WHERE s.id=ANY($1::uuid[])
+     AND (upper(s.register_number)=ANY($2::text[]) OR EXISTS(SELECT 1 FROM support_cases c WHERE c.student_id=s.id AND lower(c.id::text)=ANY($3::text[])))`,
+    [studentIds, registers, cases]
+  );
+  return new Set(rows.rows.map((row) => row.id));
+}
+async function assertStudentNotFrozen(client, studentId, env = process.env) {
+  if ((await frozenStudentIds(client, [studentId], env)).size) throw frozenRecordError();
+}
+
 // services/core-api/lib/chapter11/awaiting.ts
 var time3 = (value) => new Date(value).getTime();
 function collapseAwaiting(rows) {
@@ -29618,9 +29661,13 @@ async function awaitingCases(client, generation, actor) {
      AND EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.support_case_id=c.id AND j.generation_id=$1)
      AND ($2='governance' OR s.department_id=$3)
      AND ($2<>'faculty' OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$4))
-     AND NOT EXISTS(SELECT 1 FROM support_cases later WHERE later.student_id=c.student_id AND later.generation_id=c.generation_id AND later.opened_at>c.opened_at AND later.status IN ('approved','rejected'))
+     AND (lower(c.id::text)=ANY($5::text[]) OR upper(s.register_number)=ANY($6::text[]) OR (
+       NOT EXISTS(SELECT 1 FROM ch11_jobs own JOIN ch11_jobs later ON later.student_id=own.student_id AND later.generation_id=own.generation_id AND later.created_at>own.created_at
+         WHERE own.support_case_id=c.id AND own.generation_id=$1 AND (later.status IN ('not_flagged','awaiting_faculty','failed','blocked') OR later.escalated_at IS NOT NULL))
+       AND NOT EXISTS(SELECT 1 FROM support_cases later WHERE later.student_id=c.student_id AND later.generation_id=c.generation_id AND later.opened_at>c.opened_at
+         AND NOT EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.support_case_id=later.id))))
      ORDER BY c.id,r.started_at DESC,a.artifact_version DESC`,
-    [generation, actor.role, actor.departmentId ?? null, actor.personId]
+    [generation, actor.role, actor.departmentId ?? null, actor.personId, frozenCaseIds(), frozenRegisterNumbers()]
   );
   return collapseAwaiting(rows.rows);
 }
@@ -30180,49 +30227,6 @@ async function withdrawRegistration(actor, registrationId, commandId, transactio
 async function requireOpenSubmission(client, generation, studentId, termId) {
   const status = await client.query("SELECT status FROM registration_submissions WHERE generation_id=$1 AND student_id=$2 AND term_id=$3", [generation, studentId, termId]);
   if (status.rows[0]?.status === "submitted") throw new ConflictError("REGISTRATION_SUBMITTED", "Your course selection has been submitted. Ask your HoD to reopen it for changes.");
-}
-
-// services/core-api/lib/chapter11/frozen.ts
-var DEFAULT_FROZEN_CASE_IDS = ["d398bbc3-60b1-4843-aabc-4d7f1e0d2a3b"];
-var DEFAULT_FROZEN_REGISTER_NUMBERS = ["01FE23BCI103"];
-function list(value, fallback) {
-  return (value === void 0 ? fallback : value.split(",")).map((item) => item.trim()).filter(Boolean);
-}
-function frozenCaseIds(env = process.env) {
-  return list(env.CORE_FROZEN_CASE_IDS, DEFAULT_FROZEN_CASE_IDS).map((id) => id.toLowerCase());
-}
-function frozenRegisterNumbers(env = process.env) {
-  return list(env.CORE_FROZEN_REGISTER_NUMBERS, DEFAULT_FROZEN_REGISTER_NUMBERS).map((number4) => number4.toUpperCase());
-}
-function isFrozenCase(caseId, env = process.env) {
-  return typeof caseId === "string" && frozenCaseIds(env).includes(caseId.toLowerCase());
-}
-function isFrozenRegisterNumber(registerNumber, env = process.env) {
-  return typeof registerNumber === "string" && frozenRegisterNumbers(env).includes(registerNumber.trim().toUpperCase());
-}
-var FROZEN_MESSAGE = "This record is kept unchanged for the project presentation. It can be read, but not changed.";
-function frozenRecordError() {
-  return new ConflictError("FROZEN_RECORD", FROZEN_MESSAGE);
-}
-function assertCaseNotFrozen(caseId, env = process.env) {
-  if (isFrozenCase(caseId, env)) throw frozenRecordError();
-}
-function frozenLeftOutNote(count) {
-  return `${count} student${count === 1 ? " was" : "s were"} left out: ${count === 1 ? "their record is" : "their records are"} kept unchanged for the project presentation.`;
-}
-async function frozenStudentIds(client, studentIds, env = process.env) {
-  const registers = frozenRegisterNumbers(env);
-  const cases = frozenCaseIds(env);
-  if (!studentIds.length || !registers.length && !cases.length) return /* @__PURE__ */ new Set();
-  const rows = await client.query(
-    `SELECT s.id FROM student_profiles s WHERE s.id=ANY($1::uuid[])
-     AND (upper(s.register_number)=ANY($2::text[]) OR EXISTS(SELECT 1 FROM support_cases c WHERE c.student_id=s.id AND lower(c.id::text)=ANY($3::text[])))`,
-    [studentIds, registers, cases]
-  );
-  return new Set(rows.rows.map((row) => row.id));
-}
-async function assertStudentNotFrozen(client, studentId, env = process.env) {
-  if ((await frozenStudentIds(client, [studentId], env)).size) throw frozenRecordError();
 }
 
 // services/core-api/lib/experience-commands.ts

@@ -3,13 +3,22 @@
  * A case is awaiting when it is open (`awaiting_faculty`), has a job in this
  * generation and carries an active AI draft: the latest model run's latest
  * artifact. Legacy rule-based drafts are never counted. A student appears once,
- * with the most recent such draft; their earlier open drafts stay reachable as
- * history. An open case is superseded when the same student has a later case
- * that a mentor has already decided, so approving the latest draft cannot
- * resurface an older one. Mentor Overview, Support reviews, the department
- * overview and the review queue all call this module. */
+ * with the most recent such draft.
+ *
+ * An open case is superseded (review R-06) when the same student has a later
+ * review in this generation: a job created after the case's own job that has
+ * finished one way or another (not flagged, drafted, failed, blocked or handed
+ * to the mentor), or a later case without a job. This is the same "latest
+ * review per student" that AI activity and the department head's list use, so
+ * an older draft never stays at the gate after a newer review, and approving
+ * the latest draft cannot resurface an older one. A review still queued or
+ * running does not supersede anything yet. The rule is read-side only: nothing
+ * is written and no status changes. Frozen records (frozen.ts) are listed as
+ * they are. Mentor Overview, Support reviews, the department overview and the
+ * review queue all call this module. */
 import type { PoolClient } from "pg";
 import type { ActorContext } from "@aura/contracts";
+import { frozenCaseIds, frozenRegisterNumbers } from "./frozen";
 
 export type AwaitingDraft = {
   case_id: string;
@@ -60,9 +69,13 @@ export async function awaitingCases(
      AND EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.support_case_id=c.id AND j.generation_id=$1)
      AND ($2='governance' OR s.department_id=$3)
      AND ($2<>'faculty' OR EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=s.id AND m.faculty_person_id=$4))
-     AND NOT EXISTS(SELECT 1 FROM support_cases later WHERE later.student_id=c.student_id AND later.generation_id=c.generation_id AND later.opened_at>c.opened_at AND later.status IN ('approved','rejected'))
+     AND (lower(c.id::text)=ANY($5::text[]) OR upper(s.register_number)=ANY($6::text[]) OR (
+       NOT EXISTS(SELECT 1 FROM ch11_jobs own JOIN ch11_jobs later ON later.student_id=own.student_id AND later.generation_id=own.generation_id AND later.created_at>own.created_at
+         WHERE own.support_case_id=c.id AND own.generation_id=$1 AND (later.status IN ('not_flagged','awaiting_faculty','failed','blocked') OR later.escalated_at IS NOT NULL))
+       AND NOT EXISTS(SELECT 1 FROM support_cases later WHERE later.student_id=c.student_id AND later.generation_id=c.generation_id AND later.opened_at>c.opened_at
+         AND NOT EXISTS(SELECT 1 FROM ch11_jobs j WHERE j.support_case_id=later.id))))
      ORDER BY c.id,r.started_at DESC,a.artifact_version DESC`,
-    [generation, actor.role, actor.departmentId ?? null, actor.personId],
+    [generation, actor.role, actor.departmentId ?? null, actor.personId, frozenCaseIds(), frozenRegisterNumbers()],
   );
   return collapseAwaiting(rows.rows);
 }

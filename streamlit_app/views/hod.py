@@ -73,9 +73,47 @@ def mentor_workload(
 
 FLAG_OUTCOMES = {"awaiting_faculty", "awaiting_review", "human_review", "approved", "published",
                  "rejected", "declined", "needs_human", "ai_unavailable", "failed", "blocked"}
+AWAITING_OUTCOMES = ("awaiting_faculty", "awaiting_review", "human_review")
 
 
-def render_flagged_students(review: dict[str, Any], waiting_total: int = 0) -> None:
+def _drafts(n: int) -> str:
+    return f"{n} draft{'s' if n != 1 else ''}"
+
+
+def waiting_gap_note(listed: set[str], queue: dict[str, Any]) -> str | None:
+    """Why the Drafts waiting card and the flagged list disagree, in plain words.
+
+    The card counts each student's latest open AI draft (one rule in the Core, the
+    same one behind the mentor's gate): an older draft drops out once the student
+    has a newer review. The list shows each student's latest review. They differ
+    only for a draft on earlier figures (kept on record unchanged), a draft whose
+    student has a newer review still running, or a listed student whose draft
+    comes from the retired rule-based path."""
+    drafts = queue.get("drafts") or []
+    counted = {str(d.get("student_id")) for d in drafts}
+    outside = [d for d in drafts if str(d.get("student_id")) not in listed]
+    earlier = sum(1 for d in outside if d.get("evidence_current") is False)
+    running = len(outside) - earlier
+    legacy = {str(d.get("student_id")) for d in queue.get("legacyDrafts") or []}
+    retired = len({sid for sid in listed - counted if sid in legacy})
+    parts = []
+    if earlier:
+        parts.append(f"{_drafts(earlier)} from a review on earlier figures, kept on record unchanged")
+    if running:
+        parts.append(f"{_drafts(running)} for students whose newer review is still running")
+    notes = []
+    if parts:
+        notes.append("The Drafts waiting card also counts " + " and ".join(parts) + ".")
+    if retired:
+        notes.append(
+            f"{retired} student{'s' if retired != 1 else ''} in the list "
+            f"{'wait' if retired != 1 else 'waits'} on a draft from the retired rule-based path, "
+            "which the card does not count."
+        )
+    return " ".join(notes) or None
+
+
+def render_flagged_students(review: dict[str, Any], queue: dict[str, Any] | None = None) -> None:
     """Every student whose latest review flagged them, a page at a time. No score,
     band or draft content: those stay with the student's own mentor."""
     from views.operations import latest_per_student
@@ -99,16 +137,13 @@ def render_flagged_students(review: dict[str, Any], waiting_total: int = 0) -> N
         "Every student the agents flagged in their latest review, and where their plan stands. "
         "Scores, reasons and draft content are visible only to the student's mentor.",
     )
+    listed = {str(j.get("student_id")) for j in flagged if str(j.get("status")) in AWAITING_OUTCOMES}
+    note = waiting_gap_note(listed, queue or {})
+    if note:
+        st.caption(note)
     if not flagged:
         ui.empty_state("No flagged students", "The latest reviews flagged nobody.")
         return
-    in_list = sum(1 for j in flagged if str(j.get("status")) in ("awaiting_faculty", "awaiting_review", "human_review"))
-    if waiting_total > in_list:
-        extra = waiting_total - in_list
-        st.caption(
-            f"The Drafts waiting card also counts {extra} older draft{'s' if extra != 1 else ''} from a review on "
-            "earlier figures. It is kept on record unchanged and is not part of anyone's latest review."
-        )
     page = paged(flagged, "hod_flagged_page", noun="flagged students")
     dataframe(
         [
@@ -131,7 +166,9 @@ def render_flagged_students(review: dict[str, Any], waiting_total: int = 0) -> N
 
 
 def overview_page() -> None:
-    overview, review = load_many([("overview", None), ("review_overview", None)])
+    overview, review, queue = load_many(
+        [("overview", None), ("review_overview", None), ("review_queue", None)]
+    )
     ui.page_header(
         "Department overview",
         "How the department's students and support reviews are doing, in aggregate.",
@@ -153,13 +190,14 @@ def overview_page() -> None:
                 else []
             ),
             {
+                # The review queue's own count: the same rule as the mentor's gate.
                 "label": "Drafts waiting for a mentor",
-                "value": value(counts, "pending_reviews", default=0),
+                "value": value(queue, "awaitingCount", default=value(counts, "pending_reviews", default=0)),
                 "icon": ":material/front_hand:",
             },
         ]
     )
-    render_flagged_students(review, int(value(counts, "pending_reviews", default=0) or 0))
+    render_flagged_students(review, queue)
     render_review_trends(review)
     ui.section("Mentor workload", "Mentees per mentor. Details are under Mentors.")
     dataframe(
