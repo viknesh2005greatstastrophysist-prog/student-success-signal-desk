@@ -14,7 +14,8 @@ decision time includes them; the page caption promises only what the table shows
 R-11: the student and parent "Attendance this term" card shows the Core's pooled
 figure (the value the risk check and the plan cite), not a mean of course percentages.
 Batch B2, P2-3: the mentor's Today lists the reviews that stopped and wait on the mentor
-(each student's latest review only) and opens that plan under Reviews > Start a review."""
+(each student's latest review only) and opens that plan under Reviews > Start a review.
+P2-4: Mentees > Outcomes shows the support trends for the mentor's own review cycles."""
 
 import json
 import sys
@@ -214,5 +215,18 @@ at = run(
 from apptest_util import picker  # noqa: E402
 
 assert picker(at, "Plan").value == "p2", picker(at, "Plan").value
+
+# P2-4: the mentor's Outcomes view ends with the review trends (scoped by the Core)
+TRENDS = {"students": STUDENTS, "plans": [{"id": "p1", "created_at": "2026-10-16T10:00:00Z", "body": {}}],
+          "trends": [{"cycle_id": "p1", "day": "2026-10-16 / p1", "reviewed": 2, "flagged": 1, "approved": 1}]}
+at = run(
+    "st.session_state['actor'] = {'role': 'faculty'}\n"
+    "st.session_state['mentees_view'] = 'Outcomes'\n"
+    f"REVIEW = {data(TRENDS)}\n"
+    "ns['load_many'] = lambda requests: [{'plans': []} if name == 'review_queue' else REVIEW for name, _ in requests]\n"
+    "import views.mentor\nviews.mentor.mentees_body()"
+)
+heads = [h.value for h in at.subheader]
+assert "Intervention outcomes" in heads and "Support trends by review cycle" in heads, heads
 
 print("verify_count_fixes: ok")

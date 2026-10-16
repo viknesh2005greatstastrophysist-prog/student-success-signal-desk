@@ -25,6 +25,7 @@ from common import (
     select_id,
     today_local,
 )
+from views.metrics import render_review_trends
 from views.operations import latest_per_student
 from views.profile import pick_student, render_profile
 from views.reviews import (
@@ -633,6 +634,8 @@ def mentees_body() -> None:
         return
     if view == "Outcomes":
         render_outcomes(queue, actor)
+        # The Core scopes the trends to this mentor's students.
+        render_review_trends(review)
         return
     students = overview.get("students") or []
     if not students:
