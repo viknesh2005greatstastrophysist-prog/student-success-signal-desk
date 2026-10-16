@@ -466,3 +466,37 @@ Other surfaces read and checked, nothing to change: evidence snapshots, agent ru
 - 1 student (VISHAL KHAIRAMODE) failed validation after the two allowed repairs and was handed to the mentor (`REPAIR_BUDGET_EXHAUSTED`); a fresh single-student run then produced a valid draft.
 
 **Logic fixes found while checking.** AI activity counted every run, so "Students checked" read 562 for 321 students and a superseded escalation still counted. Runs now shows each student's latest review (320 checked, 83 drafted, 0 handed to a mentor) and says how many earlier reviews are kept; planned reviews replaced by a newer one are no longer listed as waiting; the drafts card is labelled as covering all drafts; Evaluation's escalation card says it covers all reviews.
+
+## Final end-to-end test against the lab manual (16 to 17 Oct, live data)
+
+Scope, as the owner set it: all six workspaces, role-based visibility and the approval flow, checked against the whole Build Book with Chapter 11 as the project chapter; both the hosted app (signed-out checks only) and a local run of the pushed code against the live US database; fixes pushed as verified. Orchestrated by Claude with Opus 5.5 agents (two read-only reviews, three fix batches). Every test here was run by Claude as the owner's substitute mentor and is not a faculty sign-off (Brief 10 stays the owner's).
+
+**Spec set.** `docs/SPEC_CONFORMANCE_2026-10-16.md`: 56 Chapter 11 requirements (44 verified in code, 1 runtime check, 9 gaps, 2 deferred by the owner: the real-case session and best-of-N drafting) and 14 cross-cutting requirements from the other chapters (13 verified, 1 gap). No P1 gap. The logic review (`runtime/streamlit-project/e2e/review-2026-10-16.md`, private) found 18 items: 3 P1, 10 P2, 5 P3.
+
+**Fixed and pushed, CI green (21 commits, `cadb3df` to `c6506c8`; runs 38952291166, 38955611463, 38958052163):**
+
+| Batch | Items | Commits |
+|---|---|---|
+| A, safety | R-01 department head and AI activity no longer receive judge reasons or draft text; R-02 picker search with no match and a cleared due-days cell no longer crash; R-03 Core-side frozen records keep student 021 untouched (`chapter11/frozen.ts`, `FROZEN_RECORD`); R-05 a draft on earlier figures cannot be approved (`EVIDENCE_EARLIER_FIGURES`) and the approval message names who will see the plan; R-12 only the assigned mentor edits drafts, records outcomes and schedules follow-ups, a withdrawn plan returns only by restore; R-13 an engine worker restarts after an out-of-step reply | `cadb3df` `f554d01` `8b2f877` `ce39771` `6a98283` `46a354d` |
+| B1, counts and Core | R-06 an older open draft leaves the gate once the same student has a newer review (live instance: Rohan Baddur, 14 Oct and 16 Oct), department head card and list agree with the real caption; R-07 the family sees only the newest current plan; R-08 "Waiting for AI" counts each student once; R-09 the flagged list uses the risk check's flag, stopped reviews listed apart; R-10 declines count as decisions; R-11 one pooled attendance figure on the student and parent overview; R-04 a review resumed after a data refresh collects again and the draft records when its evidence was collected; P3-3 the active term is read instead of a fixed code | `0c32e18` `9fe95d3` `f735f0a` `5e43474` `3205b5e` `4aca501` `3da7991` `7543024` |
+| B2, UI and docs | the remaining stop-reason text withheld from non-mentor roles (reason count only), a frozen record's card reads "Kept unchanged"; P2-2 edit form keeps actions and owners read-only; P2-3 "Needs your decision" on the mentor's Today; P2-4 mentor trends under Mentees > Outcomes; R-14 to R-18 wording (visible to family, who can see a profile, students without a mentor, approved then withdrawn, what a parent's account does not share); earlier-figures caption explains students without a button; WORK_STATUS standing decisions and open items | `206dcc5` `45d3ad8` `05fe8a2` `6b5752a` `c08fc2a` `aa98717` `c6506c8` |
+
+New offline checks in CI: `verify_safety_fixes.py`, `verify_count_fixes.py`; tests for `frozen.ts`, `active-term.ts`, the safe job projection, R-06, R-07, R-10, R-11 and R-04.
+
+**Verified on the final code (`c6506c8`), local run on 8503 against the live US database:**
+- `e2e/routes.py`: 22 of 22 page addresses pass (signed out, signed in from the address, another workspace's address), run before and after the fixes.
+- `e2e/walk.py --pass final3`: 9 role sessions, 137 views, 0 exceptions, 0 error alerts, 0 console errors, 0 failed requests, 0 leaked technical text, 0 forbidden pages (pass `final2` before the fixes: 139 views, same zeros).
+- Core probe through `overview()` as the department head and as AI activity: validation carries judge status and scores only; no `reasons`, `modelAttempts`, `failures` or `diagnoses`; stop reasons arrive as a count. Scripted sign-in as the department head into AI activity: Agent graph shows model calls, no "Judge:" reason rows, no decide control at the Mentor gate.
+- Mentor 3 at the gate for student 021: "Kept unchanged" with the read-only note; no Approve, Edit or Decline; the "Review again" shortcut is gone. Department head Overview: "Drafts waiting for a mentor 84", "Flagged students (83)", caption names the frozen earlier-figures draft as the difference. Mentor 1 Today: "Also waiting (35)", 36 in all, "Needs your decision" with its empty state.
+- Hosted app, signed out: `/`, `/runs`, `/support-plan`, `/today` show the sign-in form (no "Page not found"); the app redeployed after each push.
+
+**Approval flow, write paths (local run on 8502 against the LOCAL Postgres, synthetic data; the desktop's auto-mode guard blocked the final "Yes, approve and publish" click on the live database, so no live decision was made):**
+- Before any decision the student and the parent of the test student received no plan (probe through `experienceStudent` as each actor, the same Core call the pages use).
+- Rationale under eight characters: refused. Approve: confirmation "Share this plan with <student> and their parent?"; Cancel left the gate count unchanged. Approve again, "Yes, approve and publish": gate 3 to 2 (with the decline below, 1), `faculty_decisions` approved, `support_plans` visible, and both the student and the parent then received the plan.
+- Decline (second student): recorded as rejected, left the gate, the family still receives nothing.
+- Edit: summary change with a reason saved version 3, "Passed every check", "This version includes edits by the mentor account". Withdraw with a reason: visible false, family receives nothing, Outcomes shows the withdrawn notice. Restore version 1: visible again, publication version 2, family receives the plan.
+- The six Core database suites also pass on the local Postgres in disposable schemas (13 tests), and in CI on every push; the test schemas were dropped afterwards.
+
+**Left open, with reasons:** P2-5 informational data-model fields (needs a new data generation, which would mark all 84 current drafts as earlier figures); P3-1 one-click withdraw (cosmetic); the HoD cannot start a review (owner decision E2E #12, recorded); the 60 s read cache (accepted, recorded); 84 drafts still wait for the three mentors on the live app, and the live approval itself is the owner's to make as the real mentor sign-off.
+
+**Usage:** weekly all-models usage went from 42% to 49% of the 69% cap (five Opus agents, about 1.64 M agent tokens, plus the main session).
