@@ -242,6 +242,21 @@ def ai_unavailable_rows(jobs: list[dict[str, Any]]) -> list[dict[str, str]]:
     return rows
 
 
+def withheld_reason_count(job: dict[str, Any]) -> int | None:
+    """How many stop reasons the Core kept with the assigned mentor, or None when this
+    account receives the reasons themselves. They can name courses and figures, so
+    the department head and AI activity get only the count (review R-01)."""
+    if "failure_reason_count" not in job:
+        return None
+    diagnosis = job.get("failure_diagnosis")
+    in_diagnosis = diagnosis.get("reasonCount") if isinstance(diagnosis, dict) else 0
+    return max(int(job.get("failure_reason_count") or 0), int(in_diagnosis or 0))
+
+
+def reasons_kept_line(count: int) -> str:
+    return f"{count} reason{'s' if count != 1 else ''}, kept with the assigned mentor."
+
+
 def render_ai_unavailable(
     selected_plan: dict[str, Any], jobs: list[dict[str, Any]], can_plan: bool
 ) -> None:
@@ -255,9 +270,14 @@ def render_ai_unavailable(
         icon=":material/cloud_off:",
     )
     rows = ai_unavailable_rows(waiting)
+    withheld = [withheld_reason_count(job) for job in waiting]
     if rows:
         with st.expander("Why no model answered", icon=":material/troubleshoot:"):
             dataframe(rows)
+    elif any(count is not None for count in withheld):
+        st.caption(
+            ":material/lock: " + reasons_kept_line(sum(count or 0 for count in withheld))
+        )
     if can_plan and not selected_plan.get("paused"):
         retry = st.button(
             "Retry AI review",
@@ -859,6 +879,9 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 title="Needs your decision",
             )
             with st.expander("Diagnosis", icon=":material/troubleshoot:"):
+                withheld = withheld_reason_count(job)
+                if withheld is not None:
+                    st.caption(":material/lock: " + reasons_kept_line(withheld))
                 render_diagnoses(job.get("failure_diagnosis"))
                 st.json(job.get("failure_diagnosis") or {})
                 st.caption(
@@ -1756,7 +1779,8 @@ def render_draft_reviews(
     edit_key = f"edit_open_{selected['id']}_{selected.get('artifact_id')}"
     with st.container(border=True, key="gate_decision"):
         ui.sheet_header(
-            "Approve this plan?",
+            # A frozen record offers no decision, so the card does not ask for one.
+            "Kept unchanged" if selected.get("frozen") else "Approve this plan?",
             " · ".join(
                 part
                 for part in (student_name, str(selected.get("register_number") or ""))

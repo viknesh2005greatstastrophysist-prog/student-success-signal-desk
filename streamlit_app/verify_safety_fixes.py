@@ -9,7 +9,10 @@ a cleared "Due in days" cell in "Edit the draft" gives a plain error, not a cras
 R-03: a frozen record (the Core marks the queue row frozen) is shown read-only at the
 gate and is never offered for a new review.
 R-05: a draft on earlier figures offers no Approve button, and the confirmation and the
-success message name who can actually see an approved plan."""
+success message name who can actually see an approved plan.
+Batch B2: stop reasons (a blocked data check, a model that did not answer) stay with the
+assigned mentor; the department head and AI activity see "N reasons, kept with the
+assigned mentor". A frozen record's card is headed "Kept unchanged", not a question."""
 
 import json
 import sys
@@ -148,6 +151,8 @@ for label in ("Approve and publish", "Edit", "Decline", "Save new draft version"
     assert label not in buttons, (label, buttons)
 assert any("kept unchanged for the project presentation" in i.value for i in at.info), [i.value for i in at.info]
 assert not [b for b in buttons if b.startswith("Review ")], buttons
+heads = " ".join(el.proto.body for el in at.get("html"))
+assert "Kept unchanged" in heads and "Approve this plan?" not in heads, heads
 # the same draft without the flag offers the re-review button (so the check above means something)
 at = run(f"ns['render_draft_reviews'](json.loads({json.dumps(json.dumps({'drafts': [{**FROZEN, 'frozen': False}]}))}), {{'role': 'faculty'}}, {{}})")
 assert any(b.label.startswith("Review ") for b in at.button), [b.label for b in at.button]
@@ -180,5 +185,47 @@ for access, audience in ((True, "Fictional Student and their parent"), (False, "
     action, data, success = at.session_state["calls"][-1]
     assert action == "case_decide" and data["decision"] == "approved", (action, data)
     assert success == f"Approved and published: {audience} can now see the plan.", success
+
+# B2 fix 1: stop reasons. The Core sends other roles a count and an empty list.
+PLAN_ID = "11111111-1111-4111-8111-111111111111"
+STUDENTS = [{"id": "s1", "display_name": "FICTIONAL ONE"}, {"id": "s2", "display_name": "FICTIONAL TWO"}]
+PLAN = {"id": PLAN_ID, "revision": 1, "status": "locked", "paused": False,
+        "body": {"request": "Check my mentees", "domain": "attendance", "studentIds": ["s1", "s2"], "questions": []}}
+REASONS = ["Attendance 61% in CS201 is below the threshold", "groq qwen/qwen3.8-27b: MODEL_HTTP_503"]
+
+
+def stopped_jobs(shaped: bool) -> list[dict]:
+    """One review no model answered, one handed to the mentor, as the Core sends them."""
+    waiting = {"id": "j1", "plan_id": PLAN_ID, "student_id": "s1", "status": "ai_unavailable",
+               "error_code": "AI_UNAVAILABLE", "failure_reasons": REASONS,
+               "failure_diagnosis": {"code": "AI_UNAVAILABLE", "attempts": 0, "reasons": REASONS}}
+    handed = {"id": "j2", "plan_id": PLAN_ID, "student_id": "s2", "status": "needs_human",
+              "error_code": "DATA_BLOCKED", "failure_reasons": REASONS[:1],
+              "failure_diagnosis": {"code": "DATA_BLOCKED", "attempts": 3, "reasons": REASONS[:1]}}
+    if shaped:
+        for job, count in ((waiting, 2), (handed, 1)):
+            job.update(failure_reasons=[], failure_reason_count=count,
+                       failure_diagnosis={**{k: job["failure_diagnosis"][k] for k in ("code", "attempts")}, "reasonCount": count})
+    return [waiting, handed]
+
+
+def workbench_text(jobs: list[dict], role: str) -> str:
+    review = {"modelConfigured": True, "students": STUDENTS, "policies": [], "plans": [PLAN], "jobs": jobs}
+    at = run(f"ns['render_plan_workbench'](json.loads({json.dumps(json.dumps(review))}), {{'role': {role!r}}})")
+    parts = [c.value for c in at.caption] + [m.value for m in at.markdown] + [w.value for w in at.warning]
+    parts += [df.value.to_csv(index=False) for df in at.dataframe] + [str(j.proto.body) for j in at.json]
+    parts += [el.proto.body for el in at.get("html")]
+    return "\n".join(parts)
+
+
+for role in ("hod", "governance"):
+    shown = workbench_text(stopped_jobs(shaped=True), role)
+    assert "2 reasons, kept with the assigned mentor." in shown, shown
+    assert "1 reason, kept with the assigned mentor." in shown, shown
+    assert "CS201" not in shown and "MODEL_HTTP_503" not in shown, shown
+# the assigned mentor still reads the reasons themselves, and no withheld line
+shown = workbench_text(stopped_jobs(shaped=False), "faculty")
+assert "MODEL_HTTP_503" in shown and "CS201" in shown, shown
+assert "kept with the assigned mentor" not in shown, shown
 
 print("verify_safety_fixes: ok")

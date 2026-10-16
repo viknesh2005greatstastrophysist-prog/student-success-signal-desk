@@ -125,3 +125,38 @@ test("review R-09: other roles learn whether a review flagged the student, never
   for (const status of ["blocked", "failed"])
     assert.equal(safeJobRow({ id: "j3", status, risk: null }).flagged, false);
 });
+
+test("review R-01: stop reasons stay with the assigned mentor; other roles get how many there were", () => {
+  const reasons = ["Attendance 61% in CS201 is below the 75% threshold", "Marks for CS202 are missing"];
+  const blocked = safeJobRow({
+    id: "j4",
+    status: "blocked",
+    risk: null,
+    failure_diagnosis: { code: "DATA_BLOCKED", attempts: 1, reasons },
+    failure_reasons: reasons,
+  });
+  assert.deepEqual(blocked.failure_diagnosis, { code: "DATA_BLOCKED", attempts: 1, reasonCount: 2 });
+  assert.deepEqual(blocked.failure_reasons, []);
+  assert.equal(blocked.failure_reason_count, 2);
+  const text = JSON.stringify(blocked);
+  for (const leak of ["CS201", "CS202", "61%", "threshold"]) assert.equal(text.includes(leak), false, leak);
+  // An escalated job's diagnosis is its validation report: the shaped report, with the repair count.
+  const escalated = safeJobRow({
+    id: "j5",
+    status: "needs_human",
+    risk: null,
+    failure_diagnosis: { valid: false, escalated: true, repairs: [{ attempt: 1 }, { attempt: 2 }], failures: [{ field: "actions", message: "draft words" }] },
+    failure_reasons: [],
+  });
+  assert.equal((escalated.failure_diagnosis as { repairCount: number }).repairCount, 2);
+  assert.equal(escalated.failure_reason_count, 0);
+  assert.equal(JSON.stringify(escalated).includes("draft words"), false);
+  // A lease that ran out stores no reasons; a job that never stopped has no diagnosis.
+  assert.deepEqual(
+    safeJobRow({ id: "j6", status: "needs_human", failure_diagnosis: { code: "LEASE_EXPIRED", attempts: 3, reasons: [] } }).failure_diagnosis,
+    { code: "LEASE_EXPIRED", attempts: 3, reasonCount: 0 },
+  );
+  const plain = safeJobRow({ id: "j7", status: "not_flagged", risk: null });
+  assert.equal(plain.failure_diagnosis, null);
+  assert.equal(plain.failure_reason_count, 0);
+});

@@ -1709,13 +1709,17 @@ function safeJudge(raw: unknown): Loose | null {
   };
 }
 
+const countOf = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+
 /** An escalated job stores its whole validation report as the failure
- * diagnosis; other stops store a code, the attempt count and plain reasons. */
+ * diagnosis; other stops store a code, the attempt count and plain reasons.
+ * Those reasons can name courses and figures (a blocked data check, for
+ * example), so other roles learn how many there were, never the text. */
 function safeFailureDiagnosis(raw: unknown): Loose | null {
   const diagnosis = looseObject(raw);
   if (!diagnosis) return null;
   return typeof diagnosis.code === "string"
-    ? pickKeys(diagnosis, ["code", "attempts", "reasons"])
+    ? { ...pickKeys(diagnosis, ["code", "attempts", "repairCount"]), reasonCount: countOf(diagnosis.reasons) }
     : safeValidation(diagnosis);
 }
 
@@ -1772,8 +1776,16 @@ export function riskFlagged(risk: unknown): boolean {
 
 /** A review job as the department head and AI activity receive it: the review
  * mechanics and whether the student was flagged, never the score, band or signals
- * (E2E log #8) and never draft-derived text (review R-01). */
-type SafeJobFields = { risk: null; flagged: boolean; validation: Loose | null; failure_diagnosis: Loose | null };
+ * (E2E log #8) and never draft-derived text or stop reasons (review R-01): the
+ * reasons stay with the assigned mentor, other roles get their count. */
+type SafeJobFields = {
+  risk: null;
+  flagged: boolean;
+  validation: Loose | null;
+  failure_diagnosis: Loose | null;
+  failure_reasons: never[];
+  failure_reason_count: number;
+};
 export function safeJobRow<T extends Loose>(row: T): Omit<T, keyof SafeJobFields> & SafeJobFields {
   return {
     ...row,
@@ -1781,6 +1793,8 @@ export function safeJobRow<T extends Loose>(row: T): Omit<T, keyof SafeJobFields
     flagged: riskFlagged(row.risk),
     validation: safeValidation(row.validation),
     failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis),
+    failure_reasons: [],
+    failure_reason_count: countOf(row.failure_reasons),
   };
 }
 

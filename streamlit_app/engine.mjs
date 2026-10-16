@@ -34552,10 +34552,11 @@ function safeJudge(raw) {
     ...previous ? { previous } : {}
   };
 }
+var countOf = (value) => Array.isArray(value) ? value.length : 0;
 function safeFailureDiagnosis(raw) {
   const diagnosis = looseObject2(raw);
   if (!diagnosis) return null;
-  return typeof diagnosis.code === "string" ? pickKeys(diagnosis, ["code", "attempts", "reasons"]) : safeValidation(diagnosis);
+  return typeof diagnosis.code === "string" ? { ...pickKeys(diagnosis, ["code", "attempts", "repairCount"]), reasonCount: countOf(diagnosis.reasons) } : safeValidation(diagnosis);
 }
 function safeValidation(raw) {
   const validation = looseObject2(raw);
@@ -34596,7 +34597,9 @@ function safeJobRow(row) {
     risk: null,
     flagged: riskFlagged(row.risk),
     validation: safeValidation(row.validation),
-    failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis)
+    failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis),
+    failure_reasons: [],
+    failure_reason_count: countOf(row.failure_reasons)
   };
 }
 async function overview(actor) {
