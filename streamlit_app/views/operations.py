@@ -194,7 +194,7 @@ def runs_body(actor: dict[str, Any]) -> None:
                     people.get(str(row.get("student_id")), {}).get("mentor_name") or "Not assigned"
                 ),
                 "When": labels.nice_time(row.get("updated_at") or row.get("created_at")),
-                "What happened": labels.run_outcome(row.get("status"), row.get("error_code")),
+                "What happened": labels.run_outcome(row.get("status"), row.get("error_code"), row.get("intervention_status")),
                 "Drafted by": labels.drafted_by(
                     row.get("mode"), row.get("model_id"), row.get("status")
                 ),
@@ -274,7 +274,7 @@ def audit_page() -> None:
                 format_func=lambda rid: next(
                     (
                         f"{names.get(str(row.get('student_id')), 'Student')} · "
-                        f"{labels.run_outcome(row.get('status'), row.get('error_code'))} · "
+                        f"{labels.run_outcome(row.get('status'), row.get('error_code'), row.get('intervention_status'))} · "
                         f"{labels.nice_time(row.get('updated_at'))} · run {labels.short_ref(rid)}"
                         for row in replayable
                         if str(row.get("run_id", "")) == rid

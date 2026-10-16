@@ -306,5 +306,6 @@ def profile_page() -> None:
         ]
     )
     st.caption(
-        "Only you, your parent or guardian and your mentor can see this record."
+        "Your mentor, your department head and your course teachers can also see your college record. "
+        "Your parent or guardian sees the parts the college shares with their account."
     )

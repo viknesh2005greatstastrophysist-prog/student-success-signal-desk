@@ -20,10 +20,13 @@ def mentor_workload(
     overview: dict[str, Any], queue: dict[str, Any]
 ) -> list[dict[str, Any]]:
     """One row per mentor: mentees, drafts still waiting, how long, decisions made.
-    Decisions are approvals and declines alike (the Core counts them per mentor)."""
+    Decisions are approvals and declines alike (the Core counts them per mentor).
+    Students without a mentor are not a mentor row (review R-16); see
+    `students_without_mentor`."""
     mentor_of = {
-        str(s.get("id")): labels.pretty_name(s.get("mentor_name") or "Unassigned")
+        str(s.get("id")): labels.pretty_name(s.get("mentor_name"))
         for s in overview.get("students") or []
+        if s.get("mentor_name")
     }
     names = sorted(
         {
@@ -68,6 +71,17 @@ def mentor_workload(
             }
         )
     return rows
+
+
+def students_without_mentor(overview: dict[str, Any]) -> int:
+    return sum(1 for s in overview.get("students") or [] if not s.get("mentor_name"))
+
+
+def render_unassigned_line(overview: dict[str, Any]) -> None:
+    """One separate line under the mentor table, only when some student has no mentor."""
+    unassigned = students_without_mentor(overview)
+    if unassigned:
+        st.caption(f":material/person_off: Students without a mentor: {unassigned}")
 
 
 # A review that ended in one of these without a risk analysis flagged nobody (review R-09).
@@ -134,7 +148,7 @@ def render_flagged_students(review: dict[str, Any], queue: dict[str, Any] | None
             "Student": labels.pretty_name(person.get("display_name") or "Student"),
             "Register number": person.get("register_number") or "Not listed",
             "Mentor": labels.pretty_name(person.get("mentor_name") or "Not assigned"),
-            "Where it stands": labels.run_outcome(j.get("status"), j.get("error_code")),
+            "Where it stands": labels.run_outcome(j.get("status"), j.get("error_code"), j.get("intervention_status")),
         }
 
     order = {"needs_human": 0, "ai_unavailable": 0, "failed": 0, "awaiting_faculty": 1}
@@ -224,6 +238,7 @@ def overview_page() -> None:
         ],
         empty="No mentors are assigned yet.",
     )
+    render_unassigned_line(overview)
 
 
 def students_page() -> None:
@@ -255,6 +270,7 @@ def mentors_page() -> None:
         mentor_workload(overview, queue),
         empty="No mentors are assigned yet.",
     )
+    render_unassigned_line(overview)
     st.caption(
         "Wait is measured from when an AI draft reached the mentor's gate until now. "
         "Decisions made counts approvals and declines. Mentors alone decide; the department head observes."

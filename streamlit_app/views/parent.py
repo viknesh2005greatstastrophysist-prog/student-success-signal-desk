@@ -27,6 +27,17 @@ from views.student import (
 )
 
 
+NOT_SHARED = "This information is not shared with your account."
+
+
+def shared(detail: dict[str, Any], group: str) -> bool:
+    """Whether this account holds the field grant (the Core sends the grants with the
+    record). Without it the Core sends nothing for that group, so an empty list
+    would wrongly read as "none yet" (review R-18)."""
+    grants = detail.get("grants")
+    return grants is None or group in grants
+
+
 def _whole_rupees(text: str) -> str:
     """Headline figures show whole rupees; the invoice table keeps the exact amounts."""
     return text[:-3] if text.endswith(".00") else text
@@ -38,6 +49,9 @@ def render_fees(detail: dict[str, Any], actor: dict[str, Any]) -> None:
         "Invoices, payments and receipts for this term.",
     )
     invoices = detail.get("invoices") or []
+    if not shared(detail, "fees"):
+        ui.empty_state("Not shared", NOT_SHARED)
+        return
     if not invoices:
         ui.empty_state("No fee records", "Invoices will appear here once issued.")
         return
@@ -277,8 +291,18 @@ def overview_page() -> None:
                 "label": "Attendance this term",
                 "value": attendance_this_term(detail),
             },
-            {"label": "Open fee balance", "value": _whole_rupees(money(open_balance))},
-            {"label": "Support plan", "value": support_status(detail)},
+            {
+                "label": "Open fee balance",
+                "value": _whole_rupees(money(open_balance))
+                if shared(detail, "fees")
+                else "Not shared",
+            },
+            {
+                "label": "Support plan",
+                "value": support_status(detail)
+                if shared(detail, "support")
+                else "Not shared",
+            },
         ]
     )
     if courses:
@@ -292,6 +316,8 @@ def overview_page() -> None:
         )
     if support:
         render_support_cards(support[:1], audience="family")
+    elif not shared(detail, "support"):
+        st.caption(f":material/lock: Support plan: {NOT_SHARED}")
     else:
         render_plan_notice(detail)
 
@@ -308,6 +334,9 @@ def support_page() -> None:
     )
     support = detail.get("support") or []
     followups = detail.get("followups") or []
+    if not shared(detail, "support"):
+        ui.empty_state("Not shared", NOT_SHARED)
+        return
     if not support and not followups:
         if not render_plan_notice(detail):
             ui.empty_state(
@@ -351,5 +380,5 @@ def profile_page() -> None:
         ]
     )
     st.caption(
-        "Only you, the student and the student's mentor can see this record."
+        "The student's mentor, department head and course teachers can also see the student's college record."
     )

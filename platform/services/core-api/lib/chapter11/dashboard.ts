@@ -14,6 +14,7 @@ export type RiskJob = {
   stage: string;
   created_at?: string | Date | null;
   risk?: Risk | null;
+  intervention_status?: string | null;
 };
 const stamp = (job: RiskJob) =>
   job.created_at ? new Date(job.created_at).getTime() : 0;
@@ -53,6 +54,7 @@ export function compositeRiskView(students: ScopedStudent[], jobs: RiskJob[]) {
         signals: job.risk?.signals ?? [],
         policyVersion: job.risk?.policyVersion ?? null,
         status: job.status,
+        interventionStatus: job.intervention_status ?? null,
         reviewPath: student.mentor_name
           ? `Assigned mentor: ${student.mentor_name}. Review is required before publication.`
           : "Assigned faculty mentor review is required before publication.",

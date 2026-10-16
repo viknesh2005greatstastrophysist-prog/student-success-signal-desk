@@ -59,3 +59,10 @@ test("risk projection intersects authorized students, exposes reasoning before d
   assert.equal(rows[1]!.score, null);
   assert.equal(rows[1]!.flagged, false);
 });
+
+test("review R-17: a risk row carries the plan's intervention status, since the case stays approved after a withdrawal", () => {
+  const students = [{ id: "one", display_name: "Fixture Student", register_number: "TEST1" }];
+  const job = { id: "a", plan_id: "p", student_id: "one", status: "approved", stage: "publish" };
+  assert.equal(compositeRiskView(students, [{ ...job, intervention_status: "withdrawn" }])[0]!.interventionStatus, "withdrawn");
+  assert.equal(compositeRiskView(students, [job])[0]!.interventionStatus, null);
+});

@@ -448,6 +448,11 @@ test(
         (await reviewQueue(faculty)).plans[0]!.visible_to_student,
         false,
       );
+      // Review R-17: the case stays approved; the job row carries the withdrawn plan.
+      const afterWithdraw = (await overview(faculty)).jobs[0]!;
+      assert.equal(afterWithdraw.status, "approved");
+      assert.equal(afterWithdraw.intervention_status, "withdrawn");
+      assert.equal((await overview({ ...faculty, role: "hod" })).jobs[0]!.intervention_status, "withdrawn");
       // Review R-12: the department head never withdraws or re-shows a plan, and a
       // status other than withdrawn does not re-show it either (only a restore does).
       await assert.rejects(

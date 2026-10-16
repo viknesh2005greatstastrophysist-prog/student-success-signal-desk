@@ -15,7 +15,11 @@ R-11: the student and parent "Attendance this term" card shows the Core's pooled
 figure (the value the risk check and the plan cite), not a mean of course percentages.
 Batch B2, P2-3: the mentor's Today lists the reviews that stopped and wait on the mentor
 (each student's latest review only) and opens that plan under Reviews > Start a review.
-P2-4: Mentees > Outcomes shows the support trends for the mentor's own review cycles."""
+P2-4: Mentees > Outcomes shows the support trends for the mentor's own review cycles.
+R-14 to R-18 (wording): "Visible to family" needs a shown plan on current figures; the
+profile captions name everyone who can see the record; students without a mentor are a
+separate line, not a mentor row; a withdrawn approved plan reads "Approved, then
+withdrawn"; a parent without the support or fees grant is told it is not shared."""
 
 import json
 import sys
@@ -25,7 +29,8 @@ from streamlit.testing.v1 import AppTest
 
 APP = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP))
-from views.hod import mentor_workload, waiting_gap_note  # noqa: E402
+import labels  # noqa: E402
+from views.hod import mentor_workload, students_without_mentor, waiting_gap_note  # noqa: E402
 
 
 def run(body: str) -> AppTest:
@@ -228,5 +233,81 @@ at = run(
 )
 heads = [h.value for h in at.subheader]
 assert "Intervention outcomes" in heads and "Support trends by review cycle" in heads, heads
+
+# R-14: "Visible to family" is Yes only for a shown plan on current figures
+PLAN_ROWS = [
+    {"id": "sp1", "student_id": "s1", "display_name": "FICTIONAL STUDENT 1", "status": "planned", "visible_to_student": True, "evidence_current": True, "plan": {"actions": []}},
+    {"id": "sp2", "student_id": "s2", "display_name": "FICTIONAL STUDENT 2", "status": "planned", "visible_to_student": True, "evidence_current": False, "plan": {"actions": []}},
+    {"id": "sp3", "student_id": "s3", "display_name": "FICTIONAL STUDENT 3", "status": "withdrawn", "visible_to_student": False, "evidence_current": True, "plan": {"actions": []}},
+]
+at = run(f"ns['render_outcomes']({data({'plans': PLAN_ROWS})}, {{'role': 'hod'}})")
+log = next(df.value for df in at.dataframe if "Visible to family" in df.value.columns)
+assert "Visible" not in log.columns, list(log.columns)
+assert list(log["Visible to family"]) == ["Yes", "No", "No"], list(log["Visible to family"])
+
+# R-15: the profile captions name the mentor, the department head and the course teachers
+PROFILE = {"student": {"id": "s1", "name": "FICTIONAL STUDENT", "register_number": "REG001"}, "mentor": {"name": "MENTOR ONE"}, "gpa": {}}
+at = run(
+    f"DETAIL = {data(PROFILE)}\n"
+    "st.session_state['actor'] = {'role': 'student', 'studentId': 's1'}\n"
+    "ns['load'] = lambda action, payload=None: DETAIL\n"
+    "import views.student\nviews.student.profile_page()"
+)
+assert "Your mentor, your department head and your course teachers can also see your college record." in captions(at), captions(at)
+at = run(
+    f"DETAIL = {data(PROFILE)}\n"
+    "st.session_state['actor'] = {'role': 'parent'}\n"
+    "ns['load'] = lambda action, payload=None: {'children': [{'id': 's1', 'name': 'FICTIONAL STUDENT'}]} if action == 'overview' else DETAIL\n"
+    "import views.parent\nviews.parent.profile_page()"
+)
+assert "mentor, department head and course teachers can also see the student's college record" in captions(at), captions(at)
+assert "Only you" not in captions(at), captions(at)
+
+# R-16: a student without a mentor is a separate line, never a mentor called "Unassigned"
+UNASSIGNED = {**OVERVIEW, "students": OVERVIEW["students"] + [{"id": "s9", "display_name": "FICTIONAL NINE", "mentor_name": None}]}
+assert "Unassigned" not in {r["Mentor"] for r in mentor_workload(UNASSIGNED, DECISIONS)}
+assert students_without_mentor(UNASSIGNED) == 1 and students_without_mentor(OVERVIEW) == 0
+at = run(
+    f"OVERVIEW, QUEUE = {data(UNASSIGNED)}, {data(DECISIONS)}\n"
+    "ns['load_many'] = lambda requests: [OVERVIEW if name == 'overview' else QUEUE for name, _ in requests]\n"
+    "ns['mentors_page']()"
+)
+assert "Students without a mentor: 1" in captions(at), captions(at)
+assert "Unassigned" not in " ".join(at.dataframe[0].value["Mentor"]), at.dataframe[0].value
+
+# R-17: an approved case whose plan the mentor withdrew
+assert labels.run_outcome("approved", None, "withdrawn") == "Approved, then withdrawn"
+assert labels.run_outcome("approved", None, "planned") == "Plan approved by the mentor"
+assert labels.run_outcome("approved") == "Plan approved by the mentor"
+
+# R-18: without the support or fees grant the parent is told so, not "None yet"
+PARENT = {**DETAIL, "grants": ["attendance", "marks"], "support": [], "invoices": [], "followups": []}
+PARENT_SCRIPT = (
+    "OVERVIEW = {'children': [{'id': 's1', 'name': 'FICTIONAL STUDENT'}]}\n"
+    "st.session_state['actor'] = {'role': 'parent', 'displayName': 'Fictional Parent'}\n"
+    "ns['load'] = lambda action, payload=None: OVERVIEW if action == 'overview' else DETAIL\n"
+    "import views.parent\nviews.parent.{page}()"
+)
+
+
+def parent_page(detail: dict, page: str) -> AppTest:
+    return run(f"DETAIL = {data(detail)}\n" + PARENT_SCRIPT.replace("{page}", page))
+
+
+def page_text(at: AppTest) -> str:
+    return captions(at) + "\n" + "\n".join(str(h.proto.body) for h in at.get("html"))
+
+
+figures = {m.label: m.value for m in parent_page(PARENT, "overview_page").metric}
+assert figures["Support plan"] == "Not shared" and figures["Open fee balance"] == "Not shared", figures
+for page in ("support_page", "fees_page"):
+    shown = page_text(parent_page(PARENT, page))
+    assert "This information is not shared with your account." in shown, (page, shown)
+    assert "Nothing here yet" not in shown and "No fee records" not in shown, (page, shown)
+# with the grants, an empty record still reads as empty
+granted = {**PARENT, "grants": ["attendance", "marks", "fees", "support"]}
+assert {m.label: m.value for m in parent_page(granted, "overview_page").metric}["Support plan"] == "None yet"
+assert "No fee records" in page_text(parent_page(granted, "fees_page"))
+assert "Nothing here yet" in page_text(parent_page(granted, "support_page"))
 
 print("verify_count_fixes: ok")

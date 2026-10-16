@@ -334,7 +334,7 @@ def render_agent_graph(review: dict[str, Any]) -> None:
             list(by_id),
             format_func=lambda jid: (
                 f"{names.get(str(by_id[jid].get('student_id')), 'Student')} · "
-                f"{labels.run_outcome(by_id[jid].get('status'), by_id[jid].get('error_code'))} · "
+                f"{labels.run_outcome(by_id[jid].get('status'), by_id[jid].get('error_code'), by_id[jid].get('intervention_status'))} · "
                 f"run {labels.short_ref(jid)}"
             ),
             key="graph_job",

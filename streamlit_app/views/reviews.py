@@ -863,7 +863,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         [
             {
                 "Student": names.get(str(row.get("student_id")), "Student"),
-                "What happened": labels.run_outcome(row.get("status"), row.get("error_code")),
+                "What happened": labels.run_outcome(row.get("status"), row.get("error_code"), row.get("intervention_status")),
                 "Drafted by": labels.drafted_by(
                     row.get("mode"), row.get("model_id"), row.get("status")
                 ),
@@ -997,7 +997,7 @@ def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None
                 "Register number": row["registerNumber"],
                 "Score": row["score"],
                 "Band": labels.risk_label(row["band"]),
-                "Status": labels.run_outcome(row["status"]),
+                "Status": labels.run_outcome(row["status"], None, row.get("interventionStatus")),
                 "Contributing signals": ", ".join(
                     labels.signal_label(signal["code"]) for signal in row["signals"]
                 ),
@@ -1102,7 +1102,11 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             "Status": labels.status_label(row.get("status")),
             "Outcome": row.get("outcome"),
             "Figures": figures_label(row),
-            "Visible": "Yes" if row.get("visible_to_student") else "No",
+            # The family sees a plan only when it is shown and on current figures
+            # (the Core withholds the rest), so both decide this column (review R-14).
+            "Visible to family": "Yes"
+            if row.get("visible_to_student") and row.get("evidence_current") is not False
+            else "No",
             "Decision": labels.status_label(row.get("decision")),
             "Decided by": row.get("decided_by"),
             "Decision time": labels.nice_time(row.get("decided_at")),
@@ -1117,7 +1121,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             "Row": "Earlier change",
             "Status": labels.status_label((event.get("payload") or {}).get("status")),
             "Outcome": (event.get("payload") or {}).get("outcome"),
-            "Visible": "Recorded event",
+            "Visible to family": "Recorded event",
             "Decision": labels.humanize(event.get("event_type")),
             "Decided by": event.get("actor_name"),
             "Decision time": labels.nice_time(event.get("occurred_at")),

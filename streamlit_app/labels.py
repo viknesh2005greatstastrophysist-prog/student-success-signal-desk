@@ -391,9 +391,14 @@ RUN_OUTCOMES = {
 }
 
 
-def run_outcome(status: Any, error_code: Any = None) -> str:
-    """One plain sentence for what a review run ended with (replaces Status, Stage and Issue)."""
+def run_outcome(status: Any, error_code: Any = None, intervention: Any = None) -> str:
+    """One plain sentence for what a review run ended with (replaces Status, Stage and Issue).
+
+    An approved case keeps the status "approved" after the mentor withdraws its plan,
+    so the plan's intervention status is passed alongside (review R-17)."""
     code = str(status or "")
+    if code == "approved" and intervention == "withdrawn":
+        return "Approved, then withdrawn"
     if code in ("failed", "blocked"):
         return f"Stopped: {issue_label(error_code).lower()}" if error_code else "Stopped before a draft"
     return RUN_OUTCOMES.get(code, status_label(code))
