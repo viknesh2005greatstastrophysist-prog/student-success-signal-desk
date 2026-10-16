@@ -27503,7 +27503,7 @@ var PATTERNS = [
   ["phone", /(?<![\d.])\+?\d(?:[ -]?\d){9,13}(?![\d.])/]
 ];
 var escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-var NAME_STOPWORDS = /* @__PURE__ */ new Set(["and", "the", "for", "with", "van", "von", "der", "del", "bin", "family", "account", "academic", "operations"]);
+var NAME_STOPWORDS = /* @__PURE__ */ new Set(["and", "the", "for", "with", "van", "von", "der", "del", "bin", "family", "account", "academic", "operations", "alias", "aliases"]);
 function rosterPattern(roster) {
   const tokens2 = /* @__PURE__ */ new Set();
   for (const name of roster?.names ?? []) {

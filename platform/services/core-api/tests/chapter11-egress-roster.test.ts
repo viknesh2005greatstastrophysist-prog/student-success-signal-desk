@@ -21,3 +21,10 @@ test("words from the operations service account do not block a payload (final lo
   assert.equal(scanForIdentifiers("message for Academic Operations", withOps), "roster_name");
   assert.equal(scanForIdentifiers("Asha was absent on Monday", withOps), "roster_name");
 });
+
+test("the pipeline's own word 'alias' does not block a payload when a roster name contains it (16 Oct full run)", () => {
+  const withAlias = { names: [...roster.names, "Mohammed Alias Khan"] };
+  assert.equal(scanForIdentifiers("Cite each figure by its evidence alias, for example ev-3; the student alias is stu-1.", withAlias), undefined);
+  assert.equal(scanForIdentifiers("Mohammed missed two labs", withAlias), "roster_name");
+  assert.equal(scanForIdentifiers("follow up with Mohammed Alias Khan", withAlias), "roster_name");
+});

@@ -398,8 +398,11 @@ const PATTERNS: Array<[EgressCategory, RegExp]> = [
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // Joining words, and the two ordinary words in the generated parent accounts' display names
 // ("Family account 001"); the whole placeholder name is still blocked as a phrase.
-// Words that are part of service-account names ("Family account 001", "Academic Operations"), never a person's name.
-const NAME_STOPWORDS = new Set(["and", "the", "for", "with", "van", "von", "der", "del", "bin", "family", "account", "academic", "operations"]);
+// Single words that are never blocked as name parts: connectives, service-account words
+// ("Family account 001", "Academic Operations") and the pipeline's own vocabulary ("alias":
+// students and evidence are referred to by stu-N / ev-N aliases, and one student's name
+// contains "Alias"). A person's full name, and every other part of it, stays blocked.
+const NAME_STOPWORDS = new Set(["and", "the", "for", "with", "van", "von", "der", "del", "bin", "family", "account", "academic", "operations", "alias", "aliases"]);
 function rosterPattern(roster: GuardRoster | undefined) {
   const tokens = new Set<string>();
   for (const name of roster?.names ?? []) {
