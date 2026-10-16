@@ -82,10 +82,10 @@ def runs_page() -> None:
             {
                 "label": "Waiting for AI",
                 "value": sum(
-                    1 for job in jobs if job.get("status") == "ai_unavailable"
+                    1 for job in latest_per_student(jobs) if job.get("status") == "ai_unavailable"
                 ),
                 "icon": ":material/cloud_off:",
-                "help": "Reviews where no AI model answered. They wait for the mentor to retry; nothing is drafted by rules.",
+                "help": "Students whose latest review got no answer from an AI model. They wait for the mentor to retry; nothing is drafted by rules.",
             },
         ]
     )

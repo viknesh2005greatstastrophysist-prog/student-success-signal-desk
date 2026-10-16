@@ -3,7 +3,9 @@ screens. Fictional data; no server, database, model or network.
 
 R-06: the department head's Drafts waiting card and the flagged list give the real
 reason when they differ (a draft on earlier figures, a newer review still running,
-or a draft from the retired rule-based path), and say nothing when they agree."""
+or a draft from the retired rule-based path), and say nothing when they agree.
+R-08: AI activity "Waiting for AI" counts each student's latest review only, like the
+other cards on the Runs page."""
 
 import json
 import sys
@@ -72,5 +74,18 @@ shown = captions(at)
 assert "1 draft from a review on earlier figures" in shown and "1 draft for students whose newer review is still running" in shown, shown
 at = run(f"ns['render_flagged_students']({data(REVIEW)}, {data({'awaitingCount': 1, 'drafts': [draft('s1')]})})")
 assert "Drafts waiting card" not in captions(at), captions(at)
+
+# R-08: an earlier review with no model answer does not count once a newer review ran
+RUNS = {"students": STUDENTS, "metrics": {"totals": {}}, "jobs": [
+    job("s1", "ai_unavailable", "2026-10-14T10:00:00Z"),
+    job("s1", "awaiting_faculty", "2026-10-16T10:00:00Z", run_id="r1"),
+    job("s2", "ai_unavailable", "2026-10-16T09:00:00Z"),
+    job("s3", "ai_unavailable", "2026-10-15T09:00:00Z"),
+    job("s3", "ai_unavailable", "2026-10-16T08:00:00Z"),
+]}
+at = run(f"REVIEW = {data(RUNS)}\nns['load'] = lambda action, payload=None: REVIEW\nns['runs_page']()")
+metrics = {m.label: m.value for m in at.metric}
+assert metrics["Waiting for AI"] == "2", metrics
+assert metrics["Students checked"] == "3", metrics
 
 print("verify_count_fixes: ok")
