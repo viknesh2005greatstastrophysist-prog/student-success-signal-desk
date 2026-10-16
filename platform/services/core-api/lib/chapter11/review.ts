@@ -349,6 +349,21 @@ export async function reviewQueue(actor: ActorContext) {
       `SELECT e.id,e.aggregate_id AS plan_id,e.event_type,e.payload,e.occurred_at,actor.display_name AS actor_name,p.student_id,student.display_name AS student_name FROM domain_events e JOIN support_plans p ON p.id=e.aggregate_id AND p.generation_id=e.generation_id JOIN student_profiles sp ON sp.id=p.student_id JOIN people student ON student.id=sp.person_id JOIN people actor ON actor.id=e.actor_person_id WHERE e.generation_id=$1 AND e.aggregate_type='support_plan' AND e.aggregate_id=ANY($2::uuid[]) ORDER BY e.occurred_at DESC`,
       [generation, plans.rows.map((row) => row.id)],
     );
+    // Review R-10: every decision a mentor made counts, approvals and declines alike
+    // (support_plans exist only for approvals). Counts and times only, no content.
+    const mentorDecisions =
+      actor.role === "hod"
+        ? (
+            await client.query(
+              `SELECT d.faculty_person_id,dp.display_name AS mentor_name,count(*)::int AS decisions,
+              count(*) FILTER (WHERE d.decision='approved')::int AS approved,count(*) FILTER (WHERE d.decision='rejected')::int AS declined,
+              max(d.decided_at) AS last_decided_at
+              FROM faculty_decisions d JOIN support_cases c ON c.id=d.support_case_id JOIN student_profiles s ON s.id=c.student_id JOIN people dp ON dp.id=d.faculty_person_id
+              WHERE d.generation_id=$1 AND s.department_id=$2 GROUP BY d.faculty_person_id,dp.display_name ORDER BY dp.display_name`,
+              [generation, actor.departmentId],
+            )
+          ).rows
+        : [];
     const versions = await client.query(
       `SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`,
       [generation, plans.rows.map((row) => row.id)],
@@ -395,6 +410,7 @@ export async function reviewQueue(actor: ActorContext) {
       awaitingCount: groups.length,
       legacyDrafts: shape(legacy.map((row) => frozen(stampEvidence(clock, row)))),
       interventionLog: log.rows,
+      mentorDecisions,
       dataGeneration: { current: clock.current, since: clock.since },
     };
   });

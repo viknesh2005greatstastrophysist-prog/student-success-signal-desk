@@ -19,7 +19,8 @@ from views.reviews import render_policies
 def mentor_workload(
     overview: dict[str, Any], queue: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """One row per mentor: mentees, drafts still waiting, how long, decisions made."""
+    """One row per mentor: mentees, drafts still waiting, how long, decisions made.
+    Decisions are approvals and declines alike (the Core counts them per mentor)."""
     mentor_of = {
         str(s.get("id")): labels.pretty_name(s.get("mentor_name") or "Unassigned")
         for s in overview.get("students") or []
@@ -32,6 +33,10 @@ def mentor_workload(
         }
         | set(mentor_of.values())
     )
+    decisions = {
+        labels.pretty_name(d.get("mentor_name") or ""): d
+        for d in queue.get("mentorDecisions") or []
+    }
     now = datetime.now(timezone.utc)
     rows = []
     for name in names:
@@ -45,11 +50,7 @@ def mentor_workload(
                 waits.append((now - drafted).total_seconds() / 3600)
             except (TypeError, ValueError):
                 continue
-        decided = [
-            p
-            for p in queue.get("plans") or []
-            if labels.pretty_name(p.get("decided_by") or "") == name
-        ]
+        decided = decisions.get(name) or {}
         rows.append(
             {
                 "Mentor": name,
@@ -60,11 +61,9 @@ def mentor_workload(
                     if waits
                     else "Nothing waiting"
                 ),
-                "Decisions made": len(decided),
-                "Last decision": labels.nice_time(
-                    max((str(p.get("decided_at") or "") for p in decided), default="")
-                )
-                if decided
+                "Decisions made": int(decided.get("decisions") or 0),
+                "Last decision": labels.nice_time(decided.get("last_decided_at"))
+                if decided.get("last_decided_at")
                 else "None yet",
             }
         )
@@ -250,7 +249,7 @@ def mentors_page() -> None:
     overview, queue = load_many([("overview", None), ("review_queue", None)])
     ui.page_header(
         "Mentors",
-        "Each mentor's workload and how quickly their decisions are made.",
+        "Each mentor's mentees, the drafts waiting for them and for how long, and the drafts they have approved or declined.",
     )
     dataframe(
         mentor_workload(overview, queue),
@@ -258,7 +257,7 @@ def mentors_page() -> None:
     )
     st.caption(
         "Wait is measured from when an AI draft reached the mentor's gate until now. "
-        "Mentors alone decide; the department head observes."
+        "Decisions made counts approvals and declines. Mentors alone decide; the department head observes."
     )
 
 

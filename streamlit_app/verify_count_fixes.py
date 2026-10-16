@@ -8,7 +8,9 @@ R-08: AI activity "Waiting for AI" counts each student's latest review only, lik
 other cards on the Runs page.
 R-09: the department head's "Flagged students" lists only reviews the risk check
 flagged (the Core's `flagged`, never the score); reviews that stopped before the risk
-check are listed apart as "Reviews that stopped early"."""
+check are listed apart as "Reviews that stopped early".
+R-10: the department head's Mentors table counts declines as decisions and its last
+decision time includes them; the page caption promises only what the table shows."""
 
 import json
 import sys
@@ -18,7 +20,7 @@ from streamlit.testing.v1 import AppTest
 
 APP = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP))
-from views.hod import waiting_gap_note  # noqa: E402
+from views.hod import mentor_workload, waiting_gap_note  # noqa: E402
 
 
 def run(body: str) -> AppTest:
@@ -110,5 +112,29 @@ assert "Drafts waiting card" not in captions(at), captions(at)
 # nobody flagged: the empty state, and the stopped reviews still listed
 at = run(f"ns['render_flagged_students']({data({'students': STUDENTS, 'jobs': FLAGS['jobs'][1:3]})})")
 assert [h.value for h in at.subheader] == ["Flagged students (0)", "Reviews that stopped early (2)"], [h.value for h in at.subheader]
+
+# R-10: a mentor who only declined shows those decisions and when the last one was made
+OVERVIEW = {
+    "students": STUDENTS[:2] + [{**STUDENTS[2], "mentor_name": "MENTOR TWO"}],
+    "faculty": [{"name": "MENTOR ONE"}, {"name": "MENTOR TWO"}, {"name": "MENTOR THREE"}],
+}
+DECISIONS = {"plans": [], "drafts": [], "mentorDecisions": [
+    {"mentor_name": "MENTOR ONE", "decisions": 5, "approved": 0, "declined": 5, "last_decided_at": "2026-10-16T09:30:00+00:00"},
+    {"mentor_name": "MENTOR TWO", "decisions": 2, "approved": 1, "declined": 1, "last_decided_at": "2026-10-15T09:30:00+00:00"},
+]}
+rows = {r["Mentor"]: r for r in mentor_workload(OVERVIEW, DECISIONS)}
+assert rows["Mentor One"]["Decisions made"] == 5 and rows["Mentor One"]["Last decision"] != "None yet", rows["Mentor One"]
+assert rows["Mentor Two"]["Decisions made"] == 2, rows["Mentor Two"]
+assert rows["Mentor Three"]["Decisions made"] == 0 and rows["Mentor Three"]["Last decision"] == "None yet", rows["Mentor Three"]
+at = run(
+    f"OVERVIEW, QUEUE = {data(OVERVIEW)}, {data(DECISIONS)}\n"
+    "ns['load_many'] = lambda requests: [OVERVIEW if name == 'overview' else QUEUE for name, _ in requests]\n"
+    "ns['mentors_page']()"
+)
+shown = captions(at) + "\n" + "\n".join(str(h.proto.body) for h in at.get("html"))
+assert "how quickly" not in shown, shown
+assert "approved or declined" in shown and "Decisions made counts approvals and declines" in shown, shown
+table = at.dataframe[0].value
+assert list(table["Decisions made"]) == [5, 0, 2], table
 
 print("verify_count_fixes: ok")

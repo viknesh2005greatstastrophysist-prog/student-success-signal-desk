@@ -127,7 +127,7 @@ test(
           [generation, student],
         )).rows[0];
         return {
-          generation, student, faculty: make("faculty1@aura.invalid", "faculty"), studentActor: make("student1@aura.invalid", "student", { studentId: student }),
+          generation, student, faculty: make("faculty1@aura.invalid", "faculty"), hod: make("hod.cse@aura.invalid", "hod"), studentActor: make("student1@aura.invalid", "student", { studentId: student }),
           parentActor: parent?.supported ? ({ subject: parent.email, role: "parent", displayName: parent.email, email: parent.email, clientId: portalOidcClients.parent, personId: parent.parent_person_id, departmentId: parent.department_id ?? undefined } as ActorContext) : null,
           facultyId: person("faculty1@aura.invalid").id, departmentId: person("faculty1@aura.invalid").department_id,
         };
@@ -207,6 +207,14 @@ test(
       assert.equal((await decide(earlierDraft, "rejected")).supportCase.status, "rejected");
       const currentDraft = await draftCaptured("2");
       assert.ok((await decide(currentDraft, "approved")).plan, "a draft on current figures is approved as before");
+
+      // Review R-10: the department head sees every decision per mentor, declines included
+      // (two approved plans above, one declined and one approved draft).
+      type Decided = { faculty_person_id: string; decisions: number; approved: number; declined: number; last_decided_at: unknown };
+      const decided = ((await reviewQueue(world.hod)).mentorDecisions as Decided[]).find((row) => row.faculty_person_id === world.facultyId)!;
+      assert.deepEqual([decided.decisions, decided.approved, decided.declined], [4, 3, 1]);
+      assert.ok(decided.last_decided_at, "the last decision time includes declines");
+      assert.deepEqual((await reviewQueue(world.faculty)).mentorDecisions, []);
 
       // Review R-06: an open draft leaves the gate once the same student has a newer
       // review that finished (here: checked, no support needed). Read-side only.
