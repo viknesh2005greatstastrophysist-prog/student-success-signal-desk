@@ -548,6 +548,8 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
         format_func=lambda key: plan_label(plan_by_id[key]),
         key=f"review_plan_{selector_revision}",
     )
+    if selected_id not in plan_by_id:
+        return
     selected_plan = plan_by_id[selected_id]
     st.session_state["review_selected_id"] = selected_id
     body = selected_plan.get("body") or {}
@@ -823,7 +825,9 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 ),
                 key=f"trace_{selected_id}",
             )
-            trace_job = next(job for job in traced if str(job["id"]) == trace_id)
+            trace_job = next(
+                (job for job in traced if str(job["id"]) == trace_id), traced[0]
+            )
         ui.pipeline_stepper(
             trace_job.get("node_trace"),
             judge=(trace_job.get("validation") or {}).get("judge")
@@ -1127,6 +1131,8 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             ),
             key="intervention_plan",
         )
+        if selected is None:
+            return
         versions = [
             v
             for v in queue.get("versions", [])
@@ -1705,6 +1711,8 @@ def render_draft_reviews(
         )
     else:
         selected = drafts[0]
+    if selected is None:
+        return
     if selected.get("earlier_drafts"):
         with st.expander(
             f"Earlier drafts for this student ({len(selected['earlier_drafts'])})",
@@ -1929,7 +1937,7 @@ def render_draft_reviews(
                         "Owner": ACTION_OWNER_LABELS.get(
                             row.get("owner"), "Assigned faculty"
                         ),
-                        "Due in days": int(row.get("dueInDays", 7)),
+                        "Due in days": int(row.get("dueInDays") or 7),
                     }
                     for row in actions
                 ]
@@ -1943,7 +1951,11 @@ def render_draft_reviews(
                             required=True,
                         ),
                         "Due in days": st.column_config.NumberColumn(
-                            "Due in days", min_value=1, max_value=14, step=1
+                            "Due in days",
+                            min_value=1,
+                            max_value=14,
+                            step=1,
+                            required=True,
                         ),
                     },
                     hide_index=True,
@@ -1957,6 +1969,12 @@ def render_draft_reviews(
                 )
             if edit_submitted:
                 edited = edited_actions.to_dict(orient="records")
+                # A cleared cell arrives as NaN; int(NaN) would stop the page.
+                missing_due = [
+                    str(index + 1)
+                    for index, row in enumerate(edited)
+                    if pd.isna(row.get("Due in days"))
+                ]
                 original_codes = [row.get("code") for row in actions]
                 for index, row in enumerate(edited):
                     # packet-v2 keeps each action's personalisation, talking
@@ -1971,7 +1989,8 @@ def render_draft_reviews(
                     }.get(
                         str(row.get("Owner", "Assigned faculty")), "assigned_faculty"
                     )
-                    row["dueInDays"] = int(row.get("Due in days", 7))
+                    due = row.get("Due in days")
+                    row["dueInDays"] = 7 if pd.isna(due) else int(due)
                     row.pop("Owner", None)
                     row.pop("Due in days", None)
                 updated_packet = {
@@ -1981,7 +2000,12 @@ def render_draft_reviews(
                     "citations": packet.get("citations", []),
                     "prohibited": packet.get("prohibited", []),
                 }
-                if len(edit_rationale.strip()) < 12:
+                if missing_due:
+                    st.error(
+                        "Enter the number of days (1 to 14) for every action. "
+                        f"Missing for action {', '.join(missing_due)}."
+                    )
+                elif len(edit_rationale.strip()) < 12:
                     st.error("Enter an edit reason of at least twelve characters.")
                 else:
                     save_action(
@@ -2050,6 +2074,8 @@ def render_legacy_drafts(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             ),
             key="legacy_draft",
         )
+        if picked is None:
+            return
         packet = picked.get("recommendation") or {}
         ui.plain_text(packet.get("summary") or "No summary recorded.")
         rows = [

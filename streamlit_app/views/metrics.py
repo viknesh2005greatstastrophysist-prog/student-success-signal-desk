@@ -326,6 +326,7 @@ def render_agent_graph(review: dict[str, Any]) -> None:
         for s in review.get("students") or []
     }
     trace = None
+    selected_job = None
     if jobs:
         by_id = {str(job["id"]): job for job in jobs}
         job_id = pick(
@@ -338,16 +339,16 @@ def render_agent_graph(review: dict[str, Any]) -> None:
             ),
             key="graph_job",
         )
-        selected_job = next(job for job in jobs if str(job["id"]) == job_id)
-        trace = selected_job.get("node_trace")
+        selected_job = by_id.get(str(job_id)) if job_id is not None else None
+        trace = selected_job.get("node_trace") if selected_job else None
     ui.pipeline_stepper(
         trace,
         empty_text="" if not jobs else "Not reached",
         judge=(selected_job.get("validation") or {}).get("judge")
-        if jobs and isinstance(selected_job.get("validation"), dict)
+        if selected_job and isinstance(selected_job.get("validation"), dict)
         else None,
     )
-    if jobs:
+    if selected_job:
         render_gate_actions(selected_job, st.session_state.get("actor") or {}, review)
         validation = selected_job.get("validation") or {}
         with st.expander(

@@ -428,7 +428,8 @@ def pick(
 
     Up to SEGMENT_MAX plain options (text or numbers) become a segmented control.
     Longer lists, rows and lists with an empty "choose" entry are a drop-down that cannot be typed into;
-    from SEARCH_FROM options a separate search box narrows it.
+    from SEARCH_FROM options a separate search box narrows it. A search that matches nothing
+    keeps the earlier choice, so the result is None only when there are no options.
     """
     options = list(options)
     if not options:
@@ -466,12 +467,18 @@ def pick(
         )
         if query:
             shown = [o for o in options if query in str(format_func(o)).lower()]
-            if not shown:
-                st.caption(
-                    f":material/search_off: Nothing matches \u201c{query}\u201d."
-                )
-                return None
-        st.caption(f"Showing {len(shown)} of {len(options)}")
+        if not shown:
+            # Nothing matches: keep the earlier choice (or the default) on the page
+            # instead of returning nothing, so no caller is left without a selection.
+            previous = st.session_state.get(key) if key else None
+            fallback = previous if previous in options else options[index]
+            st.caption(
+                f":material/search_off: No match for \u201c{query}\u201d; showing {format_func(fallback)}."
+            )
+            shown = options
+            index = options.index(fallback)
+        else:
+            st.caption(f"Showing {len(shown)} of {len(options)}")
         if options[index] in shown:
             index = shown.index(options[index])
         else:
