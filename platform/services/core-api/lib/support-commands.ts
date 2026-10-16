@@ -8,6 +8,7 @@ import { ConflictError, NotFoundError } from "./http";
 import { requireRole, requireDemoInstitution } from "./security";
 import { validateAnyPacket, riskAnalysis, digest, type Evidence, type Risk, type Policy, type domainNames } from "./chapter11/engine";
 import { assertCaseNotFrozen, assertStudentNotFrozen } from "./chapter11/frozen";
+import { caseEvidenceCapturedSql, isCurrentEvidence, loadGenerationClock } from "./data-refresh/generation";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
 export const supportDecisionInput = z.object({
@@ -303,6 +304,11 @@ export async function decideSupportCase(
     }
     if(input.decision==='approved') {
       if(current.artifact_validation.valid!==true)throw new ConflictError('VALIDATION_REQUIRED','The exact current artifact must have a passing validation report');
+      // A draft on earlier figures would be published but withheld from the family
+      // (guardPlansForFamily). It can be declined, not approved (review R-05).
+      const clock = await loadGenerationClock(client);
+      const captured = await client.query<{ captured_at: Date | null }>(`SELECT ${caseEvidenceCapturedSql("$1::uuid")} AS captured_at`, [caseId]);
+      if (!isCurrentEvidence(clock, captured.rows[0]?.captured_at)) throw new ConflictError("EVIDENCE_EARLIER_FIGURES", "This draft is based on earlier figures. Review the student again with the latest figures before approving.");
       if(current.source.startsWith('chapter11:')){
         if(!['alerts_cite_triggers','thresholds_faculty_set','advisor_review_required','privacy_scope_enforced'].every(key=>current.artifact_validation.checks?.[key]===true))throw new ConflictError('VALIDATION_REQUIRED','Revalidate this legacy draft before approval; all four acceptance checks are required');
         const authority=await client.query(`SELECT pa.policy_version FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id JOIN ch11_policy_attestations pa ON pa.policy_id=(p.body->>'policyId')::uuid AND pa.generation_id=j.generation_id WHERE j.support_case_id=$1 AND j.generation_id=$2 AND pa.approved_role='faculty' AND pa.policy_version=$3`,[caseId,generationId,current.artifact_validation.policyVersion??'']);

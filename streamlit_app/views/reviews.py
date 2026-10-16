@@ -1863,6 +1863,18 @@ def render_draft_reviews(
             st.info(FROZEN_NOTE, icon=":material/lock:")
             decision_head(selected)
             return
+        # A draft on earlier figures would be hidden from the family once approved,
+        # so the Core refuses it (EVIDENCE_EARLIER_FIGURES); Decline stays open.
+        earlier_figures = selected.get("evidence_current") is False
+        if earlier_figures:
+            st.warning(
+                "Based on earlier figures: review again before approving.",
+                icon=":material/history:",
+            )
+        # Who sees an approved plan: the student, and a parent only with the support grant.
+        audience = f"{student_name} and " + (
+            "their parent" if selected.get("parent_support_access") else "any parent with access"
+        )
         with st.form(
             f"decide_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
         ):
@@ -1875,7 +1887,7 @@ def render_draft_reviews(
                 [1.7, 0.9, 1], vertical_alignment="center"
             )
             with approve_col:
-                approved = st.form_submit_button(
+                approved = not earlier_figures and st.form_submit_button(
                     "Approve and publish", type="primary", width="stretch"
                 )
             with edit_col:
@@ -1909,10 +1921,13 @@ def render_draft_reviews(
                 else:
                     save_action("case_decide", decision, "Decision saved against the displayed draft version.")
         pending = st.session_state.get(confirm_key)
+        if pending and earlier_figures:
+            st.session_state.pop(confirm_key, None)
+            pending = None
         if pending:
             with st.container(border=True):
                 st.markdown(
-                    f"**Share this plan with {student_name} and their parent?** Approving publishes this exact draft."
+                    f"**Share this plan with {audience}?** Approving publishes this exact draft."
                 )
                 yes, cancel = st.columns(2)
                 if yes.button(
@@ -1922,7 +1937,7 @@ def render_draft_reviews(
                     key=f"{confirm_key}_yes",
                 ):
                     st.session_state.pop(confirm_key, None)
-                    save_action("case_decide", pending, "Approved and published: the student and parent can now see the plan.")
+                    save_action("case_decide", pending, f"Approved and published: {audience} can now see the plan.")
                 if cancel.button("Cancel", width="stretch", key=f"{confirm_key}_no"):
                     st.session_state.pop(confirm_key, None)
                     st.rerun()

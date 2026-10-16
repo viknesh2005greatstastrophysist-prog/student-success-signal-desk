@@ -7,7 +7,9 @@ the scores.
 R-02: a search that matches nothing keeps a selection instead of stopping the page, and
 a cleared "Due in days" cell in "Edit the draft" gives a plain error, not a crash.
 R-03: a frozen record (the Core marks the queue row frozen) is shown read-only at the
-gate and is never offered for a new review."""
+gate and is never offered for a new review.
+R-05: a draft on earlier figures offers no Approve button, and the confirmation and the
+success message name who can actually see an approved plan."""
 
 import json
 import sys
@@ -58,7 +60,7 @@ sys.path.insert(0, {str(APP)!r})
 from apptest_util import namespace
 ns = namespace()
 def fake_save(action, data, success):
-    st.session_state.setdefault("calls", []).append([action, data])
+    st.session_state.setdefault("calls", []).append([action, data, success])
     return {{}}
 ns["save_action"] = fake_save
 {body}
@@ -149,5 +151,34 @@ assert not [b for b in buttons if b.startswith("Review ")], buttons
 # the same draft without the flag offers the re-review button (so the check above means something)
 at = run(f"ns['render_draft_reviews'](json.loads({json.dumps(json.dumps({'drafts': [{**FROZEN, 'frozen': False}]}))}), {{'role': 'faculty'}}, {{}})")
 assert any(b.label.startswith("Review ") for b in at.button), [b.label for b in at.button]
+
+# R-05: a draft on earlier figures can be declined, not approved
+EARLIER = {**DRAFT, "evidence_current": False}
+at = run(f"ns['render_draft_reviews'](json.loads({json.dumps(json.dumps({'drafts': [EARLIER]}))}), {{'role': 'faculty'}}, {{}})")
+buttons = [b.label for b in at.button]
+assert "Approve and publish" not in buttons and "Decline" in buttons and "Edit" in buttons, buttons
+assert any("Based on earlier figures: review again before approving" in w.value for w in at.warning), [w.value for w in at.warning]
+
+
+def approve(draft: dict) -> AppTest:
+    at = run(f"ns['render_draft_reviews'](json.loads({json.dumps(json.dumps({'drafts': [draft]}))}), {{'role': 'faculty'}}, {{}})")
+    assert not any("earlier figures" in w.value for w in at.warning)
+    next(t for t in at.text_area if t.label == "Decision rationale").set_value("Matches what I see in class.")
+    next(b for b in at.button if b.label == "Approve and publish").click()
+    rerun(at)
+    assert "calls" not in at.session_state, "approval waits for the confirmation"
+    return at
+
+
+# the parent is named only when a parent holds the support grant
+for access, audience in ((True, "Fictional Student and their parent"), (False, "Fictional Student and any parent with access")):
+    at = approve({**DRAFT, "parent_support_access": access})
+    confirm = " ".join(m.value for m in at.markdown)
+    assert f"Share this plan with {audience}?" in confirm, confirm
+    next(b for b in at.button if b.label == "Yes, approve and publish").click()
+    rerun(at)
+    action, data, success = at.session_state["calls"][-1]
+    assert action == "case_decide" and data["decision"] == "approved", (action, data)
+    assert success == f"Approved and published: {audience} can now see the plan.", success
 
 print("verify_safety_fixes: ok")

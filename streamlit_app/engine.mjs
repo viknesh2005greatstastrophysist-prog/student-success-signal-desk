@@ -32040,6 +32040,9 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
     }
     if (input2.decision === "approved") {
       if (current.artifact_validation.valid !== true) throw new ConflictError("VALIDATION_REQUIRED", "The exact current artifact must have a passing validation report");
+      const clock = await loadGenerationClock(client);
+      const captured = await client.query(`SELECT ${caseEvidenceCapturedSql("$1::uuid")} AS captured_at`, [caseId]);
+      if (!isCurrentEvidence(clock, captured.rows[0]?.captured_at)) throw new ConflictError("EVIDENCE_EARLIER_FIGURES", "This draft is based on earlier figures. Review the student again with the latest figures before approving.");
       if (current.source.startsWith("chapter11:")) {
         if (!["alerts_cite_triggers", "thresholds_faculty_set", "advisor_review_required", "privacy_scope_enforced"].every((key) => current.artifact_validation.checks?.[key] === true)) throw new ConflictError("VALIDATION_REQUIRED", "Revalidate this legacy draft before approval; all four acceptance checks are required");
         const authority = await client.query(`SELECT pa.policy_version FROM ch11_jobs j JOIN ch11_plans p ON p.id=j.plan_id JOIN ch11_policy_attestations pa ON pa.policy_id=(p.body->>'policyId')::uuid AND pa.generation_id=j.generation_id WHERE j.support_case_id=$1 AND j.generation_id=$2 AND pa.approved_role='faculty' AND pa.policy_version=$3`, [caseId, generationId, current.artifact_validation.policyVersion ?? ""]);
@@ -35561,7 +35564,8 @@ async function reviewQueue(actor) {
     const groups = await awaitingCases(client, generation, actor);
     const DRAFT_SELECT = `SELECT c.id,c.student_id,c.revision,c.status,a.id AS artifact_id,a.artifact_version,a.recommendation,a.content_hash,a.validation,a.created_at AS drafted_at,r.mode,r.model_id,person.display_name,s.register_number,
       jsonb_build_object('academic',es.evidence->'academic'->'values','lms',es.evidence->'lms'->'values','internship',es.evidence->'internship'->'values','placement',es.evidence->'placement'->'values') AS evidence_values,
-      es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy,es.captured_at AS evidence_captured_at
+      es.evidence->'risk'->'signals' AS signals,es.evidence->'policy' AS policy,es.captured_at AS evidence_captured_at,
+      EXISTS(SELECT 1 FROM parent_links l JOIN parent_field_grants g ON g.parent_link_id=l.id WHERE l.generation_id=c.generation_id AND l.student_id=c.student_id AND l.active AND g.field_group='support' AND g.granted) AS parent_support_access
       FROM support_cases c JOIN agent_runs r ON r.support_case_id=c.id JOIN evidence_snapshots es ON es.id=r.evidence_snapshot_id
       JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN student_profiles s ON s.id=c.student_id JOIN people person ON person.id=s.person_id`;
     const currentIds = groups.map((group) => group.current.artifact_id);

@@ -169,6 +169,27 @@ test(
       assert.equal(view.metrics.totals.jobs, view.jobs.length);
       assert.ok(view.jobs.every((j: { risk: { score: number } | null }) => j.risk?.score !== 11));
       assert.ok(view.trends.every((t: { reviewed: number }) => t.reviewed >= 1));
+
+      // Review R-05: a draft on earlier figures can be declined, never approved (the
+      // family guard would hide the plan while the mentor was told it was shared).
+      const { decideSupportCase } = await import("../lib/support-commands");
+      const hash = "a".repeat(64);
+      const draftCaptured = (hoursAgo: string) =>
+        withCoreTransaction(async (c) => {
+          const g = world.generation, ids = { c: randomUUID(), s: randomUUID(), r: randomUUID(), a: randomUUID() };
+          await c.query("INSERT INTO support_cases(id,generation_id,student_id,source,status,risk_band,reason) VALUES($1,$2,$3,'test','awaiting_faculty','medium','Consistency test')", [ids.c, g, world.student]);
+          await c.query("INSERT INTO evidence_snapshots(id,generation_id,support_case_id,institution_revision,input_hash,evidence,captured_at) VALUES($1,$2,$3,1,'h',$4::jsonb,now()-($5||' hours')::interval)", [ids.s, g, ids.c, JSON.stringify({ assignedFacultyPersonId: world.facultyId }), hoursAgo]);
+          await c.query("INSERT INTO agent_runs(id,generation_id,support_case_id,evidence_snapshot_id,mode,status) VALUES($1,$2,$3,$4,'model','validated')", [ids.r, g, ids.c, ids.s]);
+          await c.query("INSERT INTO agent_artifacts(id,generation_id,agent_run_id,artifact_version,content_hash,recommendation,validation) VALUES($1,$2,$3,1,$4,'{}'::jsonb,'{\"valid\":true}'::jsonb)", [ids.a, g, ids.r, hash]);
+          return { caseId: ids.c, artifactId: ids.a };
+        });
+      const decide = (draft: { caseId: string; artifactId: string }, decision: "approved" | "rejected") =>
+        decideSupportCase(world.faculty, draft.caseId, randomUUID(), { artifactId: draft.artifactId, contentHash: hash, expectedRevision: 0, decision, rationale: "Consistency test decision" });
+      const earlierDraft = await draftCaptured("60");
+      await assert.rejects(() => decide(earlierDraft, "approved"), (error: unknown) => (error as { code?: string }).code === "EVIDENCE_EARLIER_FIGURES");
+      assert.equal((await decide(earlierDraft, "rejected")).supportCase.status, "rejected");
+      const currentDraft = await draftCaptured("2");
+      assert.ok((await decide(currentDraft, "approved")).plan, "a draft on current figures is approved as before");
     } finally {
       await closePool();
     }
