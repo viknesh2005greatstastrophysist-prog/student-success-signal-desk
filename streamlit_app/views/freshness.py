@@ -27,13 +27,20 @@ def stale_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     return [row for row in rows or [] if row.get("evidence_current") is False]
 
 
+REREVIEW_BUTTONS = 3
+
+
 def render_rereview(rows: list[dict[str, Any]] | None, *, role: str, key: str, noun: str = "plan") -> None:
     """One quiet note when any row is on earlier figures, and (mentor only) a button that
-    opens a new review for that student."""
+    opens a new review for that student. When some students get no button, a caption
+    says why, so the count and the buttons always agree."""
     stale = stale_rows(rows)
     if not stale:
         return
-    count = len({str(row.get("student_id")) for row in stale})
+    by_student: dict[str, list[dict[str, Any]]] = {}
+    for row in stale:
+        by_student.setdefault(str(row.get("student_id")), []).append(row)
+    count = len(by_student)
     ui.insight(
         EARLIER_FIGURES,
         f"{count} student{'s' if count != 1 else ''} with a {noun} computed before the latest data refresh. "
@@ -42,13 +49,25 @@ def render_rereview(rows: list[dict[str, Any]] | None, *, role: str, key: str, n
     )
     if role != "faculty":
         return
-    seen: list[str] = []
     # A frozen record (the Core marks it frozen) is kept unchanged: no new review.
-    for row in [r for r in stale if not r.get("frozen")]:
+    frozen = [sid for sid, found in by_student.items() if any(r.get("frozen") for r in found)]
+    offer = [found[0] for sid, found in by_student.items() if sid not in frozen]
+    shown = offer[:REREVIEW_BUTTONS]
+    if len(shown) < count:
+        notes = [
+            f"{len(shown)} of these {count} can be reviewed again below."
+            if shown
+            else "None of these can be reviewed again here."
+        ]
+        if frozen:
+            notes.append(
+                f"{len(frozen)} {'is' if len(frozen) == 1 else 'are'} kept unchanged for the project presentation."
+            )
+        if len(offer) > len(shown):
+            notes.append(f"Start the other {len(offer) - len(shown)} from Reviews > Start a review.")
+        st.caption(" ".join(notes))
+    for row in shown:
         student_id = str(row.get("student_id"))
-        if student_id in seen or len(seen) >= 3:
-            continue
-        seen.append(student_id)
         name = row.get("display_name") or row.get("register_number") or "this student"
         if st.button(
             f"Review {name} again with the latest figures",

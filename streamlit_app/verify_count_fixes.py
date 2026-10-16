@@ -19,7 +19,9 @@ P2-4: Mentees > Outcomes shows the support trends for the mentor's own review cy
 R-14 to R-18 (wording): "Visible to family" needs a shown plan on current figures; the
 profile captions name everyone who can see the record; students without a mentor are a
 separate line, not a mentor row; a withdrawn approved plan reads "Approved, then
-withdrawn"; a parent without the support or fees grant is told it is not shared."""
+withdrawn"; a parent without the support or fees grant is told it is not shared.
+Earlier figures: the "Based on earlier figures" count and the "Review ... again" buttons
+agree, or a caption says why some students have no button (frozen, or past the first three)."""
 
 import json
 import sys
@@ -309,5 +311,30 @@ granted = {**PARENT, "grants": ["attendance", "marks", "fees", "support"]}
 assert {m.label: m.value for m in parent_page(granted, "overview_page").metric}["Support plan"] == "None yet"
 assert "No fee records" in page_text(parent_page(granted, "fees_page"))
 assert "Nothing here yet" in page_text(parent_page(granted, "support_page"))
+
+# Earlier figures: the count, the buttons and the caption agree
+def stale_plan(sid: str, **extra: object) -> dict:
+    return {"id": f"sp-{sid}", "student_id": sid, "display_name": f"STUDENT {sid}", "evidence_current": False, **extra}
+
+
+def rereview(rows: list) -> tuple[str, list[str]]:
+    at = run(f"ns['render_rereview']({data(rows)}, role='faculty', key='rr')")
+    shown = captions(at) + "\n" + "\n".join(str(h.proto.body) for h in at.get("html"))
+    return shown, [b.label for b in at.button if b.label.startswith("Review ")]
+
+
+# four students, one frozen (as seen locally: 4 in the box, 3 buttons)
+shown, buttons = rereview([stale_plan("a", frozen=True), stale_plan("b"), stale_plan("c"), stale_plan("d", status="withdrawn")])
+assert "4 students with a plan computed before the latest data refresh" in shown, shown
+assert len(buttons) == 3, buttons
+assert "3 of these 4 can be reviewed again below. 1 is kept unchanged for the project presentation." in shown, shown
+# more students than buttons: the rest are pointed to Start a review
+shown, buttons = rereview([stale_plan(s) for s in "abcde"])
+assert len(buttons) == 3 and "3 of these 5 can be reviewed again below. Start the other 2 from Reviews > Start a review." in shown, shown
+# the same student twice counts once; every student has a button, so no caption
+shown, buttons = rereview([stale_plan("a"), stale_plan("a"), stale_plan("b")])
+assert "2 students with a plan" in shown and len(buttons) == 2 and "can be reviewed again below" not in shown, shown
+shown, buttons = rereview([stale_plan("a", frozen=True)])
+assert not buttons and "None of these can be reviewed again here. 1 is kept unchanged" in shown, shown
 
 print("verify_count_fixes: ok")
