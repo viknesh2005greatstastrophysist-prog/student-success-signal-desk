@@ -198,10 +198,13 @@ The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Hygiene
 ## Standing decisions (owner)
 
 - ₹0 spend; free plans only; **one account and one API key per provider** (no quota rotation; provider terms forbid it).
-- Hosted model order: Groq `qwen/qwen3.8-27b` (drafting) and `openai/gpt-oss-120b` (judge) → Gemini Flash-Lite → labelled rule-based path. `GROQ_API_KEY` is in the private root `.env` (git-ignored, mode 600) and verified, and in the hosted app's Streamlit secrets (14 Oct).
+- Hosted model order: Groq `qwen/qwen3.8-27b` (drafting) and `openai/gpt-oss-120b` (judge) → Gemini Flash-Lite; no rule-based fallback (removed, E2E C1). `GROQ_API_KEY` is in the private root `.env` (git-ignored, mode 600) and verified, and in the hosted app's Streamlit secrets (14 Oct).
 - Remote models receive **anonymised numbers only** (case alias, values, thresholds, course aliases, relative time). Local Qwen may receive full context.
 - Preserve all 321-student / 647-account records; additive migrations only; **Student 021 stays pending** for the presentation.
 - **Frozen records (17 Oct).** The Core enforces the 021 rule itself (`platform/services/core-api/lib/chapter11/frozen.ts`). Frozen case ids and register numbers come from `CORE_FROZEN_CASE_IDS` and `CORE_FROZEN_REGISTER_NUMBERS` (comma lists); unset means case `d398bbc3-60b1-4843-aabc-4d7f1e0d2a3b` and register number `01FE23BCI103`, an empty value freezes nothing. Decide, edit, outcome, restore and follow-up writes refuse a frozen record with `FROZEN_RECORD`; new, revised and locked plans and the planner's scope leave frozen students out with a note on the plan; a job locked for one before the freeze is never run. Reads are unchanged: the case stays visible and pending, the queue row carries `frozen: true`, and the mentor's gate shows it read-only.
+- **Reviews are started by mentors only** (owner decision, E2E #12). The lab manual lets the HoD prompt the coordinator (11.4 #0); here the department head observes plans, drafts and outcomes and starts none (spec conformance P2-7).
+- **"Department head" stands for the manual's HoD/Dean** (P3-4): one read-only workspace scoped to the department.
+- **The 60 s read cache on student and parent pages is accepted** (P3-2): a page already open can show a plan the mentor has just withdrawn for up to 60 s. The cache is cleared on every sign-in, sign-out and save in that session.
 - Codex desktop session = orchestrator on gpt-6-astra, delegating to gpt-6.1-sol (implementation) and gpt-6-luna (bounded checks). Claude sessions use Opus for sub-agents to conserve usage.
 - Three Groq keys for other accounts were pasted into chats on 13 Oct; they were never stored or used. Owner revoked them on 14 Oct.
 
@@ -209,7 +212,9 @@ The senior-dev audit and revised plan are in `docs/AUDIT_2026-10-13.md`. Hygiene
 
 - Hosted app is private; decide sharing before the viva.
 - Lab manual DoD needs a real case approved by an actual mentor in one session (Brief 10).
-- Local Qwen is laptop-only; hosted path uses Groq/Gemini/rules.
+- Local Qwen is laptop-only; the hosted path uses Groq, then Gemini. The rule-based path was removed (E2E C1): when no model answers, the review waits as "AI unavailable, retry" and nothing is drafted.
+- **P2-5 left open (spec conformance review, 16 Oct).** Informational fields (LMS quiz scores; internship registration and evaluation; placement readiness, applications and interview outcomes) are not added: they need a new data generation, which would mark every current draft and plan "Based on earlier figures". Scoring would not change.
+- **P3-1 left open as cosmetic.** No one-click "Withdraw this plan" button in Outcomes; a mentor withdraws through "Update an intervention" > Status "Withdraw plan" with a reason.
 
 ## Stopped at the owner's 26% weekly usage cap (14 Oct, evening IST)
 
