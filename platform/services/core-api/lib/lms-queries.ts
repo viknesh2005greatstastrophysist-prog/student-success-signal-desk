@@ -10,6 +10,7 @@ import type {
 import type { PoolClient } from "pg";
 import { z } from "zod";
 import { getCurrentGeneration } from "./command-ledger";
+import { FALLBACK_TERM_CODE } from "./active-term";
 import { withCoreTransaction } from "./db";
 import { NotFoundError } from "./http";
 import { requireRole } from "./security";
@@ -231,7 +232,7 @@ export async function lmsEvidence(
     studentId,
     recordId: `LMS-${digest({ studentId, values, last })}`,
     observedAt: now.toISOString(),
-    semester: rows.rows[0]?.term ?? "2026-ODD",
+    semester: rows.rows[0]?.term ?? FALLBACK_TERM_CODE,
     state: rows.rows.length ? "present" : "missing",
     synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
     values,

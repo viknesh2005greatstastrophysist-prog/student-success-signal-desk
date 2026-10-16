@@ -16,6 +16,7 @@ import { AuthorizationError, requireRole } from "./security";
 import { NotFoundError } from "./http";
 import { lmsEvidence, requireLmsCourse } from "./lms-queries";
 import { awaitingCount } from "./chapter11/awaiting";
+import { activeTermCode } from "./active-term";
 import {
   caseEvidenceCapturedSql,
   guardPlansForFamily,
@@ -290,8 +291,8 @@ export async function experienceStudent(
             `SELECT count(*) FILTER (WHERE r.status IN ('present','late'))::int AS attended,count(*)::int AS counted
             FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
             JOIN course_offerings co ON co.id=s.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id
-            WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'`,
-            [gen, id],
+            WHERE t.code=$3 AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'`,
+            [gen, id, await activeTermCode(client, gen)],
           )
         ).rows[0]
       : undefined;

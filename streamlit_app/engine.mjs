@@ -27089,6 +27089,16 @@ async function writeCommandLedger(client, input2) {
   });
 }
 
+// services/core-api/lib/active-term.ts
+var FALLBACK_TERM_CODE = "2026-ODD";
+async function activeTermCode(client, generation) {
+  const row = await client.query(
+    "SELECT code FROM terms WHERE generation_id=$1 AND active ORDER BY starts_on DESC,code LIMIT 1",
+    [generation]
+  );
+  return row.rows[0]?.code ?? FALLBACK_TERM_CODE;
+}
+
 // services/core-api/lib/chapter11/engine.ts
 import { createHash as createHash3 } from "node:crypto";
 
@@ -29588,7 +29598,7 @@ async function lmsEvidence(client, generation, studentId) {
     studentId,
     recordId: `LMS-${digest({ studentId, values, last })}`,
     observedAt: now.toISOString(),
-    semester: rows.rows[0]?.term ?? "2026-ODD",
+    semester: rows.rows[0]?.term ?? FALLBACK_TERM_CODE,
     state: rows.rows.length ? "present" : "missing",
     synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
     values
@@ -29935,8 +29945,8 @@ async function experienceStudent(actor, id) {
       `SELECT count(*) FILTER (WHERE r.status IN ('present','late'))::int AS attended,count(*)::int AS counted
             FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
             JOIN course_offerings co ON co.id=s.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id
-            WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'`,
-      [gen, id]
+            WHERE t.code=$3 AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'`,
+      [gen, id, await activeTermCode(client, gen)]
     )).rows[0] : void 0;
     const attendanceOverall = pooled?.counted ? 100 * pooled.attended / pooled.counted : null;
     const attendance = grants.includes("attendance") ? (await client.query(
@@ -32795,7 +32805,6 @@ function toolAuditRows(summary) {
 }
 
 // services/core-api/lib/chapter11/investigation-backend.ts
-var TERM = "2026-ODD";
 var componentSlug = (category) => category.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").replace(/^[^a-z]+/, "").slice(0, 22) || "other";
 function numericValues(source) {
   const out = {};
@@ -32805,6 +32814,7 @@ function numericValues(source) {
   return out;
 }
 function createInvestigationBackend(d) {
+  const term = d.evidence.academic.semester || FALLBACK_TERM_CODE;
   const frozen = async (work) => {
     await d.authorize();
     return withCoreTransaction(async (client) => {
@@ -32834,7 +32844,7 @@ function createInvestigationBackend(d) {
              AND s.status IN ('submitted','locked') AND r.status<>'excused'
              AND r.recorded_at <= $3::timestamptz
            GROUP BY 1,2 ORDER BY 1,2`,
-        [d.generation, d.studentId, d.capturedAt, TERM]
+        [d.generation, d.studentId, d.capturedAt, term]
       );
       const attended = result.rows.reduce((n, r) => n + r.attended, 0);
       const held = result.rows.reduce((n, r) => n + r.held, 0);
@@ -32855,7 +32865,7 @@ function createInvestigationBackend(d) {
            WHERE t.code=$4 AND t.active AND m.generation_id=$1 AND m.student_id=$2
              AND a.published AND a.maximum_score>0 AND m.recorded_at <= $3::timestamptz
            ORDER BY m.recorded_at, a.title`,
-        [d.generation, d.studentId, d.capturedAt, TERM]
+        [d.generation, d.studentId, d.capturedAt, term]
       );
       const pct = (r) => Number(r.score) / Number(r.maximum_score) * 100;
       if (result.rows.length)
@@ -33684,14 +33694,15 @@ async function defaultSourceAdapter(actor, studentId, source) {
         throw new DataBlocked([`${source}: no linked authorized record`]);
       return sourceSchema.parse(record2.rows[0].record);
     }
+    const term = await activeTermCode(client, generation);
     const records = await client.query(
       `SELECT 'attendance' AS kind, CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END AS value,r.id::text AS record_id,s.session_date::timestamptz AS observed_at,cc.code AS course
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
        JOIN course_offerings co ON co.id=s.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id
-       WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'
+       WHERE t.code=$3 AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'
        UNION ALL SELECT 'mark', (m.score / NULLIF(a.maximum_score,0) * 100)::float,m.id::text,m.recorded_at,cc.code
-       FROM marks m JOIN assessments a ON a.id=m.assessment_id JOIN course_offerings co ON co.id=a.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id WHERE t.code='2026-ODD' AND t.active AND m.generation_id=$1 AND m.student_id=$2 AND a.published`,
-      [generation, studentId]
+       FROM marks m JOIN assessments a ON a.id=m.assessment_id JOIN course_offerings co ON co.id=a.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id WHERE t.code=$3 AND t.active AND m.generation_id=$1 AND m.student_id=$2 AND a.published`,
+      [generation, studentId, term]
     );
     const attendance = records.rows.filter((r) => r.kind === "attendance");
     const marks = records.rows.filter((r) => r.kind === "mark");
@@ -33745,7 +33756,7 @@ async function defaultSourceAdapter(actor, studentId, source) {
           ...records.rows.map((r) => new Date(r.observed_at).getTime())
         )
       ).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
-      semester: "2026-ODD",
+      semester: term,
       state: attendance.length && marks.length ? "present" : "missing",
       synthetic: true,
       values: {
@@ -35150,7 +35161,6 @@ ${input2.feedback}`,
 }
 
 // services/core-api/lib/chapter11/planning.ts
-var TERM2 = "2026-ODD";
 async function loadPlanningScope(actor) {
   requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
@@ -35167,13 +35177,14 @@ async function loadPlanningScope(actor) {
     const everyone = students.rows.map((r) => r.id);
     const frozen = await frozenStudentIds(client, everyone);
     const ids = everyone.filter((id) => !frozen.has(id));
+    const term = await activeTermCode(client, generation);
     const attendance = await client.query(
       `SELECT r.student_id,avg(CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END)::float AS pct
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
        JOIN course_offerings co ON co.id=s.course_offering_id JOIN terms t ON t.id=co.term_id
        WHERE t.code=$3 AND t.active AND r.generation_id=$1 AND r.student_id=ANY($2::uuid[])
          AND s.status IN ('submitted','locked') AND r.status<>'excused' GROUP BY r.student_id`,
-      [generation, ids, TERM2]
+      [generation, ids, term]
     );
     const marks = await client.query(
       `SELECT m.student_id,avg(m.score / NULLIF(a.maximum_score,0) * 100)::float AS pct
@@ -35181,7 +35192,7 @@ async function loadPlanningScope(actor) {
        JOIN course_offerings co ON co.id=a.course_offering_id JOIN terms t ON t.id=co.term_id
        WHERE t.code=$3 AND t.active AND m.generation_id=$1 AND m.student_id=ANY($2::uuid[]) AND a.published
        GROUP BY m.student_id`,
-      [generation, ids, TERM2]
+      [generation, ids, term]
     );
     const policies = await client.query(
       `SELECT id,faculty_person_id,policy || scoring AS policy FROM ch11_policies

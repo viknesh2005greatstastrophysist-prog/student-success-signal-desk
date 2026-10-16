@@ -5,6 +5,7 @@ import type { DomainName } from "./catalogue";
 import type { InvestigationBackend } from "./investigator";
 import { withCoreTransaction } from "../db";
 import { getCurrentGeneration } from "../command-ledger";
+import { FALLBACK_TERM_CODE } from "../active-term";
 
 /**
  * Server-side resolution for the investigator tools. The backend is built for
@@ -31,7 +32,6 @@ export type BackendDeps = {
   prior(): Promise<Reference[]>;
 };
 
-const TERM = "2026-ODD";
 export const componentSlug = (category: string) =>
   category
     .toLowerCase()
@@ -49,6 +49,8 @@ function numericValues(source: { values?: Record<string, unknown> } | undefined)
 }
 
 export function createInvestigationBackend(d: BackendDeps): InvestigationBackend {
+  // The term the snapshot was collected for (the active term then, P3-3).
+  const term = d.evidence.academic.semester || FALLBACK_TERM_CODE;
   const frozen = async <T>(work?: (client: PoolClient) => Promise<T>) => {
     await d.authorize();
     return withCoreTransaction(async (client) => {
@@ -88,7 +90,7 @@ export function createInvestigationBackend(d: BackendDeps): InvestigationBackend
              AND s.status IN ('submitted','locked') AND r.status<>'excused'
              AND r.recorded_at <= $3::timestamptz
            GROUP BY 1,2 ORDER BY 1,2`,
-          [d.generation, d.studentId, d.capturedAt, TERM],
+          [d.generation, d.studentId, d.capturedAt, term],
         );
         const attended = result.rows.reduce((n, r) => n + r.attended, 0);
         const held = result.rows.reduce((n, r) => n + r.held, 0);
@@ -114,7 +116,7 @@ export function createInvestigationBackend(d: BackendDeps): InvestigationBackend
            WHERE t.code=$4 AND t.active AND m.generation_id=$1 AND m.student_id=$2
              AND a.published AND a.maximum_score>0 AND m.recorded_at <= $3::timestamptz
            ORDER BY m.recorded_at, a.title`,
-          [d.generation, d.studentId, d.capturedAt, TERM],
+          [d.generation, d.studentId, d.capturedAt, term],
         );
         const pct = (r: { score: string; maximum_score: string }) =>
           (Number(r.score) / Number(r.maximum_score)) * 100;

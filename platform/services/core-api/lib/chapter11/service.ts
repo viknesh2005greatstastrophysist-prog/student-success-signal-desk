@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
 import { lmsEvidence } from "../lms-queries";
+import { activeTermCode } from "../active-term";
 import { collectSnapshot, withCoreTransaction } from "../db";
 import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
 import { ConflictError, NotFoundError } from "../http";
@@ -587,6 +588,7 @@ async function defaultSourceAdapter(
         throw new DataBlocked([`${source}: no linked authorized record`]);
       return sourceSchema.parse(record.rows[0]!.record);
     }
+    const term = await activeTermCode(client, generation);
     const records = await client.query<{
       kind: string;
       value: number;
@@ -597,10 +599,10 @@ async function defaultSourceAdapter(
       `SELECT 'attendance' AS kind, CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END AS value,r.id::text AS record_id,s.session_date::timestamptz AS observed_at,cc.code AS course
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
        JOIN course_offerings co ON co.id=s.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id
-       WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'
+       WHERE t.code=$3 AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'
        UNION ALL SELECT 'mark', (m.score / NULLIF(a.maximum_score,0) * 100)::float,m.id::text,m.recorded_at,cc.code
-       FROM marks m JOIN assessments a ON a.id=m.assessment_id JOIN course_offerings co ON co.id=a.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id WHERE t.code='2026-ODD' AND t.active AND m.generation_id=$1 AND m.student_id=$2 AND a.published`,
-      [generation, studentId],
+       FROM marks m JOIN assessments a ON a.id=m.assessment_id JOIN course_offerings co ON co.id=a.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id WHERE t.code=$3 AND t.active AND m.generation_id=$1 AND m.student_id=$2 AND a.published`,
+      [generation, studentId, term],
     );
     const attendance = records.rows.filter((r) => r.kind === "attendance");
     const marks = records.rows.filter((r) => r.kind === "mark");
@@ -668,7 +670,7 @@ async function defaultSourceAdapter(
             ),
           ).toISOString()
         : new Date().toISOString(),
-      semester: "2026-ODD",
+      semester: term,
       state: attendance.length && marks.length ? "present" : "missing",
       synthetic: true,
       values: {
@@ -816,6 +818,7 @@ export async function seedChapterSources(actor: ActorContext) {
       "SELECT id,register_number FROM student_profiles WHERE generation_id=$1 ORDER BY register_number",
       [generation],
     );
+    const semester = await activeTermCode(client, generation);
     let inserted = 0;
     for (const [index, student] of students.rows.entries()) {
       for (const source of ["lms", "internship", "placement"] as const) {
@@ -834,7 +837,7 @@ export async function seedChapterSources(actor: ActorContext) {
           studentId: student.id,
           recordId: `CH11-SYNTHETIC-${student.register_number}-${source}`,
           observedAt: new Date().toISOString(),
-          semester: "2026-ODD",
+          semester,
           state: "present",
           synthetic: true,
           values,

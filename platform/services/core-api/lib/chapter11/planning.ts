@@ -29,8 +29,7 @@ import {
 import { modelEndpoints, type ChainOptions, type Endpoint } from "./provider";
 import { AiUnavailableError, QuotaWaitError, quotaWaitSeconds, unavailableReasons } from "./unavailable";
 import { frozenLeftOutNote, frozenStudentIds } from "./frozen";
-
-const TERM = "2026-ODD";
+import { activeTermCode } from "../active-term";
 
 /** The actor's own students (same visibility as the review overview) with two
  * aggregate figures, and the actor's approved policies. Nothing here leaves the
@@ -53,13 +52,14 @@ export async function loadPlanningScope(actor: ActorContext) {
     const everyone = students.rows.map((r) => r.id);
     const frozen = await frozenStudentIds(client, everyone);
     const ids = everyone.filter((id) => !frozen.has(id));
+    const term = await activeTermCode(client, generation);
     const attendance = await client.query<{ student_id: string; pct: number }>(
       `SELECT r.student_id,avg(CASE WHEN r.status IN ('present','late') THEN 100.0 ELSE 0.0 END)::float AS pct
        FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
        JOIN course_offerings co ON co.id=s.course_offering_id JOIN terms t ON t.id=co.term_id
        WHERE t.code=$3 AND t.active AND r.generation_id=$1 AND r.student_id=ANY($2::uuid[])
          AND s.status IN ('submitted','locked') AND r.status<>'excused' GROUP BY r.student_id`,
-      [generation, ids, TERM],
+      [generation, ids, term],
     );
     const marks = await client.query<{ student_id: string; pct: number }>(
       `SELECT m.student_id,avg(m.score / NULLIF(a.maximum_score,0) * 100)::float AS pct
@@ -67,7 +67,7 @@ export async function loadPlanningScope(actor: ActorContext) {
        JOIN course_offerings co ON co.id=a.course_offering_id JOIN terms t ON t.id=co.term_id
        WHERE t.code=$3 AND t.active AND m.generation_id=$1 AND m.student_id=ANY($2::uuid[]) AND a.published
        GROUP BY m.student_id`,
-      [generation, ids, TERM],
+      [generation, ids, term],
     );
     const policies = await client.query<{ id: string; faculty_person_id: string; policy: unknown }>(
       `SELECT id,faculty_person_id,policy || scoring AS policy FROM ch11_policies
