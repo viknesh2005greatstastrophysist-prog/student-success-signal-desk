@@ -161,6 +161,10 @@ export type StudentDetail = {
   courses: CourseProgress[];
   marks: AcademicMark[];
   attendance: AttendanceEntry[];
+  /** Attendance this term as the risk check and the plan compute it: every recorded
+   * session of the active term pooled, excused sessions left out. Null without the
+   * attendance grant or before any session is recorded. */
+  attendance_overall?: number | null;
   gpa: {
     cgpa: number | null;
     terms: {

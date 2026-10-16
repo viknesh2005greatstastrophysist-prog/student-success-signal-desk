@@ -279,6 +279,23 @@ export async function experienceStudent(
             )
           : null,
     }));
+    // One overall figure, computed exactly as the risk check and the plan compute the
+    // evidence value attendancePct (chapter11/service.ts, review R-11): every recorded
+    // session of the active term pooled, excused sessions left out, present and late
+    // counted as attended. The overview cards show it, so they match the plan's
+    // "Why this plan was suggested" and the mentor's Signals.
+    const pooled = grants.includes("attendance")
+      ? (
+          await client.query<{ attended: number; counted: number }>(
+            `SELECT count(*) FILTER (WHERE r.status IN ('present','late'))::int AS attended,count(*)::int AS counted
+            FROM attendance_records r JOIN attendance_sessions s ON s.id=r.attendance_session_id
+            JOIN course_offerings co ON co.id=s.course_offering_id JOIN courses cc ON cc.id=co.course_id JOIN terms t ON t.id=co.term_id
+            WHERE t.code='2026-ODD' AND t.active AND r.generation_id=$1 AND r.student_id=$2 AND s.status IN ('submitted','locked') AND r.status<>'excused'`,
+            [gen, id],
+          )
+        ).rows[0]
+      : undefined;
+    const attendanceOverall = pooled?.counted ? (100 * pooled.attended) / pooled.counted : null;
     const attendance = grants.includes("attendance")
       ? (
           await client.query<StudentDetail["attendance"][number]>(
@@ -420,6 +437,7 @@ export async function experienceStudent(
       courses: visibleCourses,
       marks,
       attendance,
+      attendance_overall: attendanceOverall,
       gpa,
       mentor,
       invoices,

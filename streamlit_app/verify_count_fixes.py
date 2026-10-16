@@ -10,7 +10,9 @@ R-09: the department head's "Flagged students" lists only reviews the risk check
 flagged (the Core's `flagged`, never the score); reviews that stopped before the risk
 check are listed apart as "Reviews that stopped early".
 R-10: the department head's Mentors table counts declines as decisions and its last
-decision time includes them; the page caption promises only what the table shows."""
+decision time includes them; the page caption promises only what the table shows.
+R-11: the student and parent "Attendance this term" card shows the Core's pooled
+figure (the value the risk check and the plan cite), not a mean of course percentages."""
 
 import json
 import sys
@@ -136,5 +138,33 @@ assert "how quickly" not in shown, shown
 assert "approved or declined" in shown and "Decisions made counts approvals and declines" in shown, shown
 table = at.dataframe[0].value
 assert list(table["Decisions made"]) == [5, 0, 2], table
+
+# R-11: courses with unequal session counts. Pooled: 26 of 40 attended = 65%; the
+# unweighted mean of the course percentages would say 80%.
+DETAIL = {
+    "student": {"id": "s1", "name": "FICTIONAL STUDENT"},
+    "grants": ["attendance", "marks", "fees", "support"],
+    "courses": [
+        {"offering_id": "o1", "code": "CS201", "title": "Data structures", "percentage": 100, "present": 6, "late": 0, "absent": 0},
+        {"offering_id": "o2", "code": "CS202", "title": "Algorithms", "percentage": 59, "present": 20, "late": 0, "absent": 14},
+    ],
+    "attendance_overall": 65,
+    "support": [], "invoices": [], "followups": [], "marks": [], "attendance": [],
+}
+at = run(
+    f"DETAIL = {data(DETAIL)}\n"
+    "st.session_state['actor'] = {'role': 'student', 'studentId': 's1', 'displayName': 'Fictional Student'}\n"
+    "ns['load'] = lambda action, payload=None: DETAIL\n"
+    "import views.student\nviews.student.overview_page()"
+)
+assert {m.label: m.value for m in at.metric}["Attendance this term"] == "65%", [(m.label, m.value) for m in at.metric]
+at = run(
+    f"DETAIL = {data({**DETAIL, 'attendance_overall': 66.66666666666667})}\n"
+    "OVERVIEW = {'children': [{'id': 's1', 'name': 'FICTIONAL STUDENT'}]}\n"
+    "st.session_state['actor'] = {'role': 'parent', 'displayName': 'Fictional Parent'}\n"
+    "ns['load'] = lambda action, payload=None: OVERVIEW if action == 'overview' else DETAIL\n"
+    "import views.parent\nviews.parent.overview_page()"
+)
+assert {m.label: m.value for m in at.metric}["Attendance this term"] == "66.7%", [(m.label, m.value) for m in at.metric]
 
 print("verify_count_fixes: ok")

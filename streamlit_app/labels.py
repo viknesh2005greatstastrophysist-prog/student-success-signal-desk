@@ -483,9 +483,14 @@ EVIDENCE_FIELDS = {
 }
 
 
+def evidence_figure(raw: Any) -> str:
+    """A stored figure as the plan's citations show it: a long decimal to one place."""
+    return re.sub(r"\d+\.\d{3,}", lambda m: f"{float(m.group(0)):.1f}", str(raw))
+
+
 def readable_claim(statement: Any) -> str:
     """Display form of a canonical evidence statement; the stored text is unchanged."""
-    text = re.sub(r"\d+\.\d{3,}", lambda m: f"{float(m.group(0)):.1f}", str(statement or ""))
+    text = evidence_figure(statement or "")
     for field, label in EVIDENCE_FIELDS.items():
         if text.startswith(field + " "):
             return label + text[len(field) :]

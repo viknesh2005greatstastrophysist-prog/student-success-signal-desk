@@ -105,7 +105,7 @@ test(
     const { closePool, withCoreTransaction } = await import("../lib/db");
     const { getCurrentGeneration } = await import("../lib/command-ledger");
     const { experienceStudent } = await import("../lib/experience-queries");
-    const { overview } = await import("../lib/chapter11/service");
+    const { overview, readSource } = await import("../lib/chapter11/service");
     const { reviewQueue } = await import("../lib/chapter11/review");
     try {
       await migrateCoreDatabase();
@@ -233,6 +233,12 @@ test(
       await review("not_flagged");
       assert.deepEqual(await atGate(), [], "a newer finished review supersedes the older draft");
       assert.equal((await reviewQueue(world.faculty)).awaitingCount, 0);
+
+      // Review R-11: the overview's attendance figure is the evidence value the risk check
+      // and the plan cite (every session of the active term pooled, excused left out).
+      const academic = await readSource(world.faculty, world.student, "academic");
+      for (const detail of [await experienceStudent(world.studentActor, world.student), staff])
+        assert.equal(detail.attendance_overall, academic.values.attendancePct ?? null);
     } finally {
       await closePool();
     }

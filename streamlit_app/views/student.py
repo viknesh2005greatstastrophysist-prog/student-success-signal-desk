@@ -8,7 +8,6 @@ import labels
 import ui
 from common import (
     PERCENT_COLUMN,
-    average,
     dataframe,
     display_name,
     load,
@@ -110,6 +109,14 @@ def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> Non
                     ui.citation_chips(plan.get("citations", []))
 
 
+def attendance_this_term(detail: dict[str, Any]) -> str:
+    """The Core's overall figure for the active term (every recorded session pooled,
+    excused left out), the same value the risk check and the plan cite, shown as
+    the plan's citations show it (review R-11)."""
+    overall = detail.get("attendance_overall")
+    return "—" if overall is None else f"{labels.evidence_figure(overall)}%"
+
+
 def _student_context() -> tuple[dict[str, Any], dict[str, Any]] | None:
     """The signed-in student's own record, or a clear message when none is linked."""
     actor = st.session_state.get("actor") or {}
@@ -134,14 +141,13 @@ def overview_page() -> None:
     )
     courses = detail.get("courses") or []
     support = detail.get("support") or []
-    attendance_avg = average([percent(row.get("percentage")) for row in courses])
     published = [row for row in courses if row.get("result_published")]
     if courses:
         ui.kpi_row(
             [
                 {
                     "label": "Attendance this term",
-                    "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
+                    "value": attendance_this_term(detail),
                 },
                 {
                     "label": "Results published",

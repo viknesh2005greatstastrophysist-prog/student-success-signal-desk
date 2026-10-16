@@ -7,12 +7,10 @@ import streamlit as st
 import labels
 import ui
 from common import (
-    average,
     dataframe,
     display_name,
     load,
     money,
-    percent,
     person_id,
     pick,
     save_action,
@@ -20,6 +18,7 @@ from common import (
     short_time,
 )
 from views.student import (
+    attendance_this_term,
     render_course_cards,
     render_mentor_updates,
     render_plan_notice,
@@ -267,7 +266,6 @@ def overview_page() -> None:
     )
     courses = detail.get("courses") or []
     support = detail.get("support") or []
-    attendance_avg = average([percent(row.get("percentage")) for row in courses])
     open_balance = sum(
         max(0, int(i.get("amount_paise") or 0) - int(i.get("paid_paise") or 0))
         for i in detail.get("invoices", [])
@@ -277,7 +275,7 @@ def overview_page() -> None:
         [
             {
                 "label": "Attendance this term",
-                "value": "—" if attendance_avg is None else f"{attendance_avg:g}%",
+                "value": attendance_this_term(detail),
             },
             {"label": "Open fee balance", "value": _whole_rupees(money(open_balance))},
             {"label": "Support plan", "value": support_status(detail)},
