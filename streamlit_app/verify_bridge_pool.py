@@ -9,7 +9,9 @@ process id, so the check can see which process served which request:
   * two requests at the same moment are served by two readers, in parallel,
   * agent actions share one process (one model rate limiter),
   * the warm-up reaches both readers and does not start the agent process,
-  * an error from the engine keeps its code and leaves the pool usable.
+  * an error from the engine keeps its code and leaves the pool usable,
+  * after an out-of-step reply (a stray stdout line, or an answer to another request)
+    the worker starts a fresh process, so the next request gets its own answer.
 """
 
 from __future__ import annotations
@@ -36,7 +38,13 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (ms) await sleep(ms);
   if (req.action === "boom")
     process.stdout.write(JSON.stringify({ id: req.id, ok: false, error: { code: "NOPE", message: "refused", status: 403 } }) + "\n");
-  else
+  else if (req.action === "stray") {
+    process.stdout.write("a stray log line\n");
+    process.stdout.write(JSON.stringify({ id: req.id, ok: true, data: { pid: process.pid, action: req.action } }) + "\n");
+  } else if (req.action === "wrong_id") {
+    process.stdout.write(JSON.stringify({ id: "another-request", ok: true, data: {} }) + "\n");
+    process.stdout.write(JSON.stringify({ id: req.id, ok: true, data: { pid: process.pid, action: req.action } }) + "\n");
+  } else
     process.stdout.write(JSON.stringify({ id: req.id, ok: true, data: { pid: process.pid, action: req.action } }) + "\n");
 }
 """
@@ -107,11 +115,25 @@ try:
         check("an engine error keeps its code and status", error.code == "NOPE" and error.status == 403)
     check("the pool still answers after an error", client.request("overview")["action"] == "overview")
     check("no request is left counted as pending", all(w.pending == 0 for w in client.workers()))
+
+    # 6. an out-of-step reply never poisons the worker: the next request gets a fresh process
+    reader = client.workers()[0]
+    for action, code in (("stray", "ENGINE_STOPPED"), ("wrong_id", "ENGINE_PROTOCOL")):
+        before = reader.request("overview")["pid"]
+        try:
+            reader.request(action)
+            check(f"an out-of-step reply ({action}) is raised", False)
+        except BridgeError as error:
+            check(f"an out-of-step reply ({action}) is raised as {code}", error.code == code, error.code)
+        after = reader.request("overview")
+        check(f"the next request after {action} gets its own answer", after["action"] == "overview")
+        check(f"the next request after {action} runs in a fresh process", after["pid"] != before, f"{before} {after['pid']}")
+        check(f"the fresh process keeps answering after {action}", reader.request("student")["action"] == "student")
 finally:
     client.close()
     shutil.rmtree(work, ignore_errors=True)
 
-# 6. warm-up reaches both readers and leaves the agent process alone
+# 7. warm-up reaches both readers and leaves the agent process alone
 work = Path(tempfile.mkdtemp(prefix="aura-pool-"))
 script = work / "fake-engine.mjs"
 script.write_text(FAKE_ENGINE)

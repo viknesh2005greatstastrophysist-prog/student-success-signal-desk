@@ -199,6 +199,14 @@ class Worker:
             cwd=ROOT,
         )
 
+    def _discard(self) -> None:
+        """Stop this engine process after a reply that cannot be trusted (a timeout, a
+        stray stdout line or an answer to another request): a reply may still be queued
+        on its stdout, so the next request starts a fresh process instead of reading it."""
+        process, self._process = self._process, None
+        if process is not None and process.poll() is None:
+            process.terminate()
+
     def request(
         self, action: str, data: dict | None = None, token: str | None = None
     ) -> object:
@@ -220,7 +228,7 @@ class Worker:
                     LONG_REQUEST_SECONDS.get(action, REQUEST_SECONDS),
                 )
                 if not ready:
-                    self._process.terminate()
+                    self._discard()
                     raise BridgeError(
                         "The action timed out. Refresh its state before retrying.",
                         "REQUEST_TIMEOUT",
@@ -233,6 +241,7 @@ class Worker:
                     )
                 response = json.loads(line)
                 if response.get("id") != request["id"]:
+                    self._discard()
                     raise BridgeError(
                         "Unexpected college engine response.", "ENGINE_PROTOCOL"
                     )
@@ -246,6 +255,7 @@ class Worker:
                     )
                 return response["data"]
             except (BrokenPipeError, OSError, json.JSONDecodeError) as error:
+                self._discard()
                 raise BridgeError(
                     "The college engine connection failed. Refresh and retry.",
                     "ENGINE_STOPPED",
