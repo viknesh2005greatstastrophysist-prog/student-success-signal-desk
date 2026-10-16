@@ -452,3 +452,17 @@ Other surfaces read and checked, nothing to change: evidence snapshots, agent ru
 **Verified in the running app (local build on the live data, after a restart):** all 22 page addresses (signed out, after sign-in, other workspace's address); Open replay from Runs to a matched replay; Mentor gate button opening Rohan Baddur's draft; the approve confirmation shown and cancelled (nothing saved; still 1 draft at the gate); Sign out returning to "/"; a remembered session opening another workspace's address shows the note.
 
 **Noted, not changed.** First loads of 8–15 s on the test Mac come from the Mac (India) reaching the US database; the hosted app runs next to it. On the live data only 7 drafts came from the full per-student agent run (5 Groq, 2 Gemini); 243 came from a retired bulk test run and 80 from the retired rule-based path, and they are now labelled as such. A fresh mentor review shows the full run. AI activity still does not show a student's score, band or reasons (only the assigned mentor sees them).
+
+## Full cohort AI review (16 Oct, live data)
+
+**Why only 2 AI runs before.** Every student had been screened, but the AI model drafts only for students the risk check flags. After the 15 Oct data refresh the old plans were withdrawn and 81 re-reviews were planned (locked) for the flagged students, waiting for a mentor to press Run; nobody had. Only one small review (C1) had run since the refresh, drafting 2. Not a limit or a bug in the pipeline.
+
+**What ran (owner's choice: all students from scratch, Groq first, Gemini fallback, batch over time).** Each mentor's mentees in plans of up to 50 (8 plans), locked and run through the full pipeline from a local Core against the live database (runner kept in `runtime/streamlit-project/full-run/`, git-ignored). Student 021 was skipped (standing rule: pending case untouched). The 15 old re-review plans were paused, not deleted.
+
+**Result: 320 of 320 students.** 237 checked, no plan needed; 83 with a fresh AI draft at the mentor gate (79 Qwen3.8 27B on Groq, 4 Gemini 3.1 Flash-Lite after Groq limits); 0 decisions and 0 plans published.
+
+**Failures, reasons, retries.**
+- 3 students in one plan were blocked by the privacy guard (`EGRESS_BLOCKED: roster_name`). Cause: one student's name contains "Alias", and the pipeline's own vocabulary (stu-N / ev-N aliases) uses that word, so any request in that plan containing "alias" matched the roster. Fixed (`egress.ts`, regression test, `39e2a12`; `828cfd3` added "academic"/"operations" on a wrong first diagnosis and is kept as harmless). All 3 succeeded on retry.
+- 1 student (VISHAL KHAIRAMODE) failed validation after the two allowed repairs and was handed to the mentor (`REPAIR_BUDGET_EXHAUSTED`); a fresh single-student run then produced a valid draft.
+
+**Logic fixes found while checking.** AI activity counted every run, so "Students checked" read 562 for 321 students and a superseded escalation still counted. Runs now shows each student's latest review (320 checked, 83 drafted, 0 handed to a mentor) and says how many earlier reviews are kept; planned reviews replaced by a newer one are no longer listed as waiting; the drafts card is labelled as covering all drafts; Evaluation's escalation card says it covers all reviews.

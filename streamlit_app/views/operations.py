@@ -32,6 +32,18 @@ def split_jobs(
     )
 
 
+def latest_per_student(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One row per student: their most recent review. A student reviewed again (for
+    example after new figures) is not counted twice."""
+    latest: dict[str, dict[str, Any]] = {}
+    for job in jobs:
+        key = str(job.get("student_id") or job.get("id"))
+        stamp = str(job.get("created_at") or "")
+        if key not in latest or stamp > str(latest[key].get("created_at") or ""):
+            latest[key] = job
+    return sorted(latest.values(), key=lambda j: str(j.get("updated_at") or j.get("created_at") or ""), reverse=True)
+
+
 def runs_page() -> None:
     actor = st.session_state.get("actor") or {}
     review = load("review_overview")
@@ -45,27 +57,27 @@ def runs_page() -> None:
         [
             {
                 "label": "Students checked",
-                "value": len(jobs),
+                "value": len(latest_per_student(jobs)),
                 "icon": ":material/smart_toy:",
                 "help": f"Students the agents have checked in a review. {len(waiting)} more are planned and waiting to start; they are listed separately.",
             },
             {
                 "label": "Plans drafted",
-                "value": sum(1 for job in jobs if job.get("run_id")),
+                "value": sum(1 for job in latest_per_student(jobs) if job.get("run_id")),
                 "icon": ":material/edit_document:",
                 "help": "Students the risk check flagged, for whom an AI model drafted a plan. The rest needed no plan.",
             },
             {
-                "label": "Drafts that passed every check",
+                "label": "All drafts that passed every check",
                 "value": f"{totals.get('validationPassed', 0)} of {totals.get('evaluated', 0)}",
                 "icon": ":material/verified:",
                 "help": "Drafts that passed the privacy, citation and policy checks before reaching the mentor.",
             },
             {
                 "label": "Handed to a mentor",
-                "value": totals.get("escalated", 0),
+                "value": sum(1 for job in latest_per_student(jobs) if job.get("status") == "needs_human"),
                 "icon": ":material/front_hand:",
-                "help": "Reviews the agents could not finish, so a mentor decides without a draft.",
+                "help": "Students whose latest review the agents could not finish, so their mentor decides without a draft.",
             },
             {
                 "label": "Waiting for AI",
@@ -84,10 +96,18 @@ def runs_page() -> None:
 def runs_body(actor: dict[str, Any]) -> None:
     review = load("review_overview")
     jobs, waiting = split_jobs(review)
+    # A planned review is moot once the student has a newer review that ran.
+    newest = {str(j.get("student_id")): str(j.get("created_at") or "") for j in latest_per_student(jobs)}
+    replaced = [w for w in waiting if newest.get(str(w.get("student_id")), "") > str(w.get("created_at") or "")]
+    waiting = [w for w in waiting if w not in replaced]
     section = sections(["Recorded runs", "Plans and traces"], key="runs_section")
     if section == "Plans and traces":
         render_plan_workbench(review, actor)
         return
+    if replaced:
+        st.caption(
+            f":material/update: {len(replaced)} planned reviews were replaced by a newer review of the same students and are kept on record."
+        )
     if waiting:
         paused = sum(1 for job in waiting if job.get("plan_paused"))
         with st.expander(
@@ -118,6 +138,8 @@ def runs_body(actor: dict[str, Any]) -> None:
                 ]
             )
     can_replay = actor.get("role") == "governance"
+    every_run = jobs
+    jobs = latest_per_student(jobs)
     drafted = [row for row in jobs if row.get("run_id")]
     view = pick(
         "Show",
@@ -133,7 +155,8 @@ def runs_body(actor: dict[str, Any]) -> None:
         else jobs
     )
     st.caption(
-        "Each row is one student the agents checked in a review. Students who needed support got a "
+        f"Each row is one student's latest review ({len(every_run) - len(jobs)} earlier reviews of the same students are kept on record). "
+        "Students who needed support got a "
         "plan drafted by an AI model; the rest were checked and left alone."
         + (" Click **Open replay** to verify a drafted plan." if can_replay and drafted else "")
     )

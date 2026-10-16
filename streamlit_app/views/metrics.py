@@ -53,10 +53,10 @@ def render_evaluation_metrics(review: dict[str, Any]) -> None:
                 "icon": ":material/build:",
             },
             {
-                "label": "Handed to a mentor",
+                "label": "Handed to a mentor (all reviews)",
                 "value": totals.get("escalated", 0),
                 "icon": ":material/front_hand:",
-                "help": "Same count as the Handed to a mentor card on Runs.",
+                "help": "Every review the agents could not finish, including students who were later reviewed again. Runs counts only each student's latest review.",
             },
             {
                 "label": "Approved as drafted",
