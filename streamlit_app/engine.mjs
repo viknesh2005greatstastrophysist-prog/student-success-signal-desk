@@ -30798,7 +30798,7 @@ async function experienceCommand(actor, commandId, raw) {
         scaleRevision: scale.revision
       };
     } else if (input2.action === "save-followup") {
-      requireRole(actor, "faculty", "hod");
+      requireRole(actor, "faculty");
       const { student } = await requireExperienceStudent(
         client,
         gen,
@@ -35350,7 +35350,7 @@ var editSchema = external_exports.object({
   rationale: external_exports.string().trim().min(12).max(600)
 }).strict();
 async function editDraft(actor, caseId, commandId, raw) {
-  requireRole(actor, "faculty", "hod");
+  requireRole(actor, "faculty");
   assertCommandId(commandId);
   external_exports.string().uuid().parse(caseId);
   const input2 = editSchema.parse(raw);
@@ -35375,8 +35375,8 @@ async function editDraft(actor, caseId, commandId, raw) {
       `SELECT c.revision,c.status,e.evidence,p.body->>'domain' AS domain,r.id AS run_id,r.mode AS run_mode,a.id AS artifact_id,a.artifact_version,c.student_id,p.department_id,jsonb_build_object('version',COALESCE(pa.policy_version,''),'facultyApproved',COALESCE(pa.approved_role='faculty',false)) AS policy_guard
        FROM support_cases c JOIN evidence_snapshots e ON e.support_case_id=c.id JOIN agent_runs r ON r.evidence_snapshot_id=e.id
        JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN ch11_jobs j ON j.support_case_id=c.id JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN ch11_policy_attestations pa ON pa.policy_id=(p.body->>'policyId')::uuid AND pa.generation_id=c.generation_id
-       WHERE c.id=$1 AND c.generation_id=$2 AND (($4='hod' AND p.department_id=$5) OR ($4='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=c.student_id AND m.faculty_person_id=$3))) ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`,
-      [caseId, generation, actor.personId, actor.role, actor.departmentId]
+       WHERE c.id=$1 AND c.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=c.student_id AND m.faculty_person_id=$3) ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`,
+      [caseId, generation, actor.personId]
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned Chapter 11 draft not found");
@@ -35465,7 +35465,7 @@ var outcomeSchema = external_exports.object({
   outcome: external_exports.string().trim().min(12).max(1200)
 }).strict();
 async function recordOutcome(actor, planId, commandId, raw) {
-  requireRole(actor, "faculty", "hod");
+  requireRole(actor, "faculty");
   assertCommandId(commandId);
   external_exports.string().uuid().parse(planId);
   const input2 = outcomeSchema.parse(raw);
@@ -35487,8 +35487,8 @@ async function recordOutcome(actor, planId, commandId, raw) {
     }
     const result = await client.query(
       `SELECT p.id,p.student_id,s.department_id,p.plan FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id
-       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND (($4='hod' AND s.department_id=$5) OR ($4='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$3))) FOR UPDATE OF p`,
-      [planId, generation, actor.personId, actor.role, actor.departmentId]
+       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$3) FOR UPDATE OF p`,
+      [planId, generation, actor.personId]
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned approved plan not found");
@@ -35515,10 +35515,11 @@ async function recordOutcome(actor, planId, commandId, raw) {
         input2.outcome
       ]
     );
-    await client.query(
-      "UPDATE support_plans SET visible_to_student=$2 WHERE id=$1",
-      [planId, input2.status !== "withdrawn"]
-    );
+    if (input2.status === "withdrawn")
+      await client.query(
+        "UPDATE support_plans SET visible_to_student=false WHERE id=$1",
+        [planId]
+      );
     const current = result.rows[0];
     const payload = {
       requestHash: hashJson({ planId, input: input2 }),

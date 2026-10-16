@@ -330,12 +330,17 @@ test(
           }),
         /UNSUPPORTED_AUTHORITY/,
       );
-      const hodEdited = await editDraft(hod, current.id, randomUUID(), {
-        ...editInput,
-        expectedRevision: edited.revision,
-        artifactId: edited.artifactId,
-        rationale: "Confirm the support wording in a department review",
-      });
+      // Review R-12: the department head observes; only the assigned mentor edits.
+      await assert.rejects(
+        () =>
+          editDraft(hod, current.id, randomUUID(), {
+            ...editInput,
+            expectedRevision: edited.revision,
+            artifactId: edited.artifactId,
+            rationale: "Confirm the support wording in a department review",
+          }),
+        /not permitted/,
+      );
       await withCoreTransaction(async (client) => {
         const artifacts = await client.query<{
           id: string;
@@ -343,22 +348,19 @@ test(
           mentor_edited: boolean;
         }>(
           "SELECT id,validation->>'editorRole' AS editor_role,(validation->>'mentorEdited')::boolean AS mentor_edited FROM agent_artifacts WHERE id=ANY($1::uuid[])",
-          [[edited.artifactId, hodEdited.artifactId]],
+          [[edited.artifactId]],
         );
-        assert.equal(artifacts.rowCount, 2);
-        assert.deepEqual(
-          artifacts.rows.find((a) => a.id === edited.artifactId),
-          { id: edited.artifactId, editor_role: "faculty", mentor_edited: true },
-        );
-        assert.deepEqual(
-          artifacts.rows.find((a) => a.id === hodEdited.artifactId),
-          { id: hodEdited.artifactId, editor_role: "hod", mentor_edited: false },
-        );
+        assert.equal(artifacts.rowCount, 1);
+        assert.deepEqual(artifacts.rows[0], {
+          id: edited.artifactId,
+          editor_role: "faculty",
+          mentor_edited: true,
+        });
       });
       const decision = {
-        artifactId: hodEdited.artifactId as string,
-        contentHash: hodEdited.contentHash as string,
-        expectedRevision: hodEdited.revision as number,
+        artifactId: edited.artifactId as string,
+        contentHash: edited.contentHash as string,
+        expectedRevision: edited.revision as number,
         decision: "approved" as const,
         rationale:
           "Evidence checked and synthetic support plan approved by assigned mentor",
@@ -442,6 +444,27 @@ test(
         },
       );
       assert.equal(withdrawn.revision, 1);
+      assert.equal(
+        (await reviewQueue(faculty)).plans[0]!.visible_to_student,
+        false,
+      );
+      // Review R-12: the department head never withdraws or re-shows a plan, and a
+      // status other than withdrawn does not re-show it either (only a restore does).
+      await assert.rejects(
+        () =>
+          recordOutcome(hod, approved.plan!.id, randomUUID(), {
+            expectedRevision: 1,
+            status: "planned",
+            outcome: "Attempted department-head outcome update",
+          }),
+        /not permitted/,
+      );
+      const noted = await recordOutcome(faculty, approved.plan!.id, randomUUID(), {
+        expectedRevision: 1,
+        status: "planned",
+        outcome: "The plan stays withdrawn while the mentor reviews it",
+      });
+      assert.equal(noted.revision, 2);
       assert.equal(
         (await reviewQueue(faculty)).plans[0]!.visible_to_student,
         false,

@@ -716,7 +716,9 @@ export async function experienceCommand(
         scaleRevision: scale.revision,
       };
     } else if (input.action === "save-followup") {
-      requireRole(actor, "faculty", "hod");
+      // Only the assigned mentor schedules or updates a follow-up (review R-12);
+      // requireExperienceStudent admits a faculty member only for their own mentee.
+      requireRole(actor, "faculty");
       const { student } = await requireExperienceStudent(
         client,
         gen,

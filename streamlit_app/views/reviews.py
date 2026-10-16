@@ -1173,6 +1173,11 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                         )
         current = selected.get("status", "planned")
         statuses = ["planned", "in_progress", "completed", "withdrawn"]
+        if selected.get("visible_to_student") is False:
+            st.caption(
+                ":material/visibility_off: This plan is withdrawn. Saving an outcome keeps it hidden; "
+                "restore an approved version to show it to the student again."
+            )
         with st.form("record_outcome", border=False):
             status = pick(
                 "Status",

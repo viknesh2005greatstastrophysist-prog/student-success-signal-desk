@@ -5,7 +5,7 @@ import type { ActorContext } from "@aura/contracts";
 import { AuthorizationError } from "../lib/security";
 import { executePlan, lockPlan, safeValidation, savePlan, savePlannedPlan, setReviewPaused } from "../lib/chapter11/service";
 import { loadPlanningScope, planWithAgent } from "../lib/chapter11/planning";
-import { editDraft } from "../lib/chapter11/review";
+import { editDraft, recordOutcome } from "../lib/chapter11/review";
 
 /** E2E log #12: the department head and the AI-activity (governance) workspace
  * observe plans and never create, revise, lock, run or pause them. The Core
@@ -26,7 +26,7 @@ const notPermitted = (role: string) => (error: unknown) =>
 const input = { request: "Review my mentees' attendance", studentIds: [randomUUID()], domain: "attendance" as const, policyId: randomUUID() };
 
 for (const role of ["hod", "governance", "student", "parent"] as const) {
-  test(`${role} cannot create, revise, lock, run or pause a review plan`, async () => {
+  test(`${role} cannot create, revise, lock, run or pause a review plan, edit a draft or record an outcome`, async () => {
     const actor = actorAs(role);
     const planId = randomUUID();
     const commands: Record<string, () => Promise<unknown>> = {
@@ -39,6 +39,9 @@ for (const role of ["hod", "governance", "student", "parent"] as const) {
       "run a plan": () => executePlan(actor, planId),
       "pause a plan": () => setReviewPaused(actor, planId, { paused: true, expectedRevision: 1, reason: "Not allowed" }),
       "read the planning scope": () => loadPlanningScope(actor),
+      // review R-12: editing a draft and recording an outcome belong to the mentor too
+      "edit a draft": () => editDraft(actor, randomUUID(), randomUUID(), {}),
+      "record an outcome or withdraw a plan": () => recordOutcome(actor, randomUUID(), randomUUID(), {}),
     };
     for (const [name, run] of Object.entries(commands))
       await assert.rejects(run, notPermitted(role), `${role} must not ${name}`);
@@ -49,8 +52,9 @@ test("the role gate sits in front of the plan commands, not only in the UI", asy
   // a malformed body from a read-only role is refused for its role first
   await assert.rejects(() => planWithAgent(actorAs("hod"), { not: "a plan" }), notPermitted("hod"));
   await assert.rejects(() => executePlan(actorAs("governance"), "not-a-uuid"), notPermitted("governance"));
-  // the department head keeps the draft-edit oversight route, which is a separate command
-  await assert.rejects(() => editDraft(actorAs("governance"), randomUUID(), randomUUID(), {}), notPermitted("governance"));
+  // the department head observes drafts and plans; it no longer edits or withdraws them
+  await assert.rejects(() => editDraft(actorAs("hod"), randomUUID(), randomUUID(), {}), notPermitted("hod"));
+  await assert.rejects(() => recordOutcome(actorAs("hod"), randomUUID(), randomUUID(), {}), notPermitted("hod"));
 });
 
 test("review R-01: the department head and AI activity get the review mechanics, never draft text", () => {
