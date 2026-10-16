@@ -476,7 +476,14 @@ def pick(
             index = shown.index(options[index])
         else:
             index = 0
-    _forget_stale(key, shown)
+    if key and key in st.session_state and st.session_state[key] not in shown:
+        # The old choice is filtered out: store a choice that is shown, so the drop-down in
+        # the browser shows the same student as the page below it (it would otherwise keep
+        # displaying the old one).
+        st.session_state[key] = shown[min(index, len(shown) - 1)]
+    if key and key in st.session_state:
+        # Session State decides the choice; a non-zero default as well makes Streamlit warn.
+        index = 0
     return st.selectbox(
         label,
         shown,

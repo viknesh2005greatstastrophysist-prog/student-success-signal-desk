@@ -210,10 +210,21 @@ def render_profile(student_id: str, role: str) -> None:
                 "Open Reviews to approve, edit or decline.",
                 title="Needs you",
             )
+        if not is_mentor and waiting:
+            # Other roles see that a plan is at the gate, never its content.
+            latest = max(waiting, key=lambda d: str(d.get("drafted_at") or ""))
+            ui.insight(
+                "Support plan drafted, waiting for the mentor",
+                f"The agents flagged this student and {labels.drafted_by(latest.get('mode'), latest.get('model_id'))} "
+                f"drafted a support plan on {labels.nice_time(latest.get('drafted_at'))}. It is waiting for "
+                f"{(mentor.get('name') or 'the assigned mentor')} to approve, edit or decline it; "
+                "only the assigned mentor sees its content.",
+            )
         render_rereview(mine, role=role, key="profile_rereview")
         dataframe(
             plan_rows(mine),
-            empty="No approved plans for this student yet.",
+            empty="No approved plans yet."
+            + (" A drafted plan is waiting for the mentor (above)." if waiting else ""),
         )
     else:
         render_source_evidence(student.get("register_number"), student.get("name"))
