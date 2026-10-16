@@ -1264,9 +1264,10 @@ def provenance_rows(
     mode: Any,
     model_id: Any,
     evidence_values: Any = None,
+    role: str | None = None,
 ) -> list[dict[str, str]]:
     """Plain-text rows describing how a draft was produced (mentor/governance only)."""
-    rows = _provenance_rows(validation, mode, model_id)
+    rows = _provenance_rows(validation, mode, model_id, role)
     academic = (evidence_values or {}).get("academic") if isinstance(evidence_values, dict) else None
     basis = academic.get("attendanceBasis") if isinstance(academic, dict) else None
     if basis:
@@ -1277,7 +1278,7 @@ def provenance_rows(
 
 
 def _provenance_rows(
-    validation: dict[str, Any], mode: Any, model_id: Any
+    validation: dict[str, Any], mode: Any, model_id: Any, role: str | None = None
 ) -> list[dict[str, str]]:
     prov = validation.get("provenance") if isinstance(validation, dict) else None
     if not isinstance(prov, dict):
@@ -1356,7 +1357,7 @@ def _provenance_rows(
             }
         )
     rows.extend(agent_rows(prov.get("agent")))
-    rows.extend(judge_rows(prov.get("judge") or validation.get("judge")))
+    rows.extend(judge_rows(prov.get("judge") or validation.get("judge"), role))
     for item in prov.get("injected") or []:
         if isinstance(item, dict):
             rows.append(
@@ -1368,10 +1369,16 @@ def _provenance_rows(
     return rows
 
 
-def judge_rows(judge: Any) -> list[dict[str, str]]:
-    """The judge agent's scores and reasons (mentor and governance panels)."""
+def judge_rows(judge: Any, role: str | None = None) -> list[dict[str, str]]:
+    """The judge agent's scores, and its reasons for the assigned mentor only.
+
+    The reasons name draft sentences and student figures, so the department head
+    and AI activity see the scores alone (the Core withholds the reasons too).
+    """
     if not isinstance(judge, dict):
         return []
+    if role is None:
+        role = (st.session_state.get("actor") or {}).get("role")
     where = (
         f"{labels.provider_label(judge.get('provider'))} · {judge.get('model') or 'model not recorded'}"
         if judge.get("provider")
@@ -1400,7 +1407,7 @@ def judge_rows(judge: Any) -> list[dict[str, str]]:
             ),
         },
     ]
-    for name in labels.JUDGE_DIMENSIONS:
+    for name in labels.JUDGE_DIMENSIONS if role == "faculty" else ():
         if reasons.get(name):
             rows.append({"Step": f"Judge: {name}", "Detail": str(reasons[name])})
     previous = judge.get("previous")
@@ -1585,12 +1592,14 @@ def render_draft_provenance(
             st.caption(
                 f":material/build: {len(repairs)} targeted repair attempt(s) before review."
             )
+        # Only the assigned mentor reaches a draft's contents (render_draft_reviews).
         dataframe(
             provenance_rows(
                 validation,
                 selected.get("mode"),
                 selected.get("model_id"),
                 selected.get("evidence_values"),
+                role="faculty",
             )
         )
         render_tool_calls(((validation or {}).get("provenance") or {}).get("agent"))

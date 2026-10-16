@@ -358,6 +358,7 @@ def render_agent_graph(review: dict[str, Any]) -> None:
                     validation if isinstance(validation, dict) else {},
                     selected_job.get("mode"),
                     selected_job.get("model_id"),
+                    role=(st.session_state.get("actor") or {}).get("role"),
                 )
             )
             render_tool_calls(

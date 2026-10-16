@@ -1658,6 +1658,78 @@ function scopeTrend<T extends Record<string, unknown>>(row: T): T {
   return out as T;
 }
 
+type Loose = Record<string, unknown>;
+const looseObject = (value: unknown): Loose | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Loose) : null;
+const pickKeys = (from: Loose, keys: string[]): Loose =>
+  Object.fromEntries(keys.filter((key) => from[key] !== undefined).map((key) => [key, from[key]]));
+
+/** The judge verdict without its reasons: they name draft sentences and carry
+ * student figures (judge.ts), so they stay with the assigned mentor. */
+function safeJudge(raw: unknown): Loose | null {
+  const judge = looseObject(raw);
+  if (!judge) return null;
+  const previous = safeJudge(judge.previous);
+  return {
+    ...pickKeys(judge, ["status", "round", "threshold", "scores", "mean", "min", "low", "passed", "provider", "model", "unavailableReason", "repair", "injected"]),
+    ...(previous ? { previous } : {}),
+  };
+}
+
+/** An escalated job stores its whole validation report as the failure
+ * diagnosis; other stops store a code, the attempt count and plain reasons. */
+function safeFailureDiagnosis(raw: unknown): Loose | null {
+  const diagnosis = looseObject(raw);
+  if (!diagnosis) return null;
+  return typeof diagnosis.code === "string"
+    ? pickKeys(diagnosis, ["code", "attempts", "reasons"])
+    : safeValidation(diagnosis);
+}
+
+/**
+ * What the department head and the AI-activity workspace receive of a draft's
+ * validation report (review R-01): the review mechanics only. Judge reasons,
+ * model attempts, failures and diagnoses hold draft text and student figures,
+ * so only the assigned mentor (role faculty) receives the full report. Tool
+ * calls keep their name and status, never their arguments.
+ */
+export function safeValidation(raw: unknown): Loose | null {
+  const validation = looseObject(raw);
+  if (!validation) return null;
+  const provenance = looseObject(validation.provenance);
+  const agent = looseObject(provenance?.agent);
+  const checks = looseObject(validation.checks);
+  const judge = safeJudge(validation.judge);
+  const listOf = (value: unknown) => (Array.isArray(value) ? value.map(looseObject).filter((item): item is Loose => !!item) : []);
+  return {
+    ...pickKeys(validation, ["valid", "escalated", "unavailable", "packetSchema", "fallback"]),
+    repairCount: Array.isArray(validation.repairs) ? validation.repairs.length : 0,
+    ...(checks
+      ? { checks: Object.fromEntries(Object.entries(checks).filter(([, value]) => typeof value === "boolean" || value === null)) }
+      : {}),
+    ...(judge ? { judge } : {}),
+    ...(provenance
+      ? {
+          provenance: {
+            ...pickKeys(provenance, ["provider", "model", "tokens", "calls", "specialist", "repairs"]),
+            fallbacks: listOf(provenance.fallbacks).map((item) => pickKeys(item, ["provider", "model", "reason"])),
+            egress: listOf(provenance.egress).map((item) =>
+              pickKeys(item, ["provider", "model", "payloadHash", "fields", "bytes", "outcome", "category", "reached"]),
+            ),
+            ...(judge ? { judge } : {}),
+            ...(provenance.injected ? { injected: listOf(provenance.injected).map((item) => pickKeys(item, ["kind"])) } : {}),
+            agent: agent
+              ? {
+                  ...pickKeys(agent, ["role", "mode", "turns", "modelCalls", "budget", "provider", "model", "tokens", "evidenceValues"]),
+                  toolCalls: listOf(agent.toolCalls).map((call) => pickKeys(call, ["seq", "turn", "tool", "status", "code"])),
+                }
+              : null,
+          },
+        }
+      : {}),
+  };
+}
+
 export async function overview(actor: ActorContext) {
   requireRole(actor, "faculty", "governance", "hod");
   return withCoreTransaction(async (client) => {
@@ -1746,7 +1818,14 @@ export async function overview(actor: ActorContext) {
       students: students.rows,
       policies: policies.rows,
       plans: plans.rows,
-      jobs: assignedMentor ? jobs.rows : jobs.rows.map((row) => ({ ...row, risk: null })),
+      jobs: assignedMentor
+        ? jobs.rows
+        : jobs.rows.map((row) => ({
+            ...row,
+            risk: null,
+            validation: safeValidation(row.validation),
+            failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis),
+          })),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",

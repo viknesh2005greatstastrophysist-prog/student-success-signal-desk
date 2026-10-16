@@ -87,3 +87,4 @@ jobs:
       - run: python streamlit_app/verify_bridge_pool.py
       - run: python streamlit_app/verify_device_signin.py
       - run: python streamlit_app/verify_drafted_by.py
+      - run: python streamlit_app/verify_safety_fixes.py

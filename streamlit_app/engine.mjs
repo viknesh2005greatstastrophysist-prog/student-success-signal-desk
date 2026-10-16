@@ -34436,6 +34436,52 @@ function scopeTrend(row) {
     if (Number(out[`count_${band}`] ?? 0) < MIN_GROUP) out[`average_${band}`] = null;
   return out;
 }
+var looseObject2 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
+var pickKeys = (from, keys) => Object.fromEntries(keys.filter((key) => from[key] !== void 0).map((key) => [key, from[key]]));
+function safeJudge(raw) {
+  const judge = looseObject2(raw);
+  if (!judge) return null;
+  const previous = safeJudge(judge.previous);
+  return {
+    ...pickKeys(judge, ["status", "round", "threshold", "scores", "mean", "min", "low", "passed", "provider", "model", "unavailableReason", "repair", "injected"]),
+    ...previous ? { previous } : {}
+  };
+}
+function safeFailureDiagnosis(raw) {
+  const diagnosis = looseObject2(raw);
+  if (!diagnosis) return null;
+  return typeof diagnosis.code === "string" ? pickKeys(diagnosis, ["code", "attempts", "reasons"]) : safeValidation(diagnosis);
+}
+function safeValidation(raw) {
+  const validation = looseObject2(raw);
+  if (!validation) return null;
+  const provenance = looseObject2(validation.provenance);
+  const agent = looseObject2(provenance?.agent);
+  const checks = looseObject2(validation.checks);
+  const judge = safeJudge(validation.judge);
+  const listOf = (value) => Array.isArray(value) ? value.map(looseObject2).filter((item) => !!item) : [];
+  return {
+    ...pickKeys(validation, ["valid", "escalated", "unavailable", "packetSchema", "fallback"]),
+    repairCount: Array.isArray(validation.repairs) ? validation.repairs.length : 0,
+    ...checks ? { checks: Object.fromEntries(Object.entries(checks).filter(([, value]) => typeof value === "boolean" || value === null)) } : {},
+    ...judge ? { judge } : {},
+    ...provenance ? {
+      provenance: {
+        ...pickKeys(provenance, ["provider", "model", "tokens", "calls", "specialist", "repairs"]),
+        fallbacks: listOf(provenance.fallbacks).map((item) => pickKeys(item, ["provider", "model", "reason"])),
+        egress: listOf(provenance.egress).map(
+          (item) => pickKeys(item, ["provider", "model", "payloadHash", "fields", "bytes", "outcome", "category", "reached"])
+        ),
+        ...judge ? { judge } : {},
+        ...provenance.injected ? { injected: listOf(provenance.injected).map((item) => pickKeys(item, ["kind"])) } : {},
+        agent: agent ? {
+          ...pickKeys(agent, ["role", "mode", "turns", "modelCalls", "budget", "provider", "model", "tokens", "evidenceValues"]),
+          toolCalls: listOf(agent.toolCalls).map((call) => pickKeys(call, ["seq", "turn", "tool", "status", "code"]))
+        } : null
+      }
+    } : {}
+  };
+}
 async function overview(actor) {
   requireRole(actor, "faculty", "governance", "hod");
   return withCoreTransaction(async (client) => {
@@ -34513,7 +34559,12 @@ async function overview(actor) {
       students: students.rows,
       policies: policies.rows,
       plans: plans.rows,
-      jobs: assignedMentor ? jobs.rows : jobs.rows.map((row) => ({ ...row, risk: null })),
+      jobs: assignedMentor ? jobs.rows : jobs.rows.map((row) => ({
+        ...row,
+        risk: null,
+        validation: safeValidation(row.validation),
+        failure_diagnosis: safeFailureDiagnosis(row.failure_diagnosis)
+      })),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",

@@ -321,5 +321,7 @@ def audit_page() -> None:
     ui.section("Policies in force", icon=":material/policy:")
     render_policies(review, actor)
     st.caption(
-        ":material/shield: AI activity receives aggregate counts only, never individual source rows or risk scores."
+        ":material/shield: AI activity receives each student's review record: what happened, which model drafted, "
+        "and how the checks and the judge scored it. It never receives risk scores, evidence values, draft text "
+        "or the judge's written reasons."
     )
