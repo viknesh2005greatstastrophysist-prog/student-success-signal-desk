@@ -311,7 +311,7 @@ def render_conversations_not_submitted(overview: dict[str, Any]) -> None:
         + (
             f"{late} {'is' if late == 1 else 'are'} past the deadline; you can message the mentor."
             if late
-            else "None is past the deadline."
+            else "Nothing is past the deadline."
         ),
     )
     if not rows:
