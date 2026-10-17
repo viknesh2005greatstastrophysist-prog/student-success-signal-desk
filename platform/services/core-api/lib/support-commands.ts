@@ -10,7 +10,7 @@ import { validateAnyPacket, riskAnalysis, digest, type Evidence, type Risk, type
 import { assertCaseNotFrozen, assertStudentNotFrozen } from "./chapter11/frozen";
 import { actorScopeParams, actsOnStudentSql, requireReviewActor } from "./chapter11/authority";
 import { caseEvidenceCapturedSql, isCurrentEvidence, loadGenerationClock } from "./data-refresh/generation";
-import { checkinDueOn, ensurePlanCheckin } from "./meetings";
+import { collegeDate, ensureCaseCheckin } from "./meetings";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
 export const supportDecisionInput = z.object({
@@ -243,8 +243,9 @@ type DecisionResult = {
   supportCase: { id: string; status: string; revision: number };
   decision: { id: string; decision: "approved" | "rejected"; rationale: string };
   plan: { id: string; plan: Recommendation; visibleToStudent: true } | null;
-  /** The check-in created with an approval (meetings.ts); null for a decline. */
-  checkin?: { id: string; dueOn: string; created: boolean } | null;
+  /** The case's check-in after an approval (meetings.ts): the one created when the AI
+   * report reached the gate, or one added now for an older case; null for a decline. */
+  checkin?: { id: string | null; dueOn: string | null; created: boolean } | null;
   duplicate: boolean;
   receipt: Awaited<ReturnType<typeof writeCommandLedger>>;
 };
@@ -280,10 +281,10 @@ export async function decideSupportCase(
       };
     }
     const result = await client.query<{
-      case_id: string; student_id: string; department_id: string; status: string; revision: number;
+      case_id: string; student_id: string; department_id: string; status: string; revision: number; opened_at: Date;
       artifact_id: string; content_hash: string; recommendation: Recommendation; assigned_faculty_person_id: string; artifact_validation:{valid?:boolean;chapter11?:boolean;policyVersion?:string;checks?:Record<string,boolean>}; source:string; run_mode:string;
     }>(
-      `SELECT support_case.id AS case_id, support_case.student_id, student.department_id, support_case.status, support_case.revision,
+      `SELECT support_case.id AS case_id, support_case.student_id, student.department_id, support_case.status, support_case.revision, support_case.opened_at,
               artifact.id AS artifact_id, artifact.content_hash, artifact.recommendation, artifact.validation AS artifact_validation, support_case.source, run.mode AS run_mode,
               evidence.evidence->>'assignedFacultyPersonId' AS assigned_faculty_person_id
        FROM support_cases support_case
@@ -341,17 +342,19 @@ export async function decideSupportCase(
         [planId, generationId, caseId, decisionId, current.student_id, JSON.stringify(current.recommendation)],
       );
       plan = { id: planId, plan: current.recommendation, visibleToStudent: true };
-      // One check-in after the plan (meetings.ts): due on the approval day plus the
-      // plan's earliest action window, assigned to the student's mentor even when the
-      // department head approved, shared with the family.
-      const created = await ensurePlanCheckin(client, {
+      // The meeting clock started at the AI report (meetings.ts): the case already
+      // has its check-in, so nothing new is created. A case that reached the gate
+      // before that rule gets one now, due on its report date plus 7 days, assigned
+      // to the student's mentor even when the department head approved.
+      const created = await ensureCaseCheckin(client, {
         generation: generationId,
+        caseId,
         planId,
         studentId: current.student_id,
-        dueOn: checkinDueOn(new Date(), current.recommendation),
+        reportOn: collegeDate(current.opened_at),
         fallbackMentorId: current.assigned_faculty_person_id || actor.personId,
         actorPersonId: actor.personId,
-        reason: "Check-in after the support plan, created when the plan was approved",
+        reason: "Check-in to meet the student about the AI report, added when the plan was approved",
       });
       checkin = { id: created.id, dueOn: created.dueOn, created: created.created };
     }

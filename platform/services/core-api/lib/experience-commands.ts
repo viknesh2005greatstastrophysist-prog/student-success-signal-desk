@@ -21,11 +21,11 @@ import {
 import { digest } from "./chapter11/engine";
 import { assertStudentNotFrozen } from "./chapter11/frozen";
 import {
-  CHECKIN_NOTE,
   MEETINGS_NOT_READY,
   collegeDate,
   meetingOutcome,
   meetingTablesPresent,
+  reportCheckinNote,
   validateMeeting,
 } from "./meetings";
 const uuid = z.string().uuid();
@@ -170,12 +170,14 @@ export const experienceCommandSchema = z.discriminatedUnion("action", [
     .strict(),
   z
     .object({
-      // Meeting record after a support plan (meetings.ts): the day they met, the
-      // reasons from the fixed list, a note and what was agreed. Completes the
-      // plan's check-in. The audit reason is fixed, so none is typed.
+      // The conversation with the student about the AI report (meetings.ts): the day
+      // they met, the reasons from the fixed list and a note. Completes the case's
+      // check-in. The report is named by its support case (the draft may still be at
+      // the gate) or by its approved plan. The audit reason is fixed, so none is typed.
       action: z.literal("record-meeting"),
       studentId: uuid,
-      supportPlanId: uuid,
+      supportCaseId: uuid.optional(),
+      supportPlanId: uuid.optional(),
       followupId: uuid.optional(),
       metOn: z.string().trim().max(10),
       reasons: z.array(z.string().trim().min(1).max(80)).max(10),
@@ -812,26 +814,37 @@ export async function experienceCommand(
       await assertStudentNotFrozen(client, studentId);
       if (!(await meetingTablesPresent(client)))
         throw new ConflictError("MEETINGS_NOT_READY", MEETINGS_NOT_READY);
-      const plan = (
-        await client.query<{ id: string; approved_at: Date }>(
-          "SELECT p.id,d.decided_at AS approved_at FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id AND d.decision='approved' WHERE p.generation_id=$1 AND p.id=$2 AND p.student_id=$3 FOR UPDATE OF p",
-          [gen, input.supportPlanId, studentId],
+      if (!input.supportCaseId && !input.supportPlanId)
+        throw new ConflictError("REPORT_REQUIRED", "Choose the AI report this meeting was about.");
+      // The AI report: its support case once it reached the gate (awaiting a decision,
+      // approved or declined), with its approved plan when there is one.
+      const report = (
+        await client.query<{ id: string; opened_at: Date; plan_id: string | null }>(
+          `SELECT c.id,c.opened_at,p.id AS plan_id FROM support_cases c
+           LEFT JOIN support_plans p ON p.support_case_id=c.id AND p.generation_id=c.generation_id
+           WHERE c.generation_id=$1 AND c.student_id=$2 AND c.status IN ('awaiting_faculty','approved','rejected')
+             AND ($3::uuid IS NULL OR c.id=$3::uuid) AND ($4::uuid IS NULL OR p.id=$4::uuid)
+           LIMIT 1 FOR UPDATE OF c`,
+          [gen, studentId, input.supportCaseId ?? null, input.supportPlanId ?? null],
         )
       ).rows[0];
-      if (!plan) throw new NotFoundError("Approved support plan not found for this student");
-      const meeting = validateMeeting(input, { approvedOn: collegeDate(plan.approved_at) });
-      // The check-in this meeting completes: the one named, else the plan's open
+      if (!report) throw new NotFoundError("AI report not found for this student");
+      const reportOn = collegeDate(report.opened_at);
+      const meeting = validateMeeting(input, { reportOn });
+      // The check-in this meeting completes: the one named, else the case's open
       // check-in, else a new one (dated the day they met) when every earlier one
       // already has its meeting.
       const checkin = (
-        await client.query<{ id: string; revision: number; status: string; support_plan_id: string | null; recorded: boolean }>(
+        await client.query<{ id: string; revision: number; status: string; recorded: boolean }>(
           `SELECT f.*,EXISTS(SELECT 1 FROM support_meetings m WHERE m.followup_id=f.id) AS recorded FROM support_followups f
-           WHERE f.generation_id=$1 AND f.student_id=$2 AND f.support_plan_id=$3 AND ($4::uuid IS NULL OR f.id=$4::uuid)
-           AND ($4::uuid IS NOT NULL OR f.status<>'completed') ORDER BY f.due_on LIMIT 1 FOR UPDATE OF f`,
-          [gen, studentId, plan.id, input.followupId ?? null],
+           WHERE f.generation_id=$1 AND f.student_id=$2
+             AND (f.support_case_id=$3 OR f.support_plan_id IN (SELECT cp.id FROM support_plans cp WHERE cp.support_case_id=$3))
+             AND ($4::uuid IS NULL OR f.id=$4::uuid)
+             AND ($4::uuid IS NOT NULL OR f.status<>'completed') ORDER BY f.due_on LIMIT 1 FOR UPDATE OF f`,
+          [gen, studentId, report.id, input.followupId ?? null],
         )
       ).rows[0];
-      if (input.followupId && !checkin) throw new NotFoundError("Check-in not found for this plan");
+      if (input.followupId && !checkin) throw new NotFoundError("Check-in not found for this AI report");
       if (checkin?.recorded)
         throw new ConflictError("MEETING_ALREADY_RECORDED", "This check-in already has its meeting record.");
       const outcome = meetingOutcome(meeting.metOn);
@@ -847,20 +860,22 @@ export async function experienceCommand(
         followupId = randomUUID();
         const mentorId = student.mentor_id ?? actor.personId;
         await client.query(
-          "INSERT INTO support_followups(id,generation_id,student_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,true,'completed',$8)",
-          [followupId, gen, studentId, plan.id, mentorId, meeting.metOn, CHECKIN_NOTE, outcome],
+          "INSERT INTO support_followups(id,generation_id,student_id,support_case_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,'completed',$9)",
+          [followupId, gen, studentId, report.id, report.plan_id, mentorId, meeting.metOn, reportCheckinNote(reportOn), outcome],
         );
       }
       id = randomUUID();
       await client.query(
-        "INSERT INTO support_meetings(id,generation_id,followup_id,support_plan_id,student_id,met_on,reasons,note,agreed_next_step,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10)",
-        [id, gen, followupId, plan.id, studentId, meeting.metOn, meeting.reasons, meeting.note, meeting.agreedNextStep, actor.personId],
+        "INSERT INTO support_meetings(id,generation_id,followup_id,support_case_id,support_plan_id,student_id,met_on,reasons,note,agreed_next_step,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8::text[],$9,$10,$11)",
+        [id, gen, followupId, report.id, report.plan_id, studentId, meeting.metOn, meeting.reasons, meeting.note, meeting.agreedNextStep, actor.personId],
       );
       resource = "support_meetings";
       facultyId = student.mentor_id ?? undefined;
       updated = {
         studentId,
-        supportPlanId: plan.id,
+        supportCaseId: report.id,
+        supportPlanId: report.plan_id,
+        reportOn,
         followupId,
         metOn: meeting.metOn,
         reasons: meeting.reasons,
@@ -1007,7 +1022,7 @@ export async function experienceCommand(
       "reason" in input
         ? input.reason
         : input.action === "record-meeting"
-          ? "Meeting with the student recorded after the support plan"
+          ? "Conversation with the student about the AI report recorded"
           : "Student submitted the final course selection",
       previous,
       updated,

@@ -24,7 +24,7 @@ import {
   loadGenerationClock,
   stampEvidence,
 } from "./data-refresh/generation";
-import { meetingStatus, planMeetingFacts } from "./meetings";
+import { REPORT_NOTE_PREFIX, meetingStatus, planMeetingFacts, planMeetingFields } from "./meetings";
 
 export async function requireExperienceStudent(
   client: PoolClient,
@@ -193,7 +193,7 @@ export async function experienceOverview(
             )
           ).rows
         : [];
-    // Each student's approved current plan and its meeting record (meetings.ts):
+    // Each student's current AI report and the conversation about it (meetings.ts):
     // a mentor's own mentees, the department head's whole department.
     const meetings = ["faculty", "hod"].includes(actor.role)
       ? await meetingStatus(client, gen, actor)
@@ -225,6 +225,7 @@ export async function experienceOverview(
         overdue_followups: followups.filter((f) => f.overdue).length,
         draft_courses: courses.filter((c) => c.status === "draft").length,
         meetings_pending: meetings.filter((m) => !m.meeting).length,
+        meetings_past_deadline: meetings.filter((m) => m.stage === "past_deadline").length,
       },
     };
   });
@@ -358,19 +359,11 @@ export async function experienceStudent(
       : [];
     let support: StudentDetail["support"] = [];
     let supportNotice: string | null = null;
-    // The meeting after each plan (meetings.ts). Staff get the record with its
-    // reasons and the due date; the student and parent only the day they met.
+    // The conversation about each plan's AI report (meetings.ts). Staff get the record
+    // with its reasons and the timeline; the student and parent only the day they met.
     const meetingFacts = await planMeetingFacts(client, gen, supportRows.map((row) => row.id));
     if (privateView)
-      support = supportRows.map((row) => {
-        const fact = meetingFacts.get(row.id);
-        return {
-          ...row,
-          meeting: fact?.meeting ?? null,
-          checkin_due_on: fact?.due_on ?? null,
-          checkin_days_overdue: fact?.days_overdue ?? null,
-        };
-      });
+      support = supportRows.map((row) => ({ ...row, ...planMeetingFields(meetingFacts.get(row.id)) }));
     else {
       const guarded = guardPlansForFamily(
         supportRows.map((row) => ({ ...row, intervention_outcome: row.intervention_outcome })),
@@ -395,7 +388,14 @@ export async function experienceStudent(
           .map((row) => ({ ...row, plan_stale: !!row.support_plan_id && !currentPlanIds.has(row.support_plan_id) }))
           // A check-in that belongs to a plan on earlier figures is not shown to the family.
           .filter((row) => privateView || !row.plan_stale)
+          // The family sees the date of a meeting check-in, never its note (it names the AI report).
+          .map((row) => (privateView || !row.note.startsWith(REPORT_NOTE_PREFIX) ? row : { ...row, note: "" }))
       : [];
+    // Staff: the student's current AI report and the conversation about it (meetings.ts).
+    const meeting =
+      privateView && ["faculty", "hod"].includes(actor.role)
+        ? ((await meetingStatus(client, gen, actor, undefined, id))[0] ?? null)
+        : null;
     const sources: StudentDetail["sources"] = [];
     if (privateView) {
       const lms = await lmsEvidence(client, gen, id);
@@ -469,6 +469,7 @@ export async function experienceStudent(
       support,
       support_notice: supportNotice,
       followups,
+      meeting,
       sources,
       history,
       registration,

@@ -29915,10 +29915,10 @@ var MEETING_REASONS = [
   "Timetable clash",
   "Other"
 ];
-var CHECKIN_NOTE = "Check-in after the support plan";
-var DEFAULT_CHECKIN_DAYS = 7;
+var MEET_WITHIN_DAYS = 7;
+var SUBMIT_WITHIN_DAYS = 14;
 var COLLEGE_TIME_ZONE = "Asia/Kolkata";
-var HEAD_NOTICE_DAYS = 7;
+var REPORT_NOTE_PREFIX = "Meet the student about the AI report of ";
 var DAY = /^\d{4}-\d{2}-\d{2}$/;
 var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function collegeDate(at = /* @__PURE__ */ new Date()) {
@@ -29937,23 +29937,34 @@ function addDays(day, days) {
 function daysBetween(from, to) {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5);
 }
-function checkinWindowDays(plan) {
-  const actions2 = plan?.actions;
-  const windows = Array.isArray(actions2) ? actions2.map((action) => Number(action?.dueInDays)).filter((days) => Number.isInteger(days) && days > 0) : [];
-  return windows.length ? Math.min(...windows) : DEFAULT_CHECKIN_DAYS;
-}
-function checkinDueOn(approvedAt, plan) {
-  return addDays(collegeDate(approvedAt), checkinWindowDays(plan));
-}
-function backfillDueOn(approvedAt) {
-  return addDays(collegeDate(approvedAt), DEFAULT_CHECKIN_DAYS);
-}
 function dayLabel(day) {
   const [year, month, date6] = day.split("-").map(Number);
   return `${date6} ${MONTHS[(month ?? 1) - 1]} ${year}`;
 }
+function reportCheckinNote(reportOn) {
+  return `${REPORT_NOTE_PREFIX}${dayLabel(reportOn)}`;
+}
+function meetByDate(reportOn) {
+  return addDays(reportOn, MEET_WITHIN_DAYS);
+}
+function deadlineDate(reportOn) {
+  return addDays(reportOn, SUBMIT_WITHIN_DAYS);
+}
 function meetingOutcome(metOn) {
   return `Met on ${dayLabel(metOn)}`;
+}
+function meetingTimeline(reportOn, today, met) {
+  const daysSince = daysBetween(reportOn, today);
+  const stage = met ? "met" : daysSince < MEET_WITHIN_DAYS ? "due" : daysSince <= SUBMIT_WITHIN_DAYS ? "meet_now" : "past_deadline";
+  return {
+    report_on: reportOn,
+    meet_by: meetByDate(reportOn),
+    deadline: deadlineDate(reportOn),
+    days_since: daysSince,
+    stage,
+    days_left: stage === "due" ? MEET_WITHIN_DAYS - daysSince : null,
+    days_overdue: stage === "meet_now" || stage === "past_deadline" ? daysSince - MEET_WITHIN_DAYS : null
+  };
 }
 function validateMeeting(input2, options = {}) {
   const today = options.today ?? collegeDate();
@@ -29962,10 +29973,10 @@ function validateMeeting(input2, options = {}) {
     throw new ConflictError("MEETING_DATE_INVALID", "Enter the date you met the student.");
   if (metOn > today)
     throw new ConflictError("MEETING_DATE_IN_FUTURE", "The meeting date cannot be in the future.");
-  if (options.approvedOn && metOn < options.approvedOn)
+  if (options.reportOn && metOn < options.reportOn)
     throw new ConflictError(
-      "MEETING_BEFORE_PLAN",
-      `The meeting date is before the plan was approved on ${dayLabel(options.approvedOn)}.`
+      "MEETING_BEFORE_REPORT",
+      `The meeting date is before the AI report of ${dayLabel(options.reportOn)}.`
     );
   const given = (input2.reasons ?? []).map((reason2) => String(reason2));
   const unknown2 = given.filter((reason2) => !MEETING_REASONS.includes(reason2));
@@ -29980,122 +29991,208 @@ function validateMeeting(input2, options = {}) {
   return { metOn, reasons: [...reasons], note, agreedNextStep: String(input2.agreedNextStep ?? "").trim() };
 }
 var ready2 = /* @__PURE__ */ new Set();
-async function meetingTablesPresent(client) {
+async function meetingSchema(client) {
   const schema = loadCoreConfig().databaseSchema;
-  if (ready2.has(schema)) return true;
-  const row = await client.query("SELECT to_regclass('support_meetings') IS NOT NULL AS ok");
-  if (row.rows[0]?.ok) ready2.add(schema);
-  return !!row.rows[0]?.ok;
+  if (ready2.has(schema)) return { meetings: true, timeline: true };
+  const row = (await client.query(
+    `SELECT to_regclass('support_meetings') IS NOT NULL AS meetings,
+         EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+           AND table_name='support_followups' AND column_name='support_case_id') AS timeline`
+  )).rows[0] ?? { meetings: false, timeline: false };
+  if (row.meetings && row.timeline) ready2.add(schema);
+  return { meetings: !!row.meetings, timeline: !!row.timeline };
 }
-var MEETINGS_NOT_READY = "Meeting records are not switched on yet: the database update (migration 014) has not run.";
-async function ensurePlanCheckin(client, input2) {
-  const open2 = await client.query(
-    "SELECT id,due_on::text AS due_on,mentor_person_id FROM support_followups WHERE generation_id=$1 AND support_plan_id=$2 AND status<>'completed' ORDER BY due_on LIMIT 1",
-    [input2.generation, input2.planId]
+async function meetingTablesPresent(client) {
+  const schema = await meetingSchema(client);
+  return schema.meetings && schema.timeline;
+}
+var MEETINGS_NOT_READY = "Meeting records are not switched on yet: the database update (migrations 014 and 015) has not run.";
+function caseCheckinsSql(timeline, caseSql) {
+  return `(${timeline ? `f.support_case_id=${caseSql} OR ` : ""}f.support_plan_id IN (SELECT cp.id FROM support_plans cp WHERE cp.support_case_id=${caseSql}))`;
+}
+async function ensureCaseCheckin(client, input2) {
+  const none = { created: false, id: null, dueOn: null, mentorPersonId: null };
+  if ((await frozenStudentIds(client, [input2.studentId])).size) return none;
+  const { timeline } = await meetingSchema(client);
+  const existing = await client.query(
+    `SELECT f.id,f.due_on::text AS due_on,f.mentor_person_id FROM support_followups f
+     WHERE f.generation_id=$1 AND ${caseCheckinsSql(timeline, "$2::uuid")}
+     ORDER BY (f.status<>'completed') DESC,f.due_on LIMIT 1`,
+    [input2.generation, input2.caseId]
   );
-  if (open2.rowCount)
-    return { created: false, id: open2.rows[0].id, dueOn: open2.rows[0].due_on, mentorPersonId: open2.rows[0].mentor_person_id };
+  if (existing.rowCount) {
+    const row2 = existing.rows[0];
+    return { created: false, id: row2.id, dueOn: row2.due_on, mentorPersonId: row2.mentor_person_id };
+  }
+  if (!timeline && !input2.planId) return none;
   const mentor = (await client.query(
     "SELECT faculty_person_id FROM mentor_assignments WHERE generation_id=$1 AND student_id=$2",
     [input2.generation, input2.studentId]
   )).rows[0]?.faculty_person_id ?? input2.fallbackMentorId;
   const id = randomUUID2();
+  const dueOn = meetByDate(input2.reportOn);
+  const note = reportCheckinNote(input2.reportOn);
   const row = {
     id,
     student_id: input2.studentId,
-    support_plan_id: input2.planId,
+    support_case_id: timeline ? input2.caseId : null,
+    support_plan_id: input2.planId ?? null,
     mentor_person_id: mentor,
-    due_on: input2.dueOn,
-    note: CHECKIN_NOTE,
+    due_on: dueOn,
+    note,
     shared: true,
     status: "planned",
     outcome: ""
   };
-  await client.query(
-    "INSERT INTO support_followups(id,generation_id,student_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,true,'planned','')",
-    [id, input2.generation, input2.studentId, input2.planId, mentor, input2.dueOn, CHECKIN_NOTE]
-  );
+  if (timeline)
+    await client.query(
+      "INSERT INTO support_followups(id,generation_id,student_id,support_case_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,'planned','')",
+      [id, input2.generation, input2.studentId, input2.caseId, input2.planId ?? null, mentor, dueOn, note]
+    );
+  else
+    await client.query(
+      "INSERT INTO support_followups(id,generation_id,student_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,true,'planned','')",
+      [id, input2.generation, input2.studentId, input2.planId, mentor, dueOn, note]
+    );
   await client.query(
     "INSERT INTO record_changes(id,generation_id,actor_id,resource_type,resource_id,reason,previous,updated) VALUES($1,$2,$3,'support_followups',$4,$5,NULL,$6::jsonb)",
     [randomUUID2(), input2.generation, input2.actorPersonId, id, input2.reason, JSON.stringify(row)]
   );
-  return { created: true, id, dueOn: input2.dueOn, mentorPersonId: mentor };
+  return { created: true, id, dueOn, mentorPersonId: mentor };
 }
-async function planMeetingFacts(client, generation, planIds, today = collegeDate()) {
+async function caseMeetingFacts(client, generation, caseIds, today = collegeDate()) {
   const facts = /* @__PURE__ */ new Map();
-  if (!planIds.length) return facts;
+  if (!caseIds.length) return facts;
+  const schema = await meetingSchema(client);
   const base = await client.query(
-    `SELECT p.id AS plan_id,d.decided_at AS approved_at,f.id AS checkin_id,f.due_on::text AS checkin_due_on,f.status AS checkin_status
-     FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id
-     LEFT JOIN LATERAL (SELECT f.id,f.due_on,f.status FROM support_followups f WHERE f.generation_id=p.generation_id AND f.support_plan_id=p.id
+    `SELECT c.id AS case_id,c.opened_at,f.id AS checkin_id,f.due_on::text AS checkin_due_on,f.status AS checkin_status
+     FROM support_cases c
+     LEFT JOIN LATERAL (SELECT f.id,f.due_on,f.status FROM support_followups f WHERE f.generation_id=c.generation_id AND ${caseCheckinsSql(schema.timeline, "c.id")}
        ORDER BY (f.status<>'completed') DESC,f.due_on DESC LIMIT 1) f ON true
-     WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[])`,
-    [generation, planIds]
+     WHERE c.generation_id=$1 AND c.id=ANY($2::uuid[])`,
+    [generation, caseIds]
   );
   const meetings = /* @__PURE__ */ new Map();
-  if (await meetingTablesPresent(client)) {
+  if (schema.meetings) {
+    const key = schema.timeline ? "COALESCE(m.support_case_id,mp.support_case_id)" : "mp.support_case_id";
     const rows = await client.query(
-      `SELECT DISTINCT ON (m.support_plan_id) m.support_plan_id,m.id,m.followup_id,m.met_on::text AS met_on,m.reasons,m.note,m.agreed_next_step,
+      `SELECT DISTINCT ON (${key}) ${key} AS case_id,m.id,m.followup_id,m.met_on::text AS met_on,m.reasons,m.note,m.agreed_next_step,
          r.display_name AS recorded_by,m.recorded_at
-       FROM support_meetings m JOIN people r ON r.id=m.recorded_by
-       WHERE m.generation_id=$1 AND m.support_plan_id=ANY($2::uuid[]) ORDER BY m.support_plan_id,m.met_on DESC,m.recorded_at DESC`,
-      [generation, planIds]
+       FROM support_meetings m JOIN people r ON r.id=m.recorded_by LEFT JOIN support_plans mp ON mp.id=m.support_plan_id
+       WHERE m.generation_id=$1 AND ${key}=ANY($2::uuid[]) ORDER BY ${key},m.met_on DESC,m.recorded_at DESC`,
+      [generation, caseIds]
     );
     for (const row of rows.rows) {
-      const { support_plan_id, ...meeting } = row;
-      meetings.set(support_plan_id, meeting);
+      const { case_id, ...meeting } = row;
+      meetings.set(case_id, meeting);
     }
   }
   for (const row of base.rows) {
-    const due = row.checkin_due_on ?? (row.approved_at ? backfillDueOn(row.approved_at) : null);
-    facts.set(row.plan_id, {
-      meeting: meetings.get(row.plan_id) ?? null,
-      checkin: row.checkin_id ? { id: row.checkin_id, due_on: row.checkin_due_on, status: row.checkin_status } : null,
-      due_on: due,
-      days_overdue: due ? daysBetween(due, today) : null
+    const meeting = meetings.get(row.case_id) ?? null;
+    facts.set(row.case_id, {
+      ...meetingTimeline(collegeDate(row.opened_at), today, !!meeting),
+      meeting,
+      checkin: row.checkin_id ? { id: row.checkin_id, due_on: row.checkin_due_on, status: row.checkin_status } : null
     });
   }
   return facts;
 }
-async function meetingStatus(client, generation, actor, today = collegeDate()) {
-  if (actor.role !== "faculty" && actor.role !== "hod") return [];
+async function planMeetingFacts(client, generation, planIds, today = collegeDate()) {
+  const byPlan = /* @__PURE__ */ new Map();
+  if (!planIds.length) return byPlan;
+  const plans = await client.query(
+    "SELECT id,support_case_id AS case_id FROM support_plans WHERE generation_id=$1 AND id=ANY($2::uuid[])",
+    [generation, planIds]
+  );
+  const facts = await caseMeetingFacts(client, generation, plans.rows.map((row) => row.case_id), today);
+  for (const row of plans.rows) {
+    const fact = facts.get(row.case_id);
+    if (fact) byPlan.set(row.id, fact);
+  }
+  return byPlan;
+}
+function planMeetingFields(fact) {
+  if (!fact) return { meeting: null, meeting_due: null };
+  return {
+    meeting: fact.meeting,
+    meeting_due: {
+      report_on: fact.report_on,
+      meet_by: fact.meet_by,
+      deadline: fact.deadline,
+      days_since: fact.days_since,
+      stage: fact.stage,
+      days_left: fact.days_left,
+      days_overdue: fact.days_overdue
+    }
+  };
+}
+var NO_PERSON = "00000000-0000-0000-0000-000000000000";
+async function trackedCases(client, generation, scope) {
+  const actor = scope === "all" ? { role: "governance", personId: NO_PERSON, departmentId: null } : scope;
+  const gate = (await awaitingCases(client, generation, actor)).map((group) => ({
+    case_id: group.current.case_id,
+    student_id: group.current.student_id,
+    opened_at: new Date(group.current.opened_at),
+    plan_id: null,
+    case_status: "awaiting_faculty"
+  }));
   const clock = await loadGenerationClock(client);
   const plans = await client.query(
-    `SELECT p.id AS plan_id,p.student_id,sp.display_name AS student_name,s.register_number,
-       m.faculty_person_id AS mentor_id,mp.display_name AS mentor_name,d.decided_at AS approved_at,
-       ${caseEvidenceCapturedSql("p.support_case_id")} AS evidence_captured_at
-     FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id AND d.decision='approved'
-     JOIN student_profiles s ON s.id=p.student_id JOIN people sp ON sp.id=s.person_id
-     LEFT JOIN mentor_assignments m ON m.generation_id=p.generation_id AND m.student_id=p.student_id
-     LEFT JOIN people mp ON mp.id=m.faculty_person_id
+    `SELECT p.id AS plan_id,c.id AS case_id,p.student_id,c.opened_at,${caseEvidenceCapturedSql("p.support_case_id")} AS evidence_captured_at
+     FROM support_plans p JOIN support_cases c ON c.id=p.support_case_id
+     JOIN faculty_decisions d ON d.id=p.faculty_decision_id AND d.decision='approved'
+     JOIN student_profiles s ON s.id=p.student_id
      WHERE p.generation_id=$1 AND p.visible_to_student
-       AND (($2::text='hod' AND s.department_id=$3::uuid) OR ($2::text='faculty' AND m.faculty_person_id=$4::uuid))
+       AND ($2::text='all' OR ($2::text='hod' AND s.department_id=$3::uuid)
+         OR ($2::text='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=p.generation_id AND m.student_id=p.student_id AND m.faculty_person_id=$4::uuid)))
      ORDER BY p.created_at DESC`,
-    [generation, actor.role, actor.departmentId ?? null, actor.personId]
+    [generation, scope === "all" ? "all" : scope.role, scope === "all" ? null : scope.departmentId ?? null, scope === "all" ? null : scope.personId]
   );
   const seen = /* @__PURE__ */ new Set();
-  const current = plans.rows.filter((row) => {
+  const approved = plans.rows.filter((row) => {
     if (seen.has(row.student_id) || !isCurrentEvidence(clock, row.evidence_captured_at)) return false;
     seen.add(row.student_id);
     return true;
-  });
-  const frozen = await frozenStudentIds(client, current.map((row) => row.student_id));
-  const kept = current.filter((row) => !frozen.has(row.student_id));
-  const facts = await planMeetingFacts(client, generation, kept.map((row) => row.plan_id), today);
-  return kept.map((row) => {
-    const fact = facts.get(row.plan_id) ?? { meeting: null, checkin: null, due_on: null, days_overdue: null };
-    return {
-      plan_id: row.plan_id,
-      student_id: row.student_id,
-      student_name: row.student_name,
-      register_number: row.register_number,
-      mentor_id: row.mentor_id,
-      mentor_name: row.mentor_name,
-      approved_at: row.approved_at ? new Date(row.approved_at).toISOString() : null,
-      ...fact,
-      head_notice: !fact.meeting && (fact.days_overdue ?? 0) >= HEAD_NOTICE_DAYS
-    };
-  }).sort((a, b) => (b.days_overdue ?? -Infinity) - (a.days_overdue ?? -Infinity) || a.student_name.localeCompare(b.student_name));
+  }).map((row) => ({
+    case_id: row.case_id,
+    student_id: row.student_id,
+    opened_at: new Date(row.opened_at),
+    plan_id: row.plan_id,
+    case_status: "approved"
+  }));
+  const newest = /* @__PURE__ */ new Map();
+  for (const row of [...gate, ...approved]) {
+    const held = newest.get(row.student_id);
+    if (!held || row.opened_at.getTime() > held.opened_at.getTime()) newest.set(row.student_id, row);
+  }
+  const frozen = await frozenStudentIds(client, [...newest.keys()]);
+  return [...newest.values()].filter((row) => !frozen.has(row.student_id));
+}
+function byUrgency(a, b) {
+  return Number(a.stage === "met") - Number(b.stage === "met") || b.days_since - a.days_since || a.student_name.localeCompare(b.student_name);
+}
+async function meetingStatus(client, generation, actor, today = collegeDate(), studentId) {
+  if (actor.role !== "faculty" && actor.role !== "hod") return [];
+  const tracked = (await trackedCases(client, generation, actor)).filter(
+    (row) => !studentId || row.student_id === studentId
+  );
+  if (!tracked.length) return [];
+  const people = await client.query(
+    `SELECT s.id AS student_id,sp.display_name AS student_name,s.register_number,m.faculty_person_id AS mentor_id,mp.display_name AS mentor_name
+     FROM student_profiles s JOIN people sp ON sp.id=s.person_id
+     LEFT JOIN mentor_assignments m ON m.generation_id=s.generation_id AND m.student_id=s.id
+     LEFT JOIN people mp ON mp.id=m.faculty_person_id
+     WHERE s.generation_id=$1 AND s.id=ANY($2::uuid[])`,
+    [generation, tracked.map((row) => row.student_id)]
+  );
+  const person = new Map(people.rows.map((row) => [row.student_id, row]));
+  const facts = await caseMeetingFacts(client, generation, tracked.map((row) => row.case_id), today);
+  return tracked.flatMap((row) => {
+    const who = person.get(row.student_id);
+    const fact = facts.get(row.case_id);
+    if (!who || !fact) return [];
+    return [{ ...fact, case_id: row.case_id, plan_id: row.plan_id, case_status: row.case_status, ...who }];
+  }).sort(byUrgency);
 }
 
 // services/core-api/lib/experience-queries.ts
@@ -30233,7 +30330,8 @@ async function experienceOverview(actor) {
         failed_reviews: status?.failed ?? 0,
         overdue_followups: followups.filter((f) => f.overdue).length,
         draft_courses: courses.filter((c) => c.status === "draft").length,
-        meetings_pending: meetings.filter((m) => !m.meeting).length
+        meetings_pending: meetings.filter((m) => !m.meeting).length,
+        meetings_past_deadline: meetings.filter((m) => m.stage === "past_deadline").length
       }
     };
   });
@@ -30319,15 +30417,7 @@ async function experienceStudent(actor, id) {
     let supportNotice = null;
     const meetingFacts = await planMeetingFacts(client, gen, supportRows.map((row) => row.id));
     if (privateView)
-      support = supportRows.map((row) => {
-        const fact = meetingFacts.get(row.id);
-        return {
-          ...row,
-          meeting: fact?.meeting ?? null,
-          checkin_due_on: fact?.due_on ?? null,
-          checkin_days_overdue: fact?.days_overdue ?? null
-        };
-      });
+      support = supportRows.map((row) => ({ ...row, ...planMeetingFields(meetingFacts.get(row.id)) }));
     else {
       const guarded = guardPlansForFamily(
         supportRows.map((row) => ({ ...row, intervention_outcome: row.intervention_outcome }))
@@ -30345,7 +30435,8 @@ async function experienceStudent(actor, id) {
     const followups = grants.includes("support") ? (await client.query(
       `SELECT f.id,f.student_id,sp.display_name AS student_name,p.display_name AS mentor_name,f.due_on::text,f.note,f.shared,f.status,f.outcome,f.revision,f.support_plan_id,(f.due_on<CURRENT_DATE AND f.status<>'completed') AS overdue FROM support_followups f JOIN people p ON p.id=f.mentor_person_id JOIN student_profiles s ON s.id=f.student_id JOIN people sp ON sp.id=s.person_id WHERE f.generation_id=$1 AND f.student_id=$2 AND (f.shared OR $3) ORDER BY f.due_on DESC`,
       [gen, id, privateView]
-    )).rows.map((row) => ({ ...row, plan_stale: !!row.support_plan_id && !currentPlanIds.has(row.support_plan_id) })).filter((row) => privateView || !row.plan_stale) : [];
+    )).rows.map((row) => ({ ...row, plan_stale: !!row.support_plan_id && !currentPlanIds.has(row.support_plan_id) })).filter((row) => privateView || !row.plan_stale).map((row) => privateView || !row.note.startsWith(REPORT_NOTE_PREFIX) ? row : { ...row, note: "" }) : [];
+    const meeting = privateView && ["faculty", "hod"].includes(actor.role) ? (await meetingStatus(client, gen, actor, void 0, id))[0] ?? null : null;
     const sources = [];
     if (privateView) {
       const lms = await lmsEvidence(client, gen, id);
@@ -30400,6 +30491,7 @@ async function experienceStudent(actor, id) {
       support,
       support_notice: supportNotice,
       followups,
+      meeting,
       sources,
       history,
       registration,
@@ -30725,12 +30817,14 @@ var experienceCommandSchema = external_exports.discriminatedUnion("action", [
     reason
   }).strict(),
   external_exports.object({
-    // Meeting record after a support plan (meetings.ts): the day they met, the
-    // reasons from the fixed list, a note and what was agreed. Completes the
-    // plan's check-in. The audit reason is fixed, so none is typed.
+    // The conversation with the student about the AI report (meetings.ts): the day
+    // they met, the reasons from the fixed list and a note. Completes the case's
+    // check-in. The report is named by its support case (the draft may still be at
+    // the gate) or by its approved plan. The audit reason is fixed, so none is typed.
     action: external_exports.literal("record-meeting"),
     studentId: uuid3,
-    supportPlanId: uuid3,
+    supportCaseId: uuid3.optional(),
+    supportPlanId: uuid3.optional(),
     followupId: uuid3.optional(),
     metOn: external_exports.string().trim().max(10),
     reasons: external_exports.array(external_exports.string().trim().min(1).max(80)).max(10),
@@ -31271,19 +31365,28 @@ async function experienceCommand(actor, commandId, raw) {
       await assertStudentNotFrozen(client, studentId);
       if (!await meetingTablesPresent(client))
         throw new ConflictError("MEETINGS_NOT_READY", MEETINGS_NOT_READY);
-      const plan = (await client.query(
-        "SELECT p.id,d.decided_at AS approved_at FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id AND d.decision='approved' WHERE p.generation_id=$1 AND p.id=$2 AND p.student_id=$3 FOR UPDATE OF p",
-        [gen, input2.supportPlanId, studentId]
+      if (!input2.supportCaseId && !input2.supportPlanId)
+        throw new ConflictError("REPORT_REQUIRED", "Choose the AI report this meeting was about.");
+      const report = (await client.query(
+        `SELECT c.id,c.opened_at,p.id AS plan_id FROM support_cases c
+           LEFT JOIN support_plans p ON p.support_case_id=c.id AND p.generation_id=c.generation_id
+           WHERE c.generation_id=$1 AND c.student_id=$2 AND c.status IN ('awaiting_faculty','approved','rejected')
+             AND ($3::uuid IS NULL OR c.id=$3::uuid) AND ($4::uuid IS NULL OR p.id=$4::uuid)
+           LIMIT 1 FOR UPDATE OF c`,
+        [gen, studentId, input2.supportCaseId ?? null, input2.supportPlanId ?? null]
       )).rows[0];
-      if (!plan) throw new NotFoundError("Approved support plan not found for this student");
-      const meeting = validateMeeting(input2, { approvedOn: collegeDate(plan.approved_at) });
+      if (!report) throw new NotFoundError("AI report not found for this student");
+      const reportOn = collegeDate(report.opened_at);
+      const meeting = validateMeeting(input2, { reportOn });
       const checkin = (await client.query(
         `SELECT f.*,EXISTS(SELECT 1 FROM support_meetings m WHERE m.followup_id=f.id) AS recorded FROM support_followups f
-           WHERE f.generation_id=$1 AND f.student_id=$2 AND f.support_plan_id=$3 AND ($4::uuid IS NULL OR f.id=$4::uuid)
-           AND ($4::uuid IS NOT NULL OR f.status<>'completed') ORDER BY f.due_on LIMIT 1 FOR UPDATE OF f`,
-        [gen, studentId, plan.id, input2.followupId ?? null]
+           WHERE f.generation_id=$1 AND f.student_id=$2
+             AND (f.support_case_id=$3 OR f.support_plan_id IN (SELECT cp.id FROM support_plans cp WHERE cp.support_case_id=$3))
+             AND ($4::uuid IS NULL OR f.id=$4::uuid)
+             AND ($4::uuid IS NOT NULL OR f.status<>'completed') ORDER BY f.due_on LIMIT 1 FOR UPDATE OF f`,
+        [gen, studentId, report.id, input2.followupId ?? null]
       )).rows[0];
-      if (input2.followupId && !checkin) throw new NotFoundError("Check-in not found for this plan");
+      if (input2.followupId && !checkin) throw new NotFoundError("Check-in not found for this AI report");
       if (checkin?.recorded)
         throw new ConflictError("MEETING_ALREADY_RECORDED", "This check-in already has its meeting record.");
       const outcome = meetingOutcome(meeting.metOn);
@@ -31299,20 +31402,22 @@ async function experienceCommand(actor, commandId, raw) {
         followupId = randomUUID4();
         const mentorId = student.mentor_id ?? actor.personId;
         await client.query(
-          "INSERT INTO support_followups(id,generation_id,student_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,true,'completed',$8)",
-          [followupId, gen, studentId, plan.id, mentorId, meeting.metOn, CHECKIN_NOTE, outcome]
+          "INSERT INTO support_followups(id,generation_id,student_id,support_case_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,'completed',$9)",
+          [followupId, gen, studentId, report.id, report.plan_id, mentorId, meeting.metOn, reportCheckinNote(reportOn), outcome]
         );
       }
       id = randomUUID4();
       await client.query(
-        "INSERT INTO support_meetings(id,generation_id,followup_id,support_plan_id,student_id,met_on,reasons,note,agreed_next_step,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10)",
-        [id, gen, followupId, plan.id, studentId, meeting.metOn, meeting.reasons, meeting.note, meeting.agreedNextStep, actor.personId]
+        "INSERT INTO support_meetings(id,generation_id,followup_id,support_case_id,support_plan_id,student_id,met_on,reasons,note,agreed_next_step,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8::text[],$9,$10,$11)",
+        [id, gen, followupId, report.id, report.plan_id, studentId, meeting.metOn, meeting.reasons, meeting.note, meeting.agreedNextStep, actor.personId]
       );
       resource = "support_meetings";
       facultyId = student.mentor_id ?? void 0;
       updated = {
         studentId,
-        supportPlanId: plan.id,
+        supportCaseId: report.id,
+        supportPlanId: report.plan_id,
+        reportOn,
         followupId,
         metOn: meeting.metOn,
         reasons: meeting.reasons,
@@ -31445,7 +31550,7 @@ async function experienceCommand(actor, commandId, raw) {
       actor,
       resource,
       id,
-      "reason" in input2 ? input2.reason : input2.action === "record-meeting" ? "Meeting with the student recorded after the support plan" : "Student submitted the final course selection",
+      "reason" in input2 ? input2.reason : input2.action === "record-meeting" ? "Conversation with the student about the AI report recorded" : "Student submitted the final course selection",
       previous,
       updated
     );
@@ -32494,7 +32599,7 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
       };
     }
     const result = await client.query(
-      `SELECT support_case.id AS case_id, support_case.student_id, student.department_id, support_case.status, support_case.revision,
+      `SELECT support_case.id AS case_id, support_case.student_id, student.department_id, support_case.status, support_case.revision, support_case.opened_at,
               artifact.id AS artifact_id, artifact.content_hash, artifact.recommendation, artifact.validation AS artifact_validation, support_case.source, run.mode AS run_mode,
               evidence.evidence->>'assignedFacultyPersonId' AS assigned_faculty_person_id
        FROM support_cases support_case
@@ -32547,14 +32652,15 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
         [planId, generationId, caseId, decisionId, current.student_id, JSON.stringify(current.recommendation)]
       );
       plan = { id: planId, plan: current.recommendation, visibleToStudent: true };
-      const created = await ensurePlanCheckin(client, {
+      const created = await ensureCaseCheckin(client, {
         generation: generationId,
+        caseId,
         planId,
         studentId: current.student_id,
-        dueOn: checkinDueOn(/* @__PURE__ */ new Date(), current.recommendation),
+        reportOn: collegeDate(current.opened_at),
         fallbackMentorId: current.assigned_faculty_person_id || actor.personId,
         actorPersonId: actor.personId,
-        reason: "Check-in after the support plan, created when the plan was approved"
+        reason: "Check-in to meet the student about the AI report, added when the plan was approved"
       });
       checkin = { id: created.id, dueOn: created.dueOn, created: created.created };
     }
@@ -34528,8 +34634,8 @@ async function publishDraft(actor, job, plan) {
       chapterJobId: job.id
     };
     const inputHash = hashJson(evidence), contentHash = hashJson(cp.composed.packet);
-    await client.query(
-      "INSERT INTO support_cases(id,generation_id,student_id,source,status,risk_band,reason) VALUES($1,$2,$3,$4,'awaiting_faculty',$5,$6)",
+    const opened = await client.query(
+      "INSERT INTO support_cases(id,generation_id,student_id,source,status,risk_band,reason) VALUES($1,$2,$3,$4,'awaiting_faculty',$5,$6) RETURNING opened_at",
       [
         caseId,
         job.generation_id,
@@ -34586,6 +34692,15 @@ async function publishDraft(actor, job, plan) {
       "UPDATE ch11_jobs SET status='awaiting_faculty',stage='complete',support_case_id=$2,lease_until=NULL,updated_at=now() WHERE id=$1",
       [job.id, caseId]
     );
+    const checkin = await ensureCaseCheckin(client, {
+      generation: job.generation_id,
+      caseId,
+      studentId: job.student_id,
+      reportOn: collegeDate(opened.rows[0].opened_at),
+      fallbackMentorId: job.faculty_person_id,
+      actorPersonId: actor.personId,
+      reason: "Check-in to meet the student, created when the AI report reached the mentor gate"
+    });
     await writeCommandLedger(client, {
       generationId: job.generation_id,
       commandId: job.id,
@@ -34603,7 +34718,7 @@ async function publishDraft(actor, job, plan) {
         runId,
         artifactId
       },
-      metadata: { planId: plan.id, jobId: job.id, inputHash, contentHash }
+      metadata: { planId: plan.id, jobId: job.id, inputHash, contentHash, checkinId: checkin.id }
     });
     await audit(
       client,
@@ -36165,15 +36280,7 @@ async function reviewQueue(actor) {
       })
     );
     const meetings = await planMeetingFacts(client, generation, plans.rows.map((row) => row.id));
-    const withMeeting = (row) => {
-      const fact = meetings.get(row.id);
-      return {
-        ...row,
-        meeting: fact?.meeting ?? null,
-        checkin_due_on: fact?.due_on ?? null,
-        checkin_days_overdue: fact?.days_overdue ?? null
-      };
-    };
+    const withMeeting = (row) => ({ ...row, ...planMeetingFields(meetings.get(row.id)) });
     return {
       versions: versions.rows,
       plans: plans.rows.map((row) => withMeeting(frozen(stampEvidence(clock, row)))),

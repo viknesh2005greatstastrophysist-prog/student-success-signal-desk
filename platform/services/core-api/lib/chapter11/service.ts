@@ -75,6 +75,7 @@ import {
 } from "../data-refresh/generation";
 import { persistThenAudit, startLeaseHeartbeat } from "./lease";
 import { frozenLeftOutNote, frozenRecordError, frozenStudentIds } from "./frozen";
+import { collegeDate, ensureCaseCheckin } from "../meetings";
 
 /** frozenNote: set when frozen students (frozen.ts) were left out of the plan. */
 type PlanBody = ReturnType<typeof planSkill> & { frozenNote?: string };
@@ -1144,8 +1145,8 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
     };
     const inputHash = hashJson(evidence),
       contentHash = hashJson(cp.composed.packet);
-    await client.query(
-      "INSERT INTO support_cases(id,generation_id,student_id,source,status,risk_band,reason) VALUES($1,$2,$3,$4,'awaiting_faculty',$5,$6)",
+    const opened = await client.query<{ opened_at: Date }>(
+      "INSERT INTO support_cases(id,generation_id,student_id,source,status,risk_band,reason) VALUES($1,$2,$3,$4,'awaiting_faculty',$5,$6) RETURNING opened_at",
       [
         caseId,
         job.generation_id,
@@ -1204,6 +1205,18 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
       "UPDATE ch11_jobs SET status='awaiting_faculty',stage='complete',support_case_id=$2,lease_until=NULL,updated_at=now() WHERE id=$1",
       [job.id, caseId],
     );
+    // The AI report starts the meeting clock (meetings.ts): one check-in for this
+    // case, due on the report date plus 7 days, assigned to the student's mentor and
+    // shared with the family (date only). Frozen students get none.
+    const checkin = await ensureCaseCheckin(client, {
+      generation: job.generation_id,
+      caseId,
+      studentId: job.student_id,
+      reportOn: collegeDate(opened.rows[0]!.opened_at),
+      fallbackMentorId: job.faculty_person_id,
+      actorPersonId: actor.personId,
+      reason: "Check-in to meet the student, created when the AI report reached the mentor gate",
+    });
     await writeCommandLedger(client, {
       generationId: job.generation_id,
       commandId: job.id,
@@ -1221,7 +1234,7 @@ async function publishDraft(actor: ActorContext, job: Job, plan: PlanRow) {
         runId,
         artifactId,
       },
-      metadata: { planId: plan.id, jobId: job.id, inputHash, contentHash },
+      metadata: { planId: plan.id, jobId: job.id, inputHash, contentHash, checkinId: checkin.id },
     });
     await audit(
       client,

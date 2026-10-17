@@ -15,25 +15,25 @@ import { experienceCommand } from "../lib/experience-commands";
 import { experienceOverview, experienceStudent } from "../lib/experience-queries";
 import {
   applyMissingCheckins,
-  backfillDueOn,
-  CHECKIN_NOTE,
-  checkinDueOn,
   collegeDate,
-  ensurePlanCheckin,
+  ensureCaseCheckin,
   loadMissingCheckins,
+  meetByDate,
   meetingOutcome,
+  reportCheckinNote,
 } from "../lib/meetings";
 import { groundedComposer } from "./agent-fixtures";
 
-/** Meeting records after a support plan (owner request, 17 Oct) and the department
- * head's decisions (owner decisions, 17 Oct), against real Postgres in a disposable
- * schema: the mentor approves a policy and runs a review (the department head cannot),
- * the department head approves the draft; the approval creates one check-in for the
- * student's mentor; the backfill finds plans without one; record-meeting validates,
- * completes the check-in and is append-only; reads give staff the reasons and the
- * family only the day. */
+/** The conversation with the student about the AI report (owner decisions, 17 Oct),
+ * against real Postgres in a disposable schema: the mentor approves a policy and runs a
+ * review (the department head cannot); the draft reaching the gate creates one check-in
+ * for the student's mentor, due 7 days after the report, shared with the family (date
+ * only); the backfill finds a current report without one; record-meeting validates,
+ * works while the draft is still at the gate, completes the check-in and is append-only;
+ * an approval by the department head creates no second check-in; reads give staff the
+ * reasons and the family only the day. */
 test(
-  "meeting records: check-in on approval, backfill, record-meeting and who sees what",
+  "meeting records: check-in at the gate, backfill, record-meeting, approval and who sees what",
   { skip: process.env.RUN_MEETINGS_DB_TESTS !== "1", timeout: 180000 },
   async () => {
     assert.match(process.env.CORE_DATABASE_SCHEMA ?? "", /^aura_core_test_meetings/);
@@ -122,95 +122,95 @@ test(
       const queue = await reviewQueue(hod);
       const draft = queue.drafts.find((d: { student_id: string }) => d.student_id === student)!;
       assert.ok(draft?.recommendation && draft.content_hash, "the department head reads the full draft");
-      const decision = {
-        artifactId: draft.artifact_id as string,
-        contentHash: draft.content_hash as string,
-        expectedRevision: draft.revision as number,
-        decision: "approved" as const,
-        rationale: "Department head approves the plan for the mentor",
-      };
-      await assert.rejects(() => decideSupportCase(otherHod, draft.id, randomUUID(), decision), { code: "NOT_FOUND" });
+      const caseId = draft.id as string;
 
-      // ---- Approval by the department head: one check-in, assigned to the student's mentor ----
-      const command = randomUUID();
-      const approved = await decideSupportCase(hod, draft.id, command, decision);
-      const planId = approved.plan!.id;
-      assert.ok(approved.checkin?.created && approved.checkin.id);
-      const checkin = await withCoreTransaction(async (c) => {
+      // ---- The draft reaching the gate starts the clock: one check-in for the case ----
+      const gate = await withCoreTransaction(async (c) => {
         const rows = await c.query(
-          "SELECT f.*,f.due_on::text AS due,d.decided_at,d.faculty_person_id AS decided_by FROM support_followups f JOIN support_plans p ON p.id=f.support_plan_id JOIN faculty_decisions d ON d.id=p.faculty_decision_id WHERE f.support_plan_id=$1",
-          [planId],
+          "SELECT f.*,f.due_on::text AS due,c.opened_at FROM support_followups f JOIN support_cases c ON c.id=f.support_case_id WHERE f.support_case_id=$1",
+          [caseId],
         );
-        assert.equal(rows.rowCount, 1, "exactly one check-in for the plan");
+        assert.equal(rows.rowCount, 1, "exactly one check-in for the AI report");
+        const audit = (await c.query("SELECT count(*)::int AS n FROM record_changes WHERE resource_type='support_followups' AND resource_id=$1", [rows.rows[0]!.id])).rows[0]!.n;
+        assert.equal(audit, 1, "audited");
         return rows.rows[0]!;
       });
-      assert.equal(checkin.mentor_person_id, faculty.personId, "assigned to the student's mentor, not the department head");
-      assert.equal(checkin.decided_by, hod.personId, "the decision is recorded as the department head's");
-      assert.equal(checkin.note, CHECKIN_NOTE);
-      assert.equal(checkin.shared, true, "shared with the family");
-      assert.equal(checkin.status, "planned");
-      assert.equal(checkin.due, checkinDueOn(checkin.decided_at, draft.recommendation), "approval day plus the earliest action window");
-      const again = await decideSupportCase(hod, draft.id, command, decision);
-      assert.equal(again.duplicate, true);
-      assert.equal(again.checkin?.id, approved.checkin.id, "a repeated command creates nothing new");
+      const reportOn = collegeDate(gate.opened_at);
+      assert.equal(gate.support_plan_id, null, "no plan yet: the draft is at the gate");
+      assert.equal(gate.mentor_person_id, faculty.personId, "assigned to the student's mentor");
+      assert.equal(gate.note, reportCheckinNote(reportOn));
+      assert.equal(gate.shared, true, "shared with the family");
+      assert.equal(gate.status, "planned");
+      assert.equal(gate.due, meetByDate(reportOn), "report date plus 7 days");
       await withCoreTransaction(async (c) => {
-        const repeat = await ensurePlanCheckin(c, {
-          generation: world.generation, planId, studentId: student, dueOn: collegeDate(), fallbackMentorId: hod.personId, actorPersonId: hod.personId, reason: "Second check-in attempt",
+        const repeat = await ensureCaseCheckin(c, {
+          generation: world.generation, caseId, studentId: student, reportOn, fallbackMentorId: hod.personId, actorPersonId: hod.personId, reason: "Second check-in attempt",
         });
-        assert.equal(repeat.created, false, "no second check-in while one is open");
-        assert.equal(repeat.id, approved.checkin!.id);
-        assert.equal((await c.query("SELECT count(*)::int AS n FROM support_followups WHERE support_plan_id=$1", [planId])).rows[0]!.n, 1);
+        assert.equal(repeat.created, false, "never a second check-in per case");
+        assert.equal(repeat.id, gate.id);
       });
 
-      // ---- The mentor and the department head see the meeting as due ----
+      // ---- The mentor and the department head see the conversation as due ----
       const mentorView = await experienceOverview(faculty);
-      const pending = mentorView.meetings!.find((m) => m.plan_id === planId)!;
-      assert.equal(pending.meeting, null);
-      assert.equal(pending.checkin?.id, approved.checkin.id);
-      assert.equal(pending.due_on, checkin.due);
+      const due = mentorView.meetings!.find((m) => m.case_id === caseId)!;
+      assert.equal(due.plan_id, null);
+      assert.equal(due.case_status, "awaiting_faculty");
+      assert.equal(due.meeting, null);
+      assert.equal(due.checkin?.id, gate.id);
+      assert.equal(due.report_on, reportOn);
+      assert.equal(due.meet_by, meetByDate(reportOn));
+      assert.equal(due.stage, "due");
+      assert.equal(due.days_left, 7);
       assert.ok(mentorView.counts.meetings_pending! >= 1);
-      assert.ok((await experienceOverview(hod)).meetings!.some((m) => m.plan_id === planId && !m.meeting), "the department head sees it too");
+      assert.ok((await experienceOverview(hod)).meetings!.some((m) => m.case_id === caseId && !m.meeting), "the department head sees it too");
       assert.deepEqual((await experienceOverview(otherHod)).meetings, [], "another department sees none of it");
+      // The family sees the check-in's date, never its note; staff see the note.
+      const familyFollowup = (await experienceStudent(world.studentActor, student)).followups.find((f) => f.id === gate.id)!;
+      assert.equal(familyFollowup.due_on, gate.due);
+      assert.equal(familyFollowup.note, "");
+      assert.equal((await experienceStudent(faculty, student)).followups.find((f) => f.id === gate.id)!.note, gate.note);
+      assert.equal((await experienceStudent(hod, student)).meeting?.case_id, caseId, "the profile reads the current report");
 
-      // ---- Backfill: a plan approved before this change has no check-in ----
-      await withCoreTransaction((c) => c.query("UPDATE support_followups SET support_plan_id=NULL WHERE id=$1", [approved.checkin!.id]));
+      // ---- Backfill: a current report without a check-in ----
+      await withCoreTransaction((c) => c.query("UPDATE support_followups SET support_case_id=NULL WHERE id=$1", [gate.id]));
       const missing = await withCoreTransaction((c) => loadMissingCheckins(c, world.generation));
-      assert.deepEqual(missing.map((m) => m.planId), [planId]);
+      assert.deepEqual(missing.map((m) => [m.caseId, m.planId, m.reportOn]), [[caseId, null, reportOn]]);
       assert.deepEqual(await withCoreTransaction((c) => loadMissingCheckins(c, world.generation, [student])), [], "an excluded student is left out");
       const filled = await withCoreTransaction((c) => applyMissingCheckins(c, world.generation, missing, governance.personId));
       assert.equal(filled.created, 1);
       const backfilled = await withCoreTransaction(async (c) =>
-        (await c.query("SELECT f.id,f.due_on::text AS due,f.mentor_person_id,f.shared,f.note,d.decided_at FROM support_followups f JOIN support_plans p ON p.id=f.support_plan_id JOIN faculty_decisions d ON d.id=p.faculty_decision_id WHERE f.support_plan_id=$1", [planId])).rows[0]!,
+        (await c.query("SELECT f.id,f.due_on::text AS due,f.mentor_person_id,f.shared,f.note FROM support_followups f WHERE f.support_case_id=$1", [caseId])).rows[0]!,
       );
-      assert.equal(backfilled.due, backfillDueOn(backfilled.decided_at), "due 7 days after the approval");
+      assert.equal(backfilled.due, meetByDate(reportOn), "due 7 days after the report");
       assert.equal(backfilled.mentor_person_id, faculty.personId);
       assert.equal(backfilled.shared, true);
-      assert.equal(backfilled.note, CHECKIN_NOTE);
+      assert.equal(backfilled.note, reportCheckinNote(reportOn));
       assert.deepEqual(await withCoreTransaction((c) => loadMissingCheckins(c, world.generation)), [], "a second run finds nothing missing");
 
-      // ---- record-meeting: who may record, and the checks ----
+      // ---- record-meeting while the draft is at the gate: who may record, and the checks ----
       const today = collegeDate();
       const meeting = {
         action: "record-meeting",
         studentId: student,
-        supportPlanId: planId,
+        supportCaseId: caseId,
         metOn: today,
         reasons: ["Course difficulty", "Health"],
         note: "Tired after a fever; behind in two courses",
-        agreedNextStep: "Two tutorials a week and a check on Friday",
       };
       const refused: Array<[Record<string, unknown>, string]> = [
         [{ metOn: collegeDate(new Date(Date.now() + 3 * 86400000)) }, "MEETING_DATE_IN_FUTURE"],
+        [{ metOn: collegeDate(new Date(Date.now() - 3 * 86400000)) }, "MEETING_BEFORE_REPORT"],
         [{ reasons: [] }, "MEETING_REASON_REQUIRED"],
         [{ reasons: ["Other"], note: "" }, "MEETING_NOTE_REQUIRED"],
         [{ reasons: ["Bored"] }, "MEETING_REASON_UNKNOWN"],
+        [{ supportCaseId: undefined }, "REPORT_REQUIRED"],
       ];
       for (const [change, code] of refused)
         await assert.rejects(() => experienceCommand(faculty, randomUUID(), { ...meeting, ...change }), { code }, code);
       await assert.rejects(() => experienceCommand(otherHod, randomUUID(), meeting), /outside your assigned access/);
       await assert.rejects(() => experienceCommand(governance, randomUUID(), meeting), /not permitted/);
       await assert.rejects(
-        () => experienceCommand(faculty, randomUUID(), { ...meeting, supportPlanId: randomUUID() }),
+        () => experienceCommand(faculty, randomUUID(), { ...meeting, supportCaseId: randomUUID() }),
         { code: "NOT_FOUND" },
       );
       // A frozen record refuses every change, a meeting record included.
@@ -230,11 +230,12 @@ test(
         const audit = (await c.query("SELECT count(*)::int AS n FROM record_changes WHERE resource_type='support_meetings' AND resource_id=$1", [recorded.id])).rows[0]!.n;
         return { row, followup, audit };
       });
-      assert.equal(stored.row.followup_id, backfilled.id, "it completes the plan's open check-in");
-      assert.equal(stored.row.support_plan_id, planId);
+      assert.equal(stored.row.followup_id, backfilled.id, "it completes the case's open check-in");
+      assert.equal(stored.row.support_case_id, caseId);
+      assert.equal(stored.row.support_plan_id, null, "recorded before any plan");
       assert.equal(stored.row.met, today);
       assert.deepEqual(stored.row.reasons, ["Health", "Course difficulty"], "kept in the list's order");
-      assert.equal(stored.row.agreed_next_step, meeting.agreedNextStep);
+      assert.equal(stored.row.agreed_next_step, "");
       assert.equal(stored.row.recorded_by, faculty.personId);
       assert.deepEqual(stored.followup, { status: "completed", outcome: meetingOutcome(today) });
       assert.equal(stored.audit, 1, "audited");
@@ -245,34 +246,66 @@ test(
       await withCoreTransaction(async (c) => {
         await assert.rejects(() => c.query("UPDATE support_meetings SET note='changed' WHERE id=$1", [recorded.id]), /append-only/i);
       });
+      const met = (await experienceOverview(faculty)).meetings!.find((m) => m.case_id === caseId)!;
+      assert.equal(met.meeting?.met_on, today);
+      assert.equal(met.stage, "met");
+      assert.equal((await experienceOverview(faculty)).counts.meetings_pending, 0);
+
+      // ---- Approval by the department head: no second check-in ----
+      const decision = {
+        artifactId: draft.artifact_id as string,
+        contentHash: draft.content_hash as string,
+        expectedRevision: draft.revision as number,
+        decision: "approved" as const,
+        rationale: "Department head approves the plan for the mentor",
+      };
+      await assert.rejects(() => decideSupportCase(otherHod, caseId, randomUUID(), decision), { code: "NOT_FOUND" });
+      const command = randomUUID();
+      const approved = await decideSupportCase(hod, caseId, command, decision);
+      const planId = approved.plan!.id;
+      assert.equal(approved.checkin?.created, false, "the case already has its check-in");
+      assert.equal(approved.checkin?.id, backfilled.id);
+      const again = await decideSupportCase(hod, caseId, command, decision);
+      assert.equal(again.duplicate, true);
+      assert.equal(again.checkin?.id, backfilled.id, "a repeated command creates nothing new");
+      await withCoreTransaction(async (c) => {
+        const decided = (await c.query("SELECT faculty_person_id FROM faculty_decisions WHERE support_case_id=$1", [caseId])).rows[0]!;
+        assert.equal(decided.faculty_person_id, hod.personId, "the decision is recorded as the department head's");
+        assert.equal((await c.query("SELECT count(*)::int AS n FROM support_followups WHERE support_case_id=$1 OR support_plan_id=$2", [caseId, planId])).rows[0]!.n, 1);
+      });
+      const afterApproval = (await experienceOverview(faculty)).meetings!.find((m) => m.case_id === caseId)!;
+      assert.equal(afterApproval.plan_id, planId);
+      assert.equal(afterApproval.case_status, "approved");
+      assert.equal(afterApproval.meeting?.met_on, today, "the conversation stays with the report");
+
       // With every check-in done, the department head records a further meeting on a new one.
-      const second = await experienceCommand(hod, randomUUID(), { ...meeting, reasons: ["Timetable clash"], note: "" });
+      const second = await experienceCommand(hod, randomUUID(), { ...meeting, supportCaseId: undefined, supportPlanId: planId, reasons: ["Timetable clash"], note: "" });
       const secondRow = await withCoreTransaction(async (c) =>
-        (await c.query("SELECT m.recorded_by,f.status,f.mentor_person_id FROM support_meetings m JOIN support_followups f ON f.id=m.followup_id WHERE m.id=$1", [second.id])).rows[0]!,
+        (await c.query("SELECT m.recorded_by,m.support_case_id,m.support_plan_id,f.status,f.mentor_person_id FROM support_meetings m JOIN support_followups f ON f.id=m.followup_id WHERE m.id=$1", [second.id])).rows[0]!,
       );
-      assert.deepEqual(secondRow, { recorded_by: hod.personId, status: "completed", mentor_person_id: faculty.personId });
+      assert.deepEqual(secondRow, { recorded_by: hod.personId, support_case_id: caseId, support_plan_id: planId, status: "completed", mentor_person_id: faculty.personId });
 
       // ---- Who sees what: staff the reasons, the student and the parent only the day ----
-      const latest = (await experienceOverview(faculty)).meetings!.find((m) => m.plan_id === planId)!;
-      assert.equal(latest.meeting?.met_on, today);
-      assert.equal((await experienceOverview(faculty)).counts.meetings_pending, 0);
       const staff = await experienceStudent(hod, student);
       const staffPlan = staff.support.find((p) => p.id === planId)!;
       assert.equal(staffPlan.meeting?.met_on, today);
       assert.ok(staffPlan.meeting?.reasons.length);
+      assert.equal(staffPlan.meeting_due?.stage, "met");
+      assert.equal(staffPlan.meeting_due?.report_on, reportOn);
       const plans = (await reviewQueue(faculty)).plans;
       assert.equal(plans.find((p: { id: string }) => p.id === planId)?.meeting?.met_on, today, "Outcomes reads the meeting");
       const own = await experienceStudent(world.studentActor, student);
       const ownPlan = own.support.find((p) => p.id === planId)!;
       assert.equal(ownPlan.met_on, today, "the student sees the day they met");
       assert.equal("meeting" in ownPlan, false);
-      for (const leak of ["Course difficulty", "Health", "Timetable clash", "Tired after a fever", "Two tutorials"])
-        assert.equal(JSON.stringify(own.support).includes(leak), false, leak);
+      assert.equal(own.meeting ?? null, null, "no meeting status for the student");
+      for (const leak of ["Course difficulty", "Health", "Timetable clash", "Tired after a fever", "AI report"])
+        assert.equal(JSON.stringify({ support: own.support, followups: own.followups }).includes(leak), false, leak);
       const family = await experienceStudent(world.parentActor, student);
       if (family.grants.includes("support")) {
         assert.equal(family.support.find((p) => p.id === planId)?.met_on, today);
-        for (const leak of ["Course difficulty", "Health", "Timetable clash", "Tired after a fever"])
-          assert.equal(JSON.stringify(family.support).includes(leak), false, leak);
+        for (const leak of ["Course difficulty", "Health", "Timetable clash", "Tired after a fever", "AI report"])
+          assert.equal(JSON.stringify({ support: family.support, followups: family.followups }).includes(leak), false, leak);
       } else assert.deepEqual(family.support, []);
     } finally {
       await closePool();

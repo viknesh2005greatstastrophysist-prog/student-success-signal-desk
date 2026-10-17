@@ -3,52 +3,34 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   addDays,
-  backfillDueOn,
-  checkinDueOn,
-  checkinWindowDays,
   collegeDate,
   daysBetween,
-  DEFAULT_CHECKIN_DAYS,
+  meetByDate,
   MEETING_REASONS,
   meetingOutcome,
+  reportCheckinNote,
   validateMeeting,
 } from "../lib/meetings";
 
-/** Meeting records after a support plan (owner request, 17 Oct): the check-in's due
- * date and the meeting record's checks. Pure functions; no database. */
+/** The conversation with the student about the AI report (owner decisions, 17 Oct): the
+ * check-in's due date and note, and the meeting record's checks. Pure functions; no
+ * database. */
 
 const code = (error: unknown) => (error as { code?: string }).code;
 
-test("the check-in is due on the approval day plus the plan's earliest action window", () => {
-  const plan = {
-    actions: [
-      { code: "faculty-check-in", label: "Check-in", owner: "assigned_faculty", dueInDays: 10 },
-      { code: "student-study-plan", label: "Study plan", owner: "student", dueInDays: 5 },
-    ],
-  };
-  assert.equal(checkinWindowDays(plan), 5, "the earliest window");
-  assert.equal(checkinDueOn("2026-10-16T06:00:00Z", plan), "2026-10-21");
-  // No action with a window: 7 days.
-  for (const none of [{}, { actions: [] }, { actions: [{ label: "No window" }] }, null, undefined, "x"])
-    assert.equal(checkinWindowDays(none), DEFAULT_CHECKIN_DAYS);
-  assert.equal(checkinDueOn("2026-10-16T06:00:00Z", { actions: [] }), "2026-10-23");
-  // Odd values are ignored rather than trusted.
-  assert.equal(checkinWindowDays({ actions: [{ dueInDays: 0 }, { dueInDays: -3 }, { dueInDays: 2.5 }, { dueInDays: "4" }] }), 4);
+test("the check-in is due 7 days after the AI report and its note names the report", () => {
+  assert.equal(meetByDate("2026-10-16"), "2026-10-23");
+  assert.equal(reportCheckinNote("2026-10-16"), "Meet the student about the AI report of 16 Oct 2026");
 });
 
 test("dates are calendar days in the college's time zone (India)", () => {
   // 19:00 UTC on 16 Oct is 00:30 IST on 17 Oct: an approval then counts on the 17th.
   assert.equal(collegeDate("2026-10-16T19:00:00Z"), "2026-10-17");
   assert.equal(collegeDate("2026-10-16T18:00:00Z"), "2026-10-16");
-  assert.equal(checkinDueOn("2026-10-16T19:00:00Z", { actions: [{ dueInDays: 3 }] }), "2026-10-20");
+  assert.equal(meetByDate(collegeDate("2026-10-16T19:00:00Z")), "2026-10-24", "a report at 00:30 IST counts on the 17th");
   assert.equal(addDays("2026-10-30", 3), "2026-11-02", "across a month end");
   assert.equal(daysBetween("2026-10-10", "2026-10-17"), 7);
   assert.equal(daysBetween("2026-10-17", "2026-10-10"), -7);
-});
-
-test("a plan approved before meeting records gets a check-in due 7 days after its approval", () => {
-  assert.equal(backfillDueOn("2026-10-01T05:00:00Z"), "2026-10-08");
-  assert.equal(backfillDueOn(new Date("2026-09-28T20:00:00Z")), "2026-10-06", "29 Sep in India, plus 7");
 });
 
 test("completing the check-in records the day they met", () => {
@@ -74,11 +56,11 @@ test("the reasons are the fixed list, in order, and migration 014 allows exactly
   assert.deepEqual(listed, [...MEETING_REASONS]);
 });
 
-test("a meeting record needs a real date that is not in the future or before the plan, and at least one reason", () => {
+test("a meeting record needs a real date that is not in the future or before the AI report, and at least one reason", () => {
   const today = "2026-10-17";
   const ok = validateMeeting(
     { metOn: "2026-10-15", reasons: ["Course difficulty", "Health", "Health"], note: "  Tired after a fever  ", agreedNextStep: " Two tutorials a week " },
-    { today, approvedOn: "2026-10-10" },
+    { today, reportOn: "2026-10-10" },
   );
   assert.deepEqual(ok, {
     metOn: "2026-10-15",
@@ -92,13 +74,13 @@ test("a meeting record needs a real date that is not in the future or before the
     [{ metOn: "2026-02-30", reasons: ["Health"] }, "MEETING_DATE_INVALID"],
     [{ metOn: "17/10/2026", reasons: ["Health"] }, "MEETING_DATE_INVALID"],
     [{ metOn: "", reasons: ["Health"] }, "MEETING_DATE_INVALID"],
-    [{ metOn: "2026-10-09", reasons: ["Health"] }, "MEETING_BEFORE_PLAN"],
+    [{ metOn: "2026-10-09", reasons: ["Health"] }, "MEETING_BEFORE_REPORT"],
     [{ metOn: "2026-10-15", reasons: [] }, "MEETING_REASON_REQUIRED"],
     [{ metOn: "2026-10-15", reasons: ["Bored"] }, "MEETING_REASON_UNKNOWN"],
     [{ metOn: "2026-10-15", reasons: ["Health", "health"] }, "MEETING_REASON_UNKNOWN"],
   ];
   for (const [input, expected] of refused)
-    assert.throws(() => validateMeeting(input, { today, approvedOn: "2026-10-10" }), (e) => code(e) === expected, JSON.stringify(input));
+    assert.throws(() => validateMeeting(input, { today, reportOn: "2026-10-10" }), (e) => code(e) === expected, JSON.stringify(input));
 });
 
 test("the reason Other needs a note saying what it was", () => {

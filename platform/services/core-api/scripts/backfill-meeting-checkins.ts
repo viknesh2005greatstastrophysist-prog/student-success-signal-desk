@@ -1,11 +1,14 @@
 /**
- * Check-ins for support plans approved before meeting records existed (owner request,
- * 17 Oct; lib/meetings.ts). Since then every approval creates one check-in; this adds
- * the missing one for each student's approved current plan (shown to the family, on the
- * current figures) that has no check-in linked to it, due 7 days after its approval,
- * assigned to the student's mentor, shared with the family, note "Check-in after the
- * support plan". A plan approved more than 7 days ago gets a check-in that is already
- * overdue, so its meeting shows at once on the mentor's Today.
+ * Check-ins for AI reports made before the meeting clock started at the report (owner
+ * decisions, 17 Oct; lib/meetings.ts). Since then a check-in is created when a draft
+ * reaches the mentor gate; this adds the missing one for every current case that has a
+ * report: each student's draft at the gate, or the case of their approved current plan
+ * (shown to the family, on the current figures), whichever report is newer, when no
+ * check-in is linked to the case or its plan. Due on the report date plus 7 days,
+ * assigned to the student's mentor, shared with the family (date only), note "Meet the
+ * student about the AI report of <date>". A report older than 7 days gets a check-in
+ * that is already due, so the student shows at once on the mentor's Today. Never a
+ * second check-in per case.
  *
  *   From platform/:
  *   npx tsx services/core-api/scripts/backfill-meeting-checkins.ts --env <environment.json> migrate
@@ -13,12 +16,14 @@
  *     [--exclude-email <email>]... [--exclude-case <case id prefix>]... [--out <file>]
  *
  * Commands
- *   migrate   apply the pending Core migrations (014 adds support_meetings); nothing else
+ *   migrate   apply the pending Core migrations (014 adds support_meetings, 015 links
+ *             check-ins and meetings to the AI report's case); nothing else
  *   (none)    the backfill: a dry run by default (counts what would be written, writes
  *             nothing); with --apply it writes in one transaction
  *
- * Never: an update or delete of any existing row, a second check-in for a plan that has
- * one, or a check-in for a frozen student (student 021) or an excluded one. Safe to run
+ * Never: an update or delete of any existing row, a second check-in for a case that has
+ * one (linked to the case or its plan), or a check-in for a frozen student (student 021),
+ * an excluded one or a student without a mentor (counted, not created). Safe to run
  * twice: the second run finds nothing missing. Prints counts only (no names, register
  * numbers or ids). The environment file is loaded into this process only; no connection
  * detail is printed.
@@ -59,7 +64,7 @@ const { withCoreTransaction, withCoreSnapshot, closePool } = await import("../li
 const { migrateCoreDatabase } = await import("../lib/migrations");
 const { getCurrentGeneration } = await import("../lib/command-ledger");
 const { resolveStudentIds } = await import("../lib/data-refresh/apply");
-const { applyMissingCheckins, backfillDueOn, collegeDate, loadMissingCheckins } = await import("../lib/meetings");
+const { applyMissingCheckins, collegeDate, loadMissingCheckins, meetByDate, meetingSchema } = await import("../lib/meetings");
 
 const emit = async (value: unknown) => {
   const text = JSON.stringify(value, null, 2);
@@ -84,13 +89,21 @@ try {
     await emit({ schema, migrations: "current" });
   } else if (!apply) {
     const exclude = await excluded();
-    const missing = await withCoreSnapshot(async (c) => loadMissingCheckins(c, await getCurrentGeneration(c), exclude));
+    const { missing, timeline } = await withCoreSnapshot(async (c) => ({
+      missing: await loadMissingCheckins(c, await getCurrentGeneration(c), exclude),
+      timeline: (await meetingSchema(c)).timeline,
+    }));
+    const withMentor = missing.filter((report) => report.fallbackMentorId);
     await emit({
       mode: "dry run (nothing written; add --apply to write)",
       schema,
+      ...(timeline ? {} : { note: "migration 015 has not run; run the migrate command before --apply" }),
       excludedStudents: exclude.length,
-      checkinsToCreate: missing.length,
-      alreadyOverdueWhenCreated: missing.filter((plan) => backfillDueOn(plan.approvedAt) < today).length,
+      checkinsToCreate: withMentor.length,
+      alreadyDueWhenCreated: withMentor.filter((report) => meetByDate(report.reportOn) < today).length,
+      atTheGate: withMentor.filter((report) => !report.planId).length,
+      approved: withMentor.filter((report) => report.planId).length,
+      skippedWithoutMentor: missing.length - withMentor.length,
     });
   } else {
     const exclude = await excluded();
@@ -104,7 +117,14 @@ try {
       const missing = await loadMissingCheckins(c, generation, exclude);
       return applyMissingCheckins(c, generation, missing, operator.id, today);
     }, "exclusive");
-    await emit({ mode: "applied", schema, excludedStudents: exclude.length, checkinsCreated: report.created, alreadyOverdueWhenCreated: report.alreadyOverdue });
+    await emit({
+      mode: "applied",
+      schema,
+      excludedStudents: exclude.length,
+      checkinsCreated: report.created,
+      alreadyDueWhenCreated: report.alreadyOverdue,
+      skippedWithoutMentor: report.withoutMentor,
+    });
   }
 } finally {
   await closePool();

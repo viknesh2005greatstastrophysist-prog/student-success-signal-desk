@@ -120,7 +120,7 @@ export type Followup = {
   /** Staff only: the plan this check-in belongs to was computed on earlier figures. */
   plan_stale?: boolean;
 };
-/** A meeting the mentor (or the department head) recorded after a support plan. */
+/** The conversation the mentor (or the department head) recorded with the student about the AI report. */
 export type MeetingRecord = {
   id: string;
   followup_id: string;
@@ -132,22 +132,39 @@ export type MeetingRecord = {
   recorded_by: string;
   recorded_at: string;
 };
-/** One student's approved current plan and its meeting: recorded, or due on a date. */
-export type MeetingStatus = {
-  plan_id: string;
+/**
+ * Where the conversation about an AI report stands (calendar days in India): "due"
+ * before day 7, "meet_now" on days 7 to 14, "past_deadline" after day 14 (the
+ * department head sees it), "met" once submitted.
+ */
+export type MeetingStage = "due" | "meet_now" | "past_deadline" | "met";
+export type MeetingTimeline = {
+  /** The day of the AI report: the draft reached the mentor gate. */
+  report_on: string;
+  /** Meet the student by this day (report plus 7 days). */
+  meet_by: string;
+  /** Submit the conversation by this day (report plus 14 days). */
+  deadline: string;
+  days_since: number;
+  stage: MeetingStage;
+  /** Days left until meet_by while "due". */
+  days_left: number | null;
+  /** Days past meet_by once "meet_now" or "past_deadline". */
+  days_overdue: number | null;
+};
+/** One student's current AI report (at the gate or approved) and the conversation about it. */
+export type MeetingStatus = MeetingTimeline & {
+  case_id: string;
+  /** The approved plan, or null while the draft is at the gate. */
+  plan_id: string | null;
+  case_status: "awaiting_faculty" | "approved";
   student_id: string;
   student_name: string;
   register_number: string;
   mentor_id: string | null;
   mentor_name: string | null;
-  approved_at: string | null;
   meeting: MeetingRecord | null;
   checkin: { id: string; due_on: string; status: string } | null;
-  due_on: string | null;
-  /** Days past the due date in the college's time zone (0 on the day, negative before). */
-  days_overdue: number | null;
-  /** Overdue by seven days or more without a record: the department head is told. */
-  head_notice: boolean;
 };
 export type SupportPlan = {
   id: string;
@@ -166,10 +183,9 @@ export type SupportPlan = {
   intervention_outcome?: string | null;
   /** Model that drafted the plan, as recorded on its agent run (null for retired rule-based drafts). */
   model_id?: string | null;
-  /** Staff only: the meeting recorded after this plan, and when it is (or was) due. */
+  /** Staff only: the conversation about this plan's AI report, and where it stands. */
   meeting?: MeetingRecord | null;
-  checkin_due_on?: string | null;
-  checkin_days_overdue?: number | null;
+  meeting_due?: MeetingTimeline | null;
   /** Student and parent: only the day the mentor met the student, never the reasons. */
   met_on?: string | null;
 };
@@ -262,6 +278,8 @@ export type StudentDetail = {
   /** Set for a student or parent when a plan is held back because its evidence predates the current data. */
   support_notice?: string | null;
   followups: Followup[];
+  /** Staff: the student's current AI report and the conversation about it. */
+  meeting?: MeetingStatus | null;
   sources: {
     source: string;
     state: string;
@@ -297,7 +315,7 @@ export type ExperienceOverview = {
   terms: { id: string; name: string; active: boolean }[];
   grading: GradingScale | null;
   followups: Followup[];
-  /** Mentor and department head: each student's approved current plan and its meeting. */
+  /** Mentor and department head: each student's current AI report and the conversation about it. */
   meetings?: MeetingStatus[];
   counts: {
     students: number;
@@ -307,8 +325,10 @@ export type ExperienceOverview = {
     failed_reviews: number;
     overdue_followups: number;
     draft_courses: number;
-    /** Approved current plans still waiting for their meeting record. */
+    /** Current AI reports whose conversation is not submitted yet. */
     meetings_pending?: number;
+    /** Of those, the ones past the 14-day deadline. */
+    meetings_past_deadline?: number;
   };
   windows: {
     id: string;

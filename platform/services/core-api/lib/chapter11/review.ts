@@ -20,7 +20,7 @@ import {
 } from "./frozen";
 import { caseEvidenceCapturedSql, loadGenerationClock, stampEvidence } from "../data-refresh/generation";
 import { hashJson } from "../support-commands";
-import { planMeetingFacts } from "../meetings";
+import { planMeetingFacts, planMeetingFields } from "../meetings";
 import {
   anyPacketSchema,
   acceptanceChecks,
@@ -408,17 +408,10 @@ export async function reviewQueue(actor: ActorContext) {
                 frozen: row.frozen,
               }) as unknown as T,
           );
-    // The meeting after each plan (meetings.ts): its day and reasons, or when it is due.
+    // The conversation about each plan's AI report (meetings.ts): its day and
+    // reasons, or where it stands (due, meet by now, past the deadline).
     const meetings = await planMeetingFacts(client, generation, plans.rows.map((row) => row.id));
-    const withMeeting = <T extends { id: string }>(row: T) => {
-      const fact = meetings.get(row.id);
-      return {
-        ...row,
-        meeting: fact?.meeting ?? null,
-        checkin_due_on: fact?.due_on ?? null,
-        checkin_days_overdue: fact?.days_overdue ?? null,
-      };
-    };
+    const withMeeting = <T extends { id: string }>(row: T) => ({ ...row, ...planMeetingFields(meetings.get(row.id)) });
     return {
       versions: versions.rows,
       plans: plans.rows.map((row) => withMeeting(frozen(stampEvidence(clock, row)))),
