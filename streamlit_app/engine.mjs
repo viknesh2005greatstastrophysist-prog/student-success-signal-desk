@@ -34724,6 +34724,12 @@ async function finalizeGraphCheckpoint(actor, job, trace2) {
       );
   });
 }
+function seesReviewContent(role) {
+  return role === "faculty" || role === "hod";
+}
+function jobsForRole(role, rows) {
+  return seesReviewContent(role) ? rows.map((row) => ({ ...row, flagged: riskFlagged(row.risk) })) : rows.map((row) => safeJobRow(row));
+}
 var MIN_GROUP = 3;
 function scopeTrend(row) {
   const out = { ...row };
@@ -34860,16 +34866,16 @@ async function overview(actor) {
     const metrics = evaluationMetrics(
       jobs.rows.map((row) => ({ ...row, ...facts.get(row.id) }))
     );
-    const assignedMentor = actor.role === "faculty";
+    const fullView = seesReviewContent(actor.role);
     return {
       graph: reviewGraph,
       metrics,
-      trends: assignedMentor ? trends.rows : trends.rows.map((row) => scopeTrend(row)),
-      riskView: assignedMentor ? compositeRiskView(students.rows, jobs.rows) : [],
+      trends: fullView ? trends.rows : trends.rows.map((row) => scopeTrend(row)),
+      riskView: fullView ? compositeRiskView(students.rows, jobs.rows) : [],
       students: students.rows,
       policies: policies.rows,
       plans: plans.rows,
-      jobs: assignedMentor ? jobs.rows.map((row) => ({ ...row, flagged: riskFlagged(row.risk) })) : jobs.rows.map((row) => safeJobRow(row)),
+      jobs: jobsForRole(actor.role, jobs.rows),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
@@ -34893,19 +34899,19 @@ async function exportPlan(actor, id) {
       "SELECT * FROM ch11_events WHERE generation_id=$1 AND (subject_id=$2 OR subject_id IN (SELECT id FROM ch11_jobs WHERE plan_id=$2)) ORDER BY created_at,id",
       [plan.generation_id, id]
     );
-    const assignedMentor = actor.role === "faculty";
+    const fullView = seesReviewContent(actor.role);
     return {
       schemaVersion: 1,
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
       plan,
-      jobs: assignedMentor ? jobs.rows : jobs.rows.map((job) => ({
+      jobs: fullView ? jobs.rows : jobs.rows.map((job) => ({
         ...job,
         checkpoint: {
           nodeTrace: job.checkpoint?.nodeTrace,
           sourceTimings: job.checkpoint?.sourceTimings
         }
       })),
-      events: assignedMentor ? events.rows : events.rows.map((event) => ({ ...event, detail: { redacted: true } })),
+      events: fullView ? events.rows : events.rows.map((event) => ({ ...event, detail: { redacted: true } })),
       exportedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
   });
@@ -35869,7 +35875,7 @@ async function reviewQueue(actor) {
       ...row,
       frozen: isFrozenRegisterNumber(row.register_number) || isFrozenCase(row.id) || Array.isArray(row.earlier_drafts) && row.earlier_drafts.some((e) => isFrozenCase(e.case_id))
     });
-    const shape = (rows) => actor.role === "faculty" ? rows : rows.map(
+    const shape = (rows) => actor.role === "faculty" || actor.role === "hod" ? rows : rows.map(
       (row) => ({
         id: row.id,
         student_id: row.student_id,

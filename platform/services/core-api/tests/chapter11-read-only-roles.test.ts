@@ -3,7 +3,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import type { ActorContext } from "@aura/contracts";
 import { AuthorizationError } from "../lib/security";
-import { executePlan, lockPlan, safeJobRow, safeValidation, savePlan, savePlannedPlan, setReviewPaused } from "../lib/chapter11/service";
+import { executePlan, jobsForRole, lockPlan, safeJobRow, safeValidation, savePlan, savePlannedPlan, seesReviewContent, setReviewPaused } from "../lib/chapter11/service";
 import { loadPlanningScope, planWithAgent } from "../lib/chapter11/planning";
 import { editDraft, recordOutcome, restoreVersion } from "../lib/chapter11/review";
 import { decideSupportCase } from "../lib/support-commands";
@@ -85,7 +85,32 @@ test("the department head's commands pass the role gate and reach input validati
   await assert.rejects(() => planWithAgent(hod, { not: "a plan" }), (e: unknown) => !(e instanceof AuthorizationError));
 });
 
-test("review R-01: the department head and AI activity get the review mechanics, never draft text", () => {
+test("owner decision (17 Oct): the mentor and the department head get full review rows; AI activity keeps the safe projection", () => {
+  assert.equal(seesReviewContent("faculty"), true);
+  assert.equal(seesReviewContent("hod"), true);
+  for (const role of ["governance", "student", "parent"] as const) assert.equal(seesReviewContent(role), false);
+  const risk = { score: 72, band: "high", flagged: true, signals: [{ explanation: "Attendance 61% in CS201" }] };
+  const row = {
+    id: "j1",
+    status: "awaiting_faculty",
+    risk,
+    validation: { valid: true, judge: { status: "scored", reasons: { grounding: "Quotes the draft" } } },
+    failure_reasons: ["Marks for CS202 are missing"],
+  };
+  for (const role of ["faculty", "hod"] as const) {
+    const [full] = jobsForRole(role, [row]);
+    assert.deepEqual(full!.risk, risk, `${role} sees the score, band and signals`);
+    assert.equal(full!.flagged, true);
+    assert.ok(JSON.stringify(full).includes("Quotes the draft"), `${role} sees the judge's reasons`);
+    assert.deepEqual(full!.failure_reasons, ["Marks for CS202 are missing"]);
+  }
+  const [safe] = jobsForRole("governance", [row]);
+  assert.equal(safe!.risk, null);
+  assert.equal(safe!.flagged, true);
+  for (const leak of ["72", "CS201", "CS202", "Quotes the draft"]) assert.equal(JSON.stringify(safe).includes(leak), false, leak);
+});
+
+test("review R-01: AI activity gets the review mechanics, never draft text", () => {
   const judge = {
     status: "scored",
     round: 2,
@@ -142,7 +167,7 @@ test("review R-01: the department head and AI activity get the review mechanics,
   assert.equal(safeValidation(null), null);
 });
 
-test("review R-09: other roles learn whether a review flagged the student, never the score", () => {
+test("review R-09: AI activity learns whether a review flagged the student, never the score", () => {
   const risk = { score: 72, band: "high", flagged: true, signals: [{ explanation: "Attendance 61% in CS201" }] };
   const flagged = safeJobRow({ id: "j1", status: "awaiting_faculty", risk });
   assert.equal(flagged.flagged, true);
@@ -154,7 +179,7 @@ test("review R-09: other roles learn whether a review flagged the student, never
     assert.equal(safeJobRow({ id: "j3", status, risk: null }).flagged, false);
 });
 
-test("review R-01: stop reasons stay with the assigned mentor; other roles get how many there were", () => {
+test("review R-01: stop reasons stay with the mentor and the department head; AI activity gets how many there were", () => {
   const reasons = ["Attendance 61% in CS201 is below the 75% threshold", "Marks for CS202 are missing"];
   const blocked = safeJobRow({
     id: "j4",

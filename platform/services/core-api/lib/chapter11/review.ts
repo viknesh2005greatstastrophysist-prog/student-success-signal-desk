@@ -371,9 +371,10 @@ export async function reviewQueue(actor: ActorContext) {
       `SELECT v.support_plan_id,v.version,v.artifact_id,v.created_at,v.restored_from,a.content_hash,a.recommendation FROM ch11_publications v JOIN agent_artifacts a ON a.id=v.artifact_id WHERE v.generation_id=$1 AND v.support_plan_id=ANY($2::uuid[]) UNION ALL SELECT p.id,1,d.agent_artifact_id,p.created_at,NULL,a.content_hash,a.recommendation FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id JOIN agent_artifacts a ON a.id=d.agent_artifact_id WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[]) AND NOT EXISTS(SELECT 1 FROM ch11_publications v WHERE v.support_plan_id=p.id) ORDER BY version DESC`,
       [generation, plans.rows.map((row) => row.id)],
     );
-    // Individual risk scores, signals and evidence values are visible only to the
-    // student's assigned mentor (E2E log #8). The department head sees who is
-    // waiting on a mentor and the draft's state, never its evidence.
+    // Drafts with their packet, validation, signals and evidence go to the
+    // student's mentor and to the department head for the whole department
+    // (owner decision, 17 Oct; service.ts seesReviewContent). Any other role would
+    // get who is waiting on a mentor and the draft's state, never its content.
     // Frozen records (frozen.ts) stay visible; the flag lets the screens show them
     // read-only without knowing which ids are frozen.
     const frozen = <T extends Record<string, unknown>>(row: T) => ({
@@ -385,7 +386,7 @@ export async function reviewQueue(actor: ActorContext) {
           row.earlier_drafts.some((e: { case_id?: unknown }) => isFrozenCase(e.case_id))),
     });
     const shape = <T extends Record<string, unknown>>(rows: T[]): T[] =>
-      actor.role === "faculty"
+      actor.role === "faculty" || actor.role === "hod"
         ? rows
         : rows.map(
             (row) =>

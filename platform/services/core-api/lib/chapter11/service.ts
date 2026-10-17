@@ -1727,7 +1727,25 @@ export async function finalizeGraphCheckpoint(
   });
 }
 
-/** Smallest group whose average score a non-mentor role may see. */
+/** Who receives a review's full content: risk scores, bands and signals, the
+ * validation report with the judge's reasons and diagnoses, stop reasons and the
+ * evidence. The assigned mentor for their mentees, and the department head for
+ * every student in the department (owner decision, 17 Oct; reverses the
+ * department-head part of review R-01). The AI-activity workspace (governance)
+ * keeps the safe projection below. */
+export function seesReviewContent(role: ActorContext["role"]): boolean {
+  return role === "faculty" || role === "hod";
+}
+
+/** The review jobs a role receives from overview(): full rows for the mentor and
+ * the department head, the safe projection (safeJobRow) for everyone else. */
+export function jobsForRole<T extends Loose>(role: ActorContext["role"], rows: T[]) {
+  return seesReviewContent(role)
+    ? rows.map((row) => ({ ...row, flagged: riskFlagged(row.risk) }))
+    : rows.map((row) => safeJobRow(row));
+}
+
+/** Smallest group whose average score the AI-activity workspace may see. */
 const MIN_GROUP = 3;
 function scopeTrend<T extends Record<string, unknown>>(row: T): T {
   const out: Record<string, unknown> = { ...row };
@@ -1769,11 +1787,11 @@ function safeFailureDiagnosis(raw: unknown): Loose | null {
 }
 
 /**
- * What the department head and the AI-activity workspace receive of a draft's
- * validation report (review R-01): the review mechanics only. Judge reasons,
- * model attempts, failures and diagnoses hold draft text and student figures,
- * so only the assigned mentor (role faculty) receives the full report. Tool
- * calls keep their name and status, never their arguments.
+ * What the AI-activity workspace receives of a draft's validation report
+ * (review R-01): the review mechanics only. Judge reasons, model attempts,
+ * failures and diagnoses hold draft text and student figures, so only the
+ * assigned mentor and the department head (seesReviewContent) receive the full
+ * report. Tool calls keep their name and status, never their arguments.
  */
 export function safeValidation(raw: unknown): Loose | null {
   const validation = looseObject(raw);
@@ -1819,10 +1837,10 @@ export function riskFlagged(risk: unknown): boolean {
   return looseObject(risk)?.flagged === true;
 }
 
-/** A review job as the department head and AI activity receive it: the review
- * mechanics and whether the student was flagged, never the score, band or signals
- * (E2E log #8) and never draft-derived text or stop reasons (review R-01): the
- * reasons stay with the assigned mentor, other roles get their count. */
+/** A review job as AI activity receives it: the review mechanics and whether the
+ * student was flagged, never the score, band or signals (E2E log #8) and never
+ * draft-derived text or stop reasons (review R-01): the reasons stay with the
+ * mentor and the department head, AI activity gets their count. */
 type SafeJobFields = {
   risk: null;
   flagged: boolean;
@@ -1919,23 +1937,22 @@ export async function overview(actor: ActorContext) {
     const metrics = evaluationMetrics(
       jobs.rows.map((row) => ({ ...row, ...facts.get(row.id) })),
     );
-    // Individual risk scores belong to the student's assigned mentor (E2E log #8).
-    // Other roles get the review mechanics and department aggregates only: no
-    // per-student score, band or signals, and no band average over a handful of students.
-    const assignedMentor = actor.role === "faculty";
+    // Individual risk scores belong to the student's mentor and the department head
+    // (seesReviewContent). AI activity gets the review mechanics and department
+    // aggregates only: no per-student score, band or signals, and no band average
+    // over a handful of students.
+    const fullView = seesReviewContent(actor.role);
     return {
       graph: reviewGraph,
       metrics,
-      trends: assignedMentor
+      trends: fullView
         ? trends.rows
         : trends.rows.map((row) => scopeTrend(row)),
-      riskView: assignedMentor ? compositeRiskView(students.rows, jobs.rows) : [],
+      riskView: fullView ? compositeRiskView(students.rows, jobs.rows) : [],
       students: students.rows,
       policies: policies.rows,
       plans: plans.rows,
-      jobs: assignedMentor
-        ? jobs.rows.map((row) => ({ ...row, flagged: riskFlagged(row.risk) }))
-        : jobs.rows.map((row) => safeJobRow(row)),
+      jobs: jobsForRole(actor.role, jobs.rows),
       demoPolicy,
       modelConfigured: !!configuredComposer(),
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
@@ -1960,15 +1977,15 @@ export async function exportPlan(actor: ActorContext, id: string) {
       "SELECT * FROM ch11_events WHERE generation_id=$1 AND (subject_id=$2 OR subject_id IN (SELECT id FROM ch11_jobs WHERE plan_id=$2)) ORDER BY created_at,id",
       [plan.generation_id, id],
     );
-    // Only the assigned mentor receives the evidence and risk figures. The
-    // department head and AI-activity roles get the process record: states,
-    // node trace, timings and event hashes, without scores or evidence values.
-    const assignedMentor = actor.role === "faculty";
+    // The mentor and the department head receive the evidence and risk figures
+    // (seesReviewContent). AI activity gets the process record: states, node
+    // trace, timings and event hashes, without scores or evidence values.
+    const fullView = seesReviewContent(actor.role);
     return {
       schemaVersion: 1,
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
       plan,
-      jobs: assignedMentor
+      jobs: fullView
         ? jobs.rows
         : jobs.rows.map((job: { checkpoint?: Checkpoint }) => ({
             ...job,
@@ -1977,7 +1994,7 @@ export async function exportPlan(actor: ActorContext, id: string) {
               sourceTimings: job.checkpoint?.sourceTimings,
             },
           })),
-      events: assignedMentor
+      events: fullView
         ? events.rows
         : events.rows.map((event: Record<string, unknown>) => ({ ...event, detail: { redacted: true } })),
       exportedAt: new Date().toISOString(),

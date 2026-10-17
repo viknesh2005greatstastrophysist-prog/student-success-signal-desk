@@ -367,7 +367,8 @@ test(
       await setReviewPaused(hod, locked.id, { paused: false, expectedRevision: (await exportPlan(hod, locked.id)).plan.revision, reason: "Department head can resume" });
       assert.equal((await lockPlan(hod, locked.id, locked.revision)).status, "locked", "locking a locked plan returns it");
 
-      // ---- #8: risk figures belong to the assigned mentor ----
+      // ---- #8 as revised by the owner (17 Oct): risk figures and drafts belong to the
+      // mentor and the department head; AI activity keeps the safe projection ----
       const mine = await reviewQueue(faculty);
       assert.equal(mine.drafts.length, 1);
       assert.ok(mine.drafts[0]!.recommendation && mine.drafts[0]!.signals?.length);
@@ -381,12 +382,19 @@ test(
         assert.equal(queue.drafts.length, 1);
         assert.equal(queue.awaitingCount, 1);
         assert.equal((await experienceOverview(actor)).counts.pending_reviews, queue.awaitingCount);
-        assert.deepEqual(Object.keys(queue.drafts[0]!).sort(), ["display_name", "drafted_at", "earlier_count", "earlier_drafts", "evidence_current", "evidence_generation", "frozen", "id", "mode", "model_id", "register_number", "revision", "status", "student_id"]);
+        // The department head receives the same full draft row as the mentor.
+        assert.deepEqual(Object.keys(queue.drafts[0]!).sort(), Object.keys(mine.drafts[0]!).sort());
+        assert.ok(queue.drafts[0]!.recommendation && queue.drafts[0]!.signals?.length && queue.drafts[0]!.content_hash);
       }
       const ownView = await overview(faculty);
       assert.ok(ownView.riskView.length > 0 && ownView.riskView.some((r) => r.score !== null));
       assert.ok(ownView.jobs.some((j: { risk: unknown }) => j.risk));
-      for (const actor of [hod, governance]) {
+      const headView = await overview(hod);
+      assert.ok(headView.riskView.length > 0 && headView.riskView.some((r) => r.score !== null), "the department head sees risk scores");
+      assert.ok(headView.jobs.some((j: { risk: unknown }) => j.risk));
+      const headExport = await exportPlan(hod, locked.id);
+      assert.ok(headExport.jobs.some((j: { checkpoint: Record<string, unknown> }) => "risk" in j.checkpoint));
+      for (const actor of [governance]) {
         const view = await overview(actor);
         assert.deepEqual(view.riskView, []);
         assert.ok(view.jobs.length > 0 && view.jobs.every((j: { risk: unknown }) => j.risk === null));
