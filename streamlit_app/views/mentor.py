@@ -26,7 +26,7 @@ from common import (
     select_id,
     today_local,
 )
-from views.meetings import render_students_to_meet
+from views.meetings import render_messages_from_head, render_students_to_meet
 from views.metrics import render_review_trends
 from views.operations import latest_per_student
 from views.profile import pick_student, render_profile
@@ -527,8 +527,9 @@ def _risk_status(risk: dict[str, Any] | None) -> tuple[str, str] | None:
 
 
 def today_page() -> None:
-    """What needs the mentor today: the next decision, the rest, stopped reviews, the
-    students to meet about their AI report, then check-ins."""
+    """What needs the mentor today: messages from the department head, the next
+    decision, the rest, stopped reviews, the students to meet about their AI report,
+    then check-ins."""
     actor = st.session_state.get("actor") or {}
     overview, queue, review = load_many(
         [("overview", None), ("review_queue", None), ("review_overview", None)]
@@ -538,6 +539,7 @@ def today_page() -> None:
         f"{ui.greeting()}, {ui.first_name(display_name(actor), 'mentor')}. "
         f"{today_local().strftime('%A %-d %B')}.",
     )
+    render_messages_from_head(overview)
     waiting, risk = _waiting_rows(queue, review)
     if waiting:
         first = waiting[0]

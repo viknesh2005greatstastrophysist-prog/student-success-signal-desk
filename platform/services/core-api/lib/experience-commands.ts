@@ -28,6 +28,13 @@ import {
   reportCheckinNote,
   validateMeeting,
 } from "./meetings";
+import {
+  NOTE_MAX,
+  STAFF_MESSAGES_NOT_READY,
+  messageBody,
+  reminderTarget,
+  staffMessagesPresent,
+} from "./staff-messages";
 const uuid = z.string().uuid();
 const revision = z.number().int().nonnegative();
 const reason = z.string().trim().min(5).max(1000);
@@ -183,6 +190,23 @@ export const experienceCommandSchema = z.discriminatedUnion("action", [
       reasons: z.array(z.string().trim().min(1).max(80)).max(10),
       note: z.string().trim().max(3000).default(""),
       agreedNextStep: z.string().trim().max(1000).default(""),
+    })
+    .strict(),
+  z
+    .object({
+      // The department head asks a mentor why the conversation about an AI report has
+      // not been submitted (staff-messages.ts): the standard reminder plus an optional
+      // note. Nothing is ever sent automatically.
+      action: z.literal("send-message"),
+      supportCaseId: uuid,
+      note: z.string().trim().max(NOTE_MAX).default(""),
+    })
+    .strict(),
+  z
+    .object({
+      // The recipient marks a message from the department head as read.
+      action: z.literal("mark-message-read"),
+      messageId: uuid,
     })
     .strict(),
   z
@@ -884,6 +908,57 @@ export async function experienceCommand(
         followupOutcome: outcome,
         recordedByRole: actor.role,
       };
+    } else if (input.action === "send-message") {
+      // The department head only, about a student in their department, to that
+      // student's mentor, who must be an active mentor in the department.
+      requireRole(actor, "hod");
+      if (!(await staffMessagesPresent(client)))
+        throw new ConflictError("MESSAGES_NOT_READY", STAFF_MESSAGES_NOT_READY);
+      const target = await reminderTarget(client, gen, actor, input.supportCaseId);
+      studentId = target.studentId;
+      await assertStudentNotFrozen(client, studentId);
+      await facultyInDepartment(client, gen, actor, target.mentorId);
+      const body = messageBody(target.reminder, input.note);
+      await client.query(
+        "INSERT INTO staff_messages(id,generation_id,from_person_id,to_person_id,student_id,support_case_id,body) VALUES($1,$2,$3,$4,$5,$6,$7)",
+        [id, gen, actor.personId, target.mentorId, studentId, input.supportCaseId, body],
+      );
+      resource = "staff_messages";
+      facultyId = target.mentorId;
+      updated = {
+        studentId,
+        supportCaseId: input.supportCaseId,
+        toPersonId: target.mentorId,
+        reportOn: target.reportOn,
+        body,
+      };
+    } else if (input.action === "mark-message-read") {
+      // Only the mentor the message was sent to marks it read; read_at is set once.
+      requireRole(actor, "faculty");
+      if (!(await staffMessagesPresent(client)))
+        throw new ConflictError("MESSAGES_NOT_READY", STAFF_MESSAGES_NOT_READY);
+      const message = (
+        await client.query<{ id: string; to_person_id: string; student_id: string; read_at: Date | null }>(
+          "SELECT * FROM staff_messages WHERE generation_id=$1 AND id=$2 FOR UPDATE",
+          [gen, input.messageId],
+        )
+      ).rows[0];
+      if (!message || message.to_person_id !== actor.personId)
+        throw new NotFoundError("Message not found");
+      id = message.id;
+      previous = message;
+      studentId = message.student_id;
+      facultyId = actor.personId;
+      const readAt =
+        message.read_at ??
+        (
+          await client.query<{ read_at: Date }>(
+            "UPDATE staff_messages SET read_at=now() WHERE id=$1 RETURNING read_at",
+            [id],
+          )
+        ).rows[0]!.read_at;
+      resource = "staff_messages";
+      updated = { messageId: id, readAt: new Date(readAt).toISOString() };
     } else {
       requireRole(actor, "faculty", "hod");
       await requireLmsCourse(client, gen, actor, input.offeringId, true);
@@ -1023,7 +1098,11 @@ export async function experienceCommand(
         ? input.reason
         : input.action === "record-meeting"
           ? "Conversation with the student about the AI report recorded"
-          : "Student submitted the final course selection",
+          : input.action === "send-message"
+            ? "Department head asked the mentor about a conversation not submitted"
+            : input.action === "mark-message-read"
+              ? "Mentor read the message from the department head"
+              : "Student submitted the final course selection",
       previous,
       updated,
     );

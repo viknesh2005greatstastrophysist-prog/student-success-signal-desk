@@ -15,7 +15,7 @@ import streamlit as st
 import labels
 import ui
 from common import dataframe, load, load_many, paged, sections, value
-from views.meetings import render_meetings_pending_head
+from views.meetings import render_conversations_not_submitted
 from views.metrics import render_review_trends
 from views.profile import pick_student, render_profile
 from views.reviews import (
@@ -214,10 +214,12 @@ def overview_page() -> None:
     )
     ui.page_header(
         "Department overview",
-        "How the department's students and support reviews are doing, in aggregate.",
+        "Whether mentors have talked to their students about the AI reports, and how the department's "
+        "students and support reviews are doing.",
     )
     counts = overview.get("counts") or {}
     overdue = value(counts, "overdue_followups", default=0)
+    late = sum(1 for row in overview.get("meetings") or [] if not row.get("meeting") and row.get("stage") == "past_deadline")
     ui.kpi_row(
         [
             {
@@ -233,6 +235,13 @@ def overview_page() -> None:
                 else []
             ),
             {
+                # The department head's main check: conversations about an AI report that
+                # are not submitted 14 days after the report.
+                "label": "Conversations past the deadline",
+                "value": late,
+                "icon": ":material/event_busy:",
+            },
+            {
                 # The review queue's own count: the same rule as the mentor's gate.
                 "label": "Drafts waiting for a mentor",
                 "value": value(queue, "awaitingCount", default=value(counts, "pending_reviews", default=0)),
@@ -240,8 +249,8 @@ def overview_page() -> None:
             },
         ]
     )
+    render_conversations_not_submitted(overview)
     render_flagged_students(review, queue)
-    render_meetings_pending_head(overview)
     render_review_trends(review)
     ui.section("Mentor workload", "Mentees per mentor. Details are under Mentors.")
     dataframe(

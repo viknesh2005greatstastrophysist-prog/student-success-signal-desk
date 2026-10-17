@@ -783,3 +783,42 @@ def meeting_cell(row: dict[str, Any] | None, *, for_mentor: bool = True) -> str:
     if not meeting_timeline(row).get("report_on"):
         return "Meeting not recorded"
     return meeting_stage_text(row, for_mentor=for_mentor)
+
+
+def college_day(raw: Any) -> str:
+    """A timestamp as its calendar day in India ("17 Oct 2026"); a plain date as it is."""
+    if not raw:
+        return "—"
+    text = str(raw)
+    if len(text) <= 10:
+        return nice_date(text)
+    try:
+        from zoneinfo import ZoneInfo
+
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            return nice_date(text)
+        return nice_date(moment.astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat())
+    except ValueError:
+        return nice_date(text)
+
+
+def reminder_cell(row: dict[str, Any] | None) -> str:
+    """The department head's last reminder about a report: "Reminder sent 17 Oct 2026",
+    then "Read 18 Oct 2026" once the mentor has read it, or "None sent"."""
+    reminder = (row or {}).get("reminder")
+    if not isinstance(reminder, dict) or not reminder.get("sent_at"):
+        return "None sent"
+    text = f"Reminder sent {college_day(reminder['sent_at'])}"
+    if reminder.get("read_at"):
+        text += f" · Read {college_day(reminder['read_at'])}"
+    return text
+
+
+def reminder_text(row: dict[str, Any]) -> str:
+    """The standard reminder (the Core stores the same words, lib/staff-messages.ts)."""
+    student = pretty_name(row.get("student_name") or "the student")
+    return (
+        f"The conversation with {student} about the AI report of {nice_date(meeting_timeline(row).get('report_on'))} "
+        "has not been submitted. Please meet the student and record it, or tell me why not."
+    )

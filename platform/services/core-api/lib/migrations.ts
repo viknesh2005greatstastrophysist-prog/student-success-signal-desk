@@ -19,6 +19,7 @@ const migrations = [
   { id: "013_informational_records", url: new URL("../migrations/013_informational_records.sql", import.meta.url) },
   { id: "014_meeting_records", url: new URL("../migrations/014_meeting_records.sql", import.meta.url) },
   { id: "015_meeting_timeline", url: new URL("../migrations/015_meeting_timeline.sql", import.meta.url) },
+  { id: "016_staff_messages", url: new URL("../migrations/016_staff_messages.sql", import.meta.url) },
 ];
 
 export async function migrateCoreDatabase(): Promise<void> {

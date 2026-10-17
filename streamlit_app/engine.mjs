@@ -30195,6 +30195,76 @@ async function meetingStatus(client, generation, actor, today = collegeDate(), s
   }).sort(byUrgency);
 }
 
+// services/core-api/lib/staff-messages.ts
+var STAFF_MESSAGES_NOT_READY = "Messages are not switched on yet: the database update (migration 016) has not run.";
+var NOTE_MAX = 1e3;
+var ready3 = /* @__PURE__ */ new Set();
+async function staffMessagesPresent(client) {
+  const schema = loadCoreConfig().databaseSchema;
+  if (ready3.has(schema)) return true;
+  const row = await client.query("SELECT to_regclass('staff_messages') IS NOT NULL AS ok");
+  if (row.rows[0]?.ok) ready3.add(schema);
+  return !!row.rows[0]?.ok;
+}
+function prettyName(raw) {
+  const text2 = String(raw ?? "").trim();
+  if (!text2 || text2 !== text2.toUpperCase() || !/[A-Z]/.test(text2)) return text2;
+  return text2.toLowerCase().replace(/(^|[^a-z])([a-z])/g, (_, before, letter) => before + letter.toUpperCase());
+}
+function reminderText(studentName, reportOn) {
+  return `The conversation with ${prettyName(studentName)} about the AI report of ${dayLabel(reportOn)} has not been submitted. Please meet the student and record it, or tell me why not.`;
+}
+function messageBody(reminder, note) {
+  const extra = note.trim();
+  return extra ? `${reminder}
+
+${extra}` : reminder;
+}
+async function reminderTarget(client, generation, actor, caseId) {
+  const row = (await client.query(
+    `SELECT c.student_id,sp.display_name AS student_name,c.opened_at,m.faculty_person_id AS mentor_id
+       FROM support_cases c JOIN student_profiles s ON s.id=c.student_id JOIN people sp ON sp.id=s.person_id
+       LEFT JOIN mentor_assignments m ON m.generation_id=c.generation_id AND m.student_id=c.student_id
+       WHERE c.generation_id=$1 AND c.id=$2 AND s.department_id=$3::uuid`,
+    [generation, caseId, actor.departmentId ?? null]
+  )).rows[0];
+  if (!row) throw new NotFoundError("AI report not found in your department");
+  if (!row.mentor_id) throw new ConflictError("NO_MENTOR", "This student has no mentor to message.");
+  const reportOn = collegeDate(row.opened_at);
+  return {
+    studentId: row.student_id,
+    mentorId: row.mentor_id,
+    reportOn,
+    reminder: reminderText(row.student_name, reportOn)
+  };
+}
+async function receivedMessages(client, generation, personId) {
+  if (!await staffMessagesPresent(client)) return [];
+  return (await client.query(
+    `SELECT m.id,f.display_name AS from_name,t.display_name AS to_name,m.student_id,sp.display_name AS student_name,
+         m.support_case_id,m.body,m.sent_at,m.read_at
+       FROM staff_messages m JOIN people f ON f.id=m.from_person_id JOIN people t ON t.id=m.to_person_id
+       JOIN student_profiles s ON s.id=m.student_id JOIN people sp ON sp.id=s.person_id
+       WHERE m.generation_id=$1 AND m.to_person_id=$2 ORDER BY m.sent_at DESC LIMIT 50`,
+    [generation, personId]
+  )).rows;
+}
+async function remindersByCase(client, generation, caseIds) {
+  const out = /* @__PURE__ */ new Map();
+  if (!caseIds.length || !await staffMessagesPresent(client)) return out;
+  const rows = await client.query(
+    `SELECT DISTINCT ON (m.support_case_id) m.support_case_id AS case_id,m.sent_at,m.read_at,f.display_name AS from_name
+     FROM staff_messages m JOIN people f ON f.id=m.from_person_id
+     WHERE m.generation_id=$1 AND m.support_case_id=ANY($2::uuid[]) ORDER BY m.support_case_id,m.sent_at DESC`,
+    [generation, caseIds]
+  );
+  for (const row of rows.rows) {
+    const { case_id, ...reminder } = row;
+    out.set(case_id, reminder);
+  }
+  return out;
+}
+
 // services/core-api/lib/experience-queries.ts
 async function requireExperienceStudent(client, generation, actor, id) {
   external_exports.string().uuid().parse(id);
@@ -30303,7 +30373,10 @@ async function experienceOverview(actor) {
       "SELECT id,term_id,opens_at,closes_at,status,revision FROM registration_windows WHERE generation_id=$1 AND department_id=$2",
       [gen, actor.departmentId]
     )).rows : [];
-    const meetings = ["faculty", "hod"].includes(actor.role) ? await meetingStatus(client, gen, actor) : [];
+    const statuses = ["faculty", "hod"].includes(actor.role) ? await meetingStatus(client, gen, actor) : [];
+    const reminders = await remindersByCase(client, gen, statuses.map((row) => row.case_id));
+    const meetings = statuses.map((row) => ({ ...row, reminder: reminders.get(row.case_id) ?? null }));
+    const messages = actor.role === "faculty" ? await receivedMessages(client, gen, actor.personId) : [];
     return {
       actor: {
         role: actor.role,
@@ -30321,6 +30394,7 @@ async function experienceOverview(actor) {
       grading,
       followups,
       meetings,
+      messages,
       windows,
       counts: {
         students: students.length,
@@ -30331,7 +30405,8 @@ async function experienceOverview(actor) {
         overdue_followups: followups.filter((f) => f.overdue).length,
         draft_courses: courses.filter((c) => c.status === "draft").length,
         meetings_pending: meetings.filter((m) => !m.meeting).length,
-        meetings_past_deadline: meetings.filter((m) => m.stage === "past_deadline").length
+        meetings_past_deadline: meetings.filter((m) => m.stage === "past_deadline").length,
+        unread_messages: messages.filter((m) => !m.read_at).length
       }
     };
   });
@@ -30830,6 +30905,19 @@ var experienceCommandSchema = external_exports.discriminatedUnion("action", [
     reasons: external_exports.array(external_exports.string().trim().min(1).max(80)).max(10),
     note: external_exports.string().trim().max(3e3).default(""),
     agreedNextStep: external_exports.string().trim().max(1e3).default("")
+  }).strict(),
+  external_exports.object({
+    // The department head asks a mentor why the conversation about an AI report has
+    // not been submitted (staff-messages.ts): the standard reminder plus an optional
+    // note. Nothing is ever sent automatically.
+    action: external_exports.literal("send-message"),
+    supportCaseId: uuid3,
+    note: external_exports.string().trim().max(NOTE_MAX).default("")
+  }).strict(),
+  external_exports.object({
+    // The recipient marks a message from the department head as read.
+    action: external_exports.literal("mark-message-read"),
+    messageId: uuid3
   }).strict(),
   external_exports.object({
     action: external_exports.literal("save-attendance"),
@@ -31426,6 +31514,48 @@ async function experienceCommand(actor, commandId, raw) {
         followupOutcome: outcome,
         recordedByRole: actor.role
       };
+    } else if (input2.action === "send-message") {
+      requireRole(actor, "hod");
+      if (!await staffMessagesPresent(client))
+        throw new ConflictError("MESSAGES_NOT_READY", STAFF_MESSAGES_NOT_READY);
+      const target = await reminderTarget(client, gen, actor, input2.supportCaseId);
+      studentId = target.studentId;
+      await assertStudentNotFrozen(client, studentId);
+      await facultyInDepartment(client, gen, actor, target.mentorId);
+      const body = messageBody(target.reminder, input2.note);
+      await client.query(
+        "INSERT INTO staff_messages(id,generation_id,from_person_id,to_person_id,student_id,support_case_id,body) VALUES($1,$2,$3,$4,$5,$6,$7)",
+        [id, gen, actor.personId, target.mentorId, studentId, input2.supportCaseId, body]
+      );
+      resource = "staff_messages";
+      facultyId = target.mentorId;
+      updated = {
+        studentId,
+        supportCaseId: input2.supportCaseId,
+        toPersonId: target.mentorId,
+        reportOn: target.reportOn,
+        body
+      };
+    } else if (input2.action === "mark-message-read") {
+      requireRole(actor, "faculty");
+      if (!await staffMessagesPresent(client))
+        throw new ConflictError("MESSAGES_NOT_READY", STAFF_MESSAGES_NOT_READY);
+      const message = (await client.query(
+        "SELECT * FROM staff_messages WHERE generation_id=$1 AND id=$2 FOR UPDATE",
+        [gen, input2.messageId]
+      )).rows[0];
+      if (!message || message.to_person_id !== actor.personId)
+        throw new NotFoundError("Message not found");
+      id = message.id;
+      previous = message;
+      studentId = message.student_id;
+      facultyId = actor.personId;
+      const readAt = message.read_at ?? (await client.query(
+        "UPDATE staff_messages SET read_at=now() WHERE id=$1 RETURNING read_at",
+        [id]
+      )).rows[0].read_at;
+      resource = "staff_messages";
+      updated = { messageId: id, readAt: new Date(readAt).toISOString() };
     } else {
       requireRole(actor, "faculty", "hod");
       await requireLmsCourse(client, gen, actor, input2.offeringId, true);
@@ -31550,7 +31680,7 @@ async function experienceCommand(actor, commandId, raw) {
       actor,
       resource,
       id,
-      "reason" in input2 ? input2.reason : input2.action === "record-meeting" ? "Conversation with the student about the AI report recorded" : "Student submitted the final course selection",
+      "reason" in input2 ? input2.reason : input2.action === "record-meeting" ? "Conversation with the student about the AI report recorded" : input2.action === "send-message" ? "Department head asked the mentor about a conversation not submitted" : input2.action === "mark-message-read" ? "Mentor read the message from the department head" : "Student submitted the final course selection",
       previous,
       updated
     );

@@ -165,6 +165,20 @@ export type MeetingStatus = MeetingTimeline & {
   mentor_name: string | null;
   meeting: MeetingRecord | null;
   checkin: { id: string; due_on: string; status: string } | null;
+  /** The latest reminder the department head sent the mentor about this report. */
+  reminder?: { sent_at: string; read_at: string | null; from_name: string } | null;
+};
+/** A message from the department head to a mentor about a conversation not submitted. */
+export type StaffMessage = {
+  id: string;
+  from_name: string;
+  to_name: string;
+  student_id: string;
+  student_name: string;
+  support_case_id: string | null;
+  body: string;
+  sent_at: string;
+  read_at: string | null;
 };
 export type SupportPlan = {
   id: string;
@@ -317,6 +331,8 @@ export type ExperienceOverview = {
   followups: Followup[];
   /** Mentor and department head: each student's current AI report and the conversation about it. */
   meetings?: MeetingStatus[];
+  /** Mentor: the messages from the department head, newest first. */
+  messages?: StaffMessage[];
   counts: {
     students: number;
     faculty: number;
@@ -329,6 +345,8 @@ export type ExperienceOverview = {
     meetings_pending?: number;
     /** Of those, the ones past the 14-day deadline. */
     meetings_past_deadline?: number;
+    /** Mentor: messages from the department head not yet marked as read. */
+    unread_messages?: number;
   };
   windows: {
     id: string;

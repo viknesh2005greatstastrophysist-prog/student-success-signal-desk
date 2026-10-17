@@ -25,6 +25,7 @@ import {
   stampEvidence,
 } from "./data-refresh/generation";
 import { REPORT_NOTE_PREFIX, meetingStatus, planMeetingFacts, planMeetingFields } from "./meetings";
+import { receivedMessages, remindersByCase } from "./staff-messages";
 
 export async function requireExperienceStudent(
   client: PoolClient,
@@ -195,9 +196,14 @@ export async function experienceOverview(
         : [];
     // Each student's current AI report and the conversation about it (meetings.ts):
     // a mentor's own mentees, the department head's whole department.
-    const meetings = ["faculty", "hod"].includes(actor.role)
+    const statuses = ["faculty", "hod"].includes(actor.role)
       ? await meetingStatus(client, gen, actor)
       : [];
+    // The latest reminder the department head sent about each report (staff-messages.ts).
+    const reminders = await remindersByCase(client, gen, statuses.map((row) => row.case_id));
+    const meetings = statuses.map((row) => ({ ...row, reminder: reminders.get(row.case_id) ?? null }));
+    // A mentor's messages from the department head, newest first.
+    const messages = actor.role === "faculty" ? await receivedMessages(client, gen, actor.personId) : [];
     return {
       actor: {
         role: actor.role,
@@ -215,6 +221,7 @@ export async function experienceOverview(
       grading,
       followups,
       meetings,
+      messages,
       windows,
       counts: {
         students: students.length,
@@ -226,6 +233,7 @@ export async function experienceOverview(
         draft_courses: courses.filter((c) => c.status === "draft").length,
         meetings_pending: meetings.filter((m) => !m.meeting).length,
         meetings_past_deadline: meetings.filter((m) => m.stage === "past_deadline").length,
+        unread_messages: messages.filter((m) => !m.read_at).length,
       },
     };
   });
