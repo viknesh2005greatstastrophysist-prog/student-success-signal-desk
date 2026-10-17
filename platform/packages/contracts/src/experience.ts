@@ -155,6 +155,50 @@ export type Invoice = {
     status: string;
   }[];
 };
+/** Informational records (lab manual 11.4, agents 2 to 4): shown for context with
+ * their source and date, never scored. */
+export type QuizScore = {
+  course: string;
+  title: string;
+  score: number;
+  maximum_score: number;
+  taken_at: string;
+  source: string;
+};
+export type InternshipRecord = {
+  status: string;
+  registered_on: string | null;
+  organisation: string | null;
+  role_title: string | null;
+  evaluation_grade: string | null;
+  evaluation_score: number | null;
+  evaluated_on: string | null;
+  source: string;
+  recorded_on: string;
+};
+export type PlacementRecord = {
+  readiness_score: number | null;
+  readiness_as_of: string | null;
+  applications: number;
+  last_applied_on: string | null;
+  interviews: number;
+  offers: number;
+  last_outcome: string | null;
+  outcome_on: string | null;
+  source: string;
+  recorded_on: string;
+};
+export type InformationalRecords = {
+  scored: false;
+  /** "For context, not scored" */
+  note: string;
+  /** Quiz scores follow the marks grant; null when not shared with this account. */
+  quizzes: QuizScore[] | null;
+  /** Internship and placement records follow the support grant. */
+  career_shared: boolean;
+  internship: InternshipRecord | null;
+  placement: PlacementRecord | null;
+};
 export type StudentDetail = {
   student: PersonSummary;
   grants: string[];
@@ -199,6 +243,8 @@ export type StudentDetail = {
     updated: Record<string, unknown>;
   }[];
   registration: RegistrationSubmission[];
+  /** Quiz scores, internship and placement records, within this account's grants. */
+  informational?: InformationalRecords;
 };
 export type ExperienceOverview = {
   actor: {

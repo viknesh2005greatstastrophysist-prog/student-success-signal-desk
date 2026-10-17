@@ -227,8 +227,8 @@ var require_postgres_date = __commonJS({
     function bcYearToNegativeYear(year) {
       return -(year - 1);
     }
-    function is0To99(num2) {
-      return num2 >= 0 && num2 < 100;
+    function is0To99(num3) {
+      return num3 >= 0 && num3 < 100;
     }
   }
 });
@@ -2395,18 +2395,18 @@ var require_buffer_writer = __commonJS({
           oldBuffer.copy(this.buffer);
         }
       }
-      addInt32(num2) {
+      addInt32(num3) {
         this.ensure(4);
-        this.buffer[this.offset++] = num2 >>> 24 & 255;
-        this.buffer[this.offset++] = num2 >>> 16 & 255;
-        this.buffer[this.offset++] = num2 >>> 8 & 255;
-        this.buffer[this.offset++] = num2 >>> 0 & 255;
+        this.buffer[this.offset++] = num3 >>> 24 & 255;
+        this.buffer[this.offset++] = num3 >>> 16 & 255;
+        this.buffer[this.offset++] = num3 >>> 8 & 255;
+        this.buffer[this.offset++] = num3 >>> 0 & 255;
         return this;
       }
-      addInt16(num2) {
+      addInt16(num3) {
         this.ensure(2);
-        this.buffer[this.offset++] = num2 >>> 8 & 255;
-        this.buffer[this.offset++] = num2 >>> 0 & 255;
+        this.buffer[this.offset++] = num3 >>> 8 & 255;
+        this.buffer[this.offset++] = num3 >>> 0 & 255;
         return this;
       }
       addCString(string4) {
@@ -28769,6 +28769,25 @@ function planSkill(input2) {
     }
   };
 }
+var INFORMATIONAL_NOTE = "For context, not scored";
+var informationalKey = external_exports.string().regex(/^[A-Za-z]{1,40}$/);
+var informationalValue = external_exports.union([
+  external_exports.string().max(160),
+  external_exports.number(),
+  external_exports.boolean(),
+  external_exports.null()
+]);
+var informationalSchema = external_exports.object({
+  scored: external_exports.literal(false),
+  note: external_exports.literal(INFORMATIONAL_NOTE),
+  /** Where the record comes from, and the date it was recorded. */
+  origin: external_exports.string().min(1).max(80),
+  recordedOn: external_exports.string().max(40).nullable(),
+  /** One-record facts (internship, placement). */
+  fields: external_exports.record(informationalKey, informationalValue),
+  /** Repeated records (LMS quiz scores). */
+  items: external_exports.array(external_exports.record(informationalKey, informationalValue)).max(60)
+}).strict();
 var sourceSchema = external_exports.object({
   source: external_exports.enum(sourceNames),
   studentId: external_exports.string().uuid(),
@@ -28780,7 +28799,8 @@ var sourceSchema = external_exports.object({
   values: external_exports.record(
     external_exports.string(),
     external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean()])
-  )
+  ),
+  informational: informationalSchema.optional()
 }).strict();
 function digest(value) {
   const canonical2 = (v) => Array.isArray(v) ? v.map(canonical2) : v && typeof v === "object" ? Object.fromEntries(
@@ -29433,6 +29453,127 @@ var referenceLibrary = [
   }
 ];
 
+// services/core-api/lib/informational.ts
+var QUIZ_ORIGIN = "LMS quiz log";
+var INTERNSHIP_ORIGIN = "Internship cell register";
+var PLACEMENT_ORIGIN = "Placement cell tracker";
+var ready = /* @__PURE__ */ new Set();
+async function informationalTablesPresent(client) {
+  const schema = loadCoreConfig().databaseSchema;
+  if (ready.has(schema)) return true;
+  const row = await client.query(
+    "SELECT to_regclass('lms_quiz_scores') IS NOT NULL AND to_regclass('internship_records') IS NOT NULL AND to_regclass('placement_records') IS NOT NULL AS ok"
+  );
+  if (row.rows[0]?.ok) ready.add(schema);
+  return !!row.rows[0]?.ok;
+}
+var iso = (value) => value == null ? null : value instanceof Date ? value.toISOString() : String(value);
+var num = (value) => value == null ? null : Number(value);
+async function readQuizScores(client, generation, studentId, offeringId = null) {
+  if (!await informationalTablesPresent(client)) return [];
+  const rows = await client.query(
+    `SELECT c.code AS course,q.quiz_title AS title,q.score::text,q.maximum_score::text,q.taken_at,q.source_label AS source
+     FROM lms_quiz_scores q JOIN course_offerings o ON o.id=q.course_offering_id JOIN courses c ON c.id=o.course_id JOIN terms t ON t.id=o.term_id
+     WHERE q.generation_id=$1 AND q.student_id=$2 AND t.active AND ($3::uuid IS NULL OR q.course_offering_id=$3::uuid)
+     ORDER BY c.code,q.taken_at,q.quiz_title`,
+    [generation, studentId, offeringId]
+  );
+  return rows.rows.map((r) => ({
+    course: r.course,
+    title: r.title,
+    score: Number(r.score),
+    maximum_score: Number(r.maximum_score),
+    taken_at: iso(r.taken_at),
+    source: r.source
+  }));
+}
+async function readInternshipRecord(client, generation, studentId) {
+  if (!await informationalTablesPresent(client)) return null;
+  const row = (await client.query(
+    `SELECT status,registered_on::text,organisation,role_title,evaluation_grade,evaluation_score::text,evaluated_on::text,source_label AS source,recorded_on::text
+     FROM internship_records WHERE generation_id=$1 AND student_id=$2`,
+    [generation, studentId]
+  )).rows[0];
+  return row ? { ...row, evaluation_score: num(row.evaluation_score) } : null;
+}
+async function readPlacementRecord(client, generation, studentId) {
+  if (!await informationalTablesPresent(client)) return null;
+  return (await client.query(
+    `SELECT readiness_score,readiness_as_of::text,applications,last_applied_on::text,interviews,offers,last_outcome,outcome_on::text,source_label AS source,recorded_on::text
+     FROM placement_records WHERE generation_id=$1 AND student_id=$2`,
+    [generation, studentId]
+  )).rows[0] ?? null;
+}
+var informational = (origin, recordedOn, fields, items = []) => ({
+  scored: false,
+  note: INFORMATIONAL_NOTE,
+  origin,
+  recordedOn,
+  fields,
+  items
+});
+function quizInformational(rows) {
+  const latest = rows.reduce((at, r) => !at || r.taken_at > at ? r.taken_at : at, null);
+  return informational(
+    QUIZ_ORIGIN,
+    latest ? latest.slice(0, 10) : null,
+    { quizzesRecorded: rows.length },
+    rows.slice(-60).map((r) => ({ course: r.course, title: r.title, score: r.score, maximum: r.maximum_score, takenAt: r.taken_at }))
+  );
+}
+function internshipInformational(row) {
+  return informational(row.source || INTERNSHIP_ORIGIN, row.recorded_on, {
+    status: row.status,
+    registeredOn: row.registered_on,
+    organisation: row.organisation,
+    roleTitle: row.role_title,
+    evaluationGrade: row.evaluation_grade,
+    evaluationScore: row.evaluation_score,
+    evaluatedOn: row.evaluated_on
+  });
+}
+function placementInformational(row) {
+  return informational(row.source || PLACEMENT_ORIGIN, row.recorded_on, {
+    readinessScore: row.readiness_score,
+    readinessAsOf: row.readiness_as_of,
+    applications: row.applications,
+    lastAppliedOn: row.last_applied_on,
+    interviews: row.interviews,
+    offers: row.offers,
+    lastOutcome: row.last_outcome,
+    outcomeOn: row.outcome_on
+  });
+}
+async function sourceInformational(client, generation, studentId, source) {
+  if (!await informationalTablesPresent(client)) return void 0;
+  if (source === "lms") return quizInformational(await readQuizScores(client, generation, studentId));
+  if (source === "internship") {
+    const row2 = await readInternshipRecord(client, generation, studentId);
+    return row2 ? internshipInformational(row2) : void 0;
+  }
+  const row = await readPlacementRecord(client, generation, studentId);
+  return row ? placementInformational(row) : void 0;
+}
+async function experienceInformational(client, generation, studentId, grants) {
+  const quizzesShared = grants.includes("marks");
+  const careerShared = grants.includes("support");
+  return {
+    scored: false,
+    note: INFORMATIONAL_NOTE,
+    quizzes: quizzesShared ? await readQuizScores(client, generation, studentId) : null,
+    career_shared: careerShared,
+    internship: careerShared ? await readInternshipRecord(client, generation, studentId) : null,
+    placement: careerShared ? await readPlacementRecord(client, generation, studentId) : null
+  };
+}
+async function informationalPhrases(client, generation, studentIds) {
+  if (!studentIds.length || !await informationalTablesPresent(client)) return [];
+  return (await client.query(
+    "SELECT DISTINCT organisation FROM internship_records WHERE generation_id=$1 AND student_id=ANY($2::uuid[]) AND organisation IS NOT NULL",
+    [generation, studentIds]
+  )).rows.map((r) => r.organisation);
+}
+
 // services/core-api/lib/lms-queries.ts
 async function requireLmsCourse(client, generation, actor, offeringId, manage = false) {
   external_exports.string().uuid().parse(offeringId);
@@ -29538,7 +29679,9 @@ async function lmsCourseDetail(actor, offeringId) {
       lessons: lessons.rows,
       assignments: assignments.rows,
       submissions: submissions.rows,
-      canManage: actor.role !== "student"
+      canManage: actor.role !== "student",
+      // The student's own quiz scores (informational, never scored).
+      quizzes: actor.role === "student" && actor.studentId ? await readQuizScores(client, generation, actor.studentId, offeringId) : []
     };
   });
 }
@@ -29593,6 +29736,7 @@ async function lmsEvidence(client, generation, studentId) {
     activityMeaning: "Lesson access or assignment submission; access alone does not prove learning",
     overdueAssignmentIds: due.rows.map((r) => r.id).join(",")
   };
+  const informational2 = await sourceInformational(client, generation, studentId, "lms");
   return sourceSchema.parse({
     source: "lms",
     studentId,
@@ -29601,7 +29745,8 @@ async function lmsEvidence(client, generation, studentId) {
     semester: rows.rows[0]?.term ?? FALLBACK_TERM_CODE,
     state: rows.rows.length ? "present" : "missing",
     synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
-    values
+    values,
+    ...informational2 ? { informational: informational2 } : {}
   });
 }
 
@@ -30006,6 +30151,7 @@ async function experienceStudent(actor, id) {
       );
       sources.push(...other.rows);
     }
+    const informational2 = await experienceInformational(client, gen, id, grants);
     const history = actor.role === "hod" ? (await client.query(
       `SELECT r.id,r.resource_type,r.reason,p.display_name AS actor,r.occurred_at,r.previous,r.updated FROM record_changes r JOIN people p ON p.id=r.actor_id WHERE r.generation_id=$1 AND (r.resource_id=$2 OR r.updated->>'student_id'=$2::text OR r.updated->>'studentId'=$2::text) ORDER BY r.occurred_at DESC LIMIT 100`,
       [gen, id]
@@ -30046,7 +30192,8 @@ async function experienceStudent(actor, id) {
       followups,
       sources,
       history,
-      registration
+      registration,
+      informational: informational2
     };
   });
 }
@@ -31172,22 +31319,22 @@ function modelEndpoints(role = "draft", env = process.env) {
   const order = (env.CH11_PROVIDER_ORDER || "groq,gemini,configured,local").split(",").map((k) => k.trim());
   return [...new Set(order)].flatMap((k) => byKind[k] ? [byKind[k]] : []);
 }
-var num = (v, d) => {
+var num2 = (v, d) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : d;
 };
 function budgetFor(endpoint, env = process.env) {
   if (endpoint.kind === "groq")
     return {
-      tpm: num(env.CH11_GROQ_TPM, 8e3),
-      rpm: num(env.CH11_GROQ_RPM, 30),
-      dailyTokens: num(env.CH11_GROQ_DAILY_TOKEN_CAP, 18e4)
+      tpm: num2(env.CH11_GROQ_TPM, 8e3),
+      rpm: num2(env.CH11_GROQ_RPM, 30),
+      dailyTokens: num2(env.CH11_GROQ_DAILY_TOKEN_CAP, 18e4)
     };
   if (endpoint.remote)
     return {
-      tpm: num(env.CH11_REMOTE_TPM, 25e4),
-      rpm: num(env.CH11_REMOTE_RPM, 15),
-      dailyCalls: num(env.CH11_REMOTE_DAILY_CAP, 200)
+      tpm: num2(env.CH11_REMOTE_TPM, 25e4),
+      rpm: num2(env.CH11_REMOTE_RPM, 15),
+      dailyCalls: num2(env.CH11_REMOTE_DAILY_CAP, 200)
     };
   return { tpm: Number.POSITIVE_INFINITY, rpm: Number.POSITIVE_INFINITY };
 }
@@ -31283,7 +31430,7 @@ var BACKGROUND_MAX_WAIT_MS = 7e4;
 var INTERACTIVE_MAX_WAIT_MS = 2e4;
 function maxWaitFor(options, env = process.env) {
   if (options.maxWaitMs !== void 0) return options.maxWaitMs;
-  return options.wait === "interactive" ? num(env.CH11_INTERACTIVE_MAX_WAIT_MS, INTERACTIVE_MAX_WAIT_MS) : num(env.CH11_LIMITER_MAX_WAIT_MS, BACKGROUND_MAX_WAIT_MS);
+  return options.wait === "interactive" ? num2(env.CH11_INTERACTIVE_MAX_WAIT_MS, INTERACTIVE_MAX_WAIT_MS) : num2(env.CH11_LIMITER_MAX_WAIT_MS, BACKGROUND_MAX_WAIT_MS);
 }
 var sleepFor = (ms) => new Promise((r) => setTimeout(r, ms));
 async function postChat(endpoint, request, context, meta3, limiter, options) {
@@ -31489,7 +31636,7 @@ async function callChain(endpoints, build, roster, meta3, options = {}, accept) 
         limiter,
         {
           maxWaitMs: maxWaitFor(options),
-          timeoutMs: options.timeoutMs ?? num(process.env.CH11_MODEL_TIMEOUT_MS, 45e3),
+          timeoutMs: options.timeoutMs ?? num2(process.env.CH11_MODEL_TIMEOUT_MS, 45e3),
           sleep: options.sleep
         }
       );
@@ -33693,7 +33840,16 @@ async function defaultSourceAdapter(actor, studentId, source) {
       );
       if (!record2.rowCount)
         throw new DataBlocked([`${source}: no linked authorized record`]);
-      return sourceSchema.parse(record2.rows[0].record);
+      const informational2 = await sourceInformational(
+        client,
+        generation,
+        studentId,
+        source
+      );
+      return sourceSchema.parse({
+        ...record2.rows[0].record,
+        ...informational2 ? { informational: informational2 } : {}
+      });
     }
     const term = await activeTermCode(client, generation);
     const records = await client.query(
@@ -33918,11 +34074,15 @@ async function loadGuardRoster(client, generation, studentIds, facultyPersonId, 
        UNION ALL SELECT NULL,NULL,NULL,i.name FROM departments d JOIN institutions i ON i.id=d.institution_id WHERE d.id=$4`,
     [generation, studentIds, facultyPersonId, departmentId]
   );
+  const organisations = await informationalPhrases(client, generation, studentIds);
   return {
     names: identities.rows.flatMap((r) => r.name ? [r.name] : []),
     emails: identities.rows.flatMap((r) => r.email ? [r.email] : []),
     registers: identities.rows.flatMap((r) => r.register ? [r.register] : []),
-    phrases: identities.rows.flatMap((r) => r.phrase ? [r.phrase] : [])
+    phrases: [
+      ...identities.rows.flatMap((r) => r.phrase ? [r.phrase] : []),
+      ...organisations
+    ]
   };
 }
 async function loadPlan(actor, id) {

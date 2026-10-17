@@ -1,3 +1,4 @@
+import type { QuizScore } from "./experience";
 export type LmsAttachment = { name: string; data: string };
 export type LmsCourse = {
   id: string;
@@ -61,4 +62,7 @@ export type LmsCourseDetail = {
   assignments: LmsAssignment[];
   submissions: LmsSubmission[];
   canManage: boolean;
+  /** The signed-in student's own quiz scores for this course (informational, never
+   * scored); empty for staff. */
+  quizzes?: QuizScore[];
 };

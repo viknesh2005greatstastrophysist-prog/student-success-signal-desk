@@ -15,6 +15,7 @@ import { getCurrentGeneration } from "./command-ledger";
 import { AuthorizationError, requireRole } from "./security";
 import { NotFoundError } from "./http";
 import { lmsEvidence, requireLmsCourse } from "./lms-queries";
+import { experienceInformational } from "./informational";
 import { awaitingCount } from "./chapter11/awaiting";
 import { activeTermCode } from "./active-term";
 import {
@@ -390,6 +391,9 @@ export async function experienceStudent(
       );
       sources.push(...other.rows);
     }
+    // Quiz scores (marks grant), internship and placement records (support grant):
+    // informational, shown with source and date, never scored.
+    const informational = await experienceInformational(client, gen, id, grants);
     const history =
       actor.role === "hod"
         ? (
@@ -448,6 +452,7 @@ export async function experienceStudent(
       sources,
       history,
       registration,
+      informational,
     };
   });
 }

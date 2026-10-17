@@ -15,6 +15,7 @@ import { withCoreTransaction } from "./db";
 import { NotFoundError } from "./http";
 import { requireRole } from "./security";
 import { DataBlocked, digest, sourceSchema, type Source } from "./chapter11/engine";
+import { readQuizScores, sourceInformational } from "./informational";
 
 export async function requireLmsCourse(
   client: PoolClient,
@@ -139,6 +140,11 @@ export async function lmsCourseDetail(
       assignments: assignments.rows,
       submissions: submissions.rows,
       canManage: actor.role !== "student",
+      // The student's own quiz scores (informational, never scored).
+      quizzes:
+        actor.role === "student" && actor.studentId
+          ? await readQuizScores(client, generation, actor.studentId, offeringId)
+          : [],
     };
   });
 }
@@ -183,7 +189,9 @@ export async function readLmsAttachment(
   });
 }
 
-/** Computed at collection time: raw student work never enters the agent prompt. */
+/** Computed at collection time: raw student work never enters the agent prompt. Quiz
+ * scores ride along as informational evidence (scores and times, never content); the
+ * risk analysis reads `values` only. */
 export async function lmsEvidence(
   client: PoolClient,
   generation: string,
@@ -227,6 +235,7 @@ export async function lmsEvidence(
       "Lesson access or assignment submission; access alone does not prove learning",
     overdueAssignmentIds: due.rows.map((r) => r.id).join(","),
   };
+  const informational = await sourceInformational(client, generation, studentId, "lms");
   return sourceSchema.parse({
     source: "lms",
     studentId,
@@ -236,5 +245,6 @@ export async function lmsEvidence(
     state: rows.rows.length ? "present" : "missing",
     synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
     values,
+    ...(informational ? { informational } : {}),
   });
 }

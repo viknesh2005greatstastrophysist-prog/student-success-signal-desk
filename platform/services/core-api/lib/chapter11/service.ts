@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import type { ActorContext } from "@aura/contracts";
 import { z } from "zod";
 import { lmsEvidence } from "../lms-queries";
+import { informationalPhrases, sourceInformational } from "../informational";
 import { activeTermCode } from "../active-term";
 import { collectSnapshot, withCoreTransaction } from "../db";
 import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
@@ -586,7 +587,18 @@ async function defaultSourceAdapter(
       );
       if (!record.rowCount)
         throw new DataBlocked([`${source}: no linked authorized record`]);
-      return sourceSchema.parse(record.rows[0]!.record);
+      // Registration, status and evaluation (internship) or readiness, applications and
+      // interview outcomes (placement), with source and date: informational, never scored.
+      const informational = await sourceInformational(
+        client,
+        generation,
+        studentId,
+        source,
+      );
+      return sourceSchema.parse({
+        ...record.rows[0]!.record,
+        ...(informational ? { informational } : {}),
+      });
     }
     const term = await activeTermCode(client, generation);
     const records = await client.query<{
@@ -953,11 +965,17 @@ export async function loadGuardRoster(
        UNION ALL SELECT NULL,NULL,NULL,i.name FROM departments d JOIN institutions i ON i.id=d.institution_id WHERE d.id=$4`,
     [generation, studentIds, facultyPersonId, departmentId],
   );
+  // Internship organisations of the scoped students are blocked too (P2-5): no payload
+  // builder includes them, and this keeps it that way.
+  const organisations = await informationalPhrases(client, generation, studentIds);
   return {
     names: identities.rows.flatMap((r) => (r.name ? [r.name] : [])),
     emails: identities.rows.flatMap((r) => (r.email ? [r.email] : [])),
     registers: identities.rows.flatMap((r) => (r.register ? [r.register] : [])),
-    phrases: identities.rows.flatMap((r) => (r.phrase ? [r.phrase] : [])),
+    phrases: [
+      ...identities.rows.flatMap((r) => (r.phrase ? [r.phrase] : [])),
+      ...organisations,
+    ],
   };
 }
 export async function loadPlan(actor: ActorContext, id: string) {

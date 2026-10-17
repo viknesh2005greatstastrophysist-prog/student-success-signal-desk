@@ -262,6 +262,37 @@ export function planSkill(input: PlanInput) {
   };
 }
 
+/** Caption for informational evidence wherever it is shown. */
+export const INFORMATIONAL_NOTE = "For context, not scored";
+const informationalKey = z.string().regex(/^[A-Za-z]{1,40}$/);
+const informationalValue = z.union([
+  z.string().max(160),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
+/** Informational evidence (spec conformance P2-5, lab manual 11.4 agents 2 to 4): the
+ * LMS agent's quiz scores, the internship agent's registration, status and evaluation,
+ * the placement agent's readiness, application activity and interview outcomes, each
+ * with its source and date. It travels with the source so the mentor sees the fuller
+ * picture, but it is never scored: `riskAnalysis` reads `values` only, no policy has a
+ * threshold for it, and the egress guard sends `values` metrics only, so none of it
+ * (an organisation name least of all) reaches a remote model. Optional, so evidence
+ * captured before it existed stays valid. */
+export const informationalSchema = z
+  .object({
+    scored: z.literal(false),
+    note: z.literal(INFORMATIONAL_NOTE),
+    /** Where the record comes from, and the date it was recorded. */
+    origin: z.string().min(1).max(80),
+    recordedOn: z.string().max(40).nullable(),
+    /** One-record facts (internship, placement). */
+    fields: z.record(informationalKey, informationalValue),
+    /** Repeated records (LMS quiz scores). */
+    items: z.array(z.record(informationalKey, informationalValue)).max(60),
+  })
+  .strict();
+export type Informational = z.infer<typeof informationalSchema>;
 export const sourceSchema = z
   .object({
     source: z.enum(sourceNames),
@@ -275,6 +306,7 @@ export const sourceSchema = z
       z.string(),
       z.union([z.string(), z.number(), z.boolean()]),
     ),
+    informational: informationalSchema.optional(),
   })
   .strict();
 export type Source = z.infer<typeof sourceSchema>;
@@ -324,6 +356,9 @@ export function validateEvidence(
   semester: string,
 ) {
   const failures: string[] = [];
+  // `informational` (quiz scores, internship and placement detail) is accepted as part
+  // of the source contract and has no threshold here, so its values never block a review
+  // or raise a flag; only a malformed block fails, like any other contract violation.
   for (const name of sourceNames) {
     const parsed = sourceSchema.safeParse(evidence[name]);
     if (!parsed.success) {
