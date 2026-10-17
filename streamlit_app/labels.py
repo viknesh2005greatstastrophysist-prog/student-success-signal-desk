@@ -788,7 +788,7 @@ def meeting_cell(row: dict[str, Any] | None, *, for_mentor: bool = True) -> str:
 def college_day(raw: Any) -> str:
     """A timestamp as its calendar day in India ("17 Oct 2026"); a plain date as it is."""
     if not raw:
-        return "—"
+        return nice_date(raw)
     text = str(raw)
     if len(text) <= 10:
         return nice_date(text)
