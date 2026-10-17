@@ -49,7 +49,7 @@ test("isolated Core schema includes the Chapter 11 tables and resets serially", 
     "SELECT count(*)::text AS count FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations'",
     [schema],
   );
-  assert.equal(Number(tableCount.rows[0]?.count), 55); // 54 + device_tokens (migration 012)
+  assert.equal(Number(tableCount.rows[0]?.count), 58); // 54 + device_tokens (012) + quiz, internship and placement records (013)
 
   const completedResets = await pool.query<{ count: string }>(
     `SELECT count(*)::text AS count FROM "${schema}".simulation_resets WHERE completed_at IS NOT NULL`,
