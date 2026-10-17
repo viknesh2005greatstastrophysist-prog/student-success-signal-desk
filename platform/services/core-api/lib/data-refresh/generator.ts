@@ -6,8 +6,9 @@
  * the order of the list), so adding or excluding a student never shifts anyone else.
  *
  * Only generated operations are planned here: marks, course results, LMS submissions
- * and activity, internship and placement records, fee invoices and receipts, and the
- * mentor split. The supplied college attendance (`project_dataset`) and the generated
+ * and activity, internship and placement records, fee invoices and receipts, the
+ * mentor split, and the informational records (quiz scores, internship and placement
+ * detail; never scored, see `planInformational`). The supplied college attendance (`project_dataset`) and the generated
  * attendance sessions and records are never inputs to a write. The students' real
  * attendance is an input only as a weak covariate for marks and engagement.
  */
@@ -132,6 +133,8 @@ export type Plan = {
   invoiceInserts: Array<{ id: string; studentId: string; number: string; description: string; amount: number; paid: number; dueOn: string; status: "due" | "partial" | "paid" }>;
   payments: Array<{ id: string; invoiceId: string; amount: number; provider: string; reference: string; paidBy: string; createdAt: string }>;
   mentorMoves: Array<{ studentId: string; from: string; to: string }>;
+  /** Informational records (P2-5): quiz scores, internship and placement detail. Never scored. */
+  informational: InformationalPlan;
   summary: Record<string, unknown>;
 };
 
@@ -210,6 +213,7 @@ export function planRefresh(input: RefreshInput): Plan {
     assessments: [], reweigh: [], markUpdates: [], markInserts: [], resultUpdates: [],
     submissionUpdates: [], submissionInserts: [], activity: [], sourceUpdates: [],
     invoiceVoids: [], invoiceInserts: [], payments: [], mentorMoves: [], summary: {},
+    informational: { label, seed, asOf: input.asOf, origin: "data_refresh", quizzes: [], internships: [], placements: [], summary: {} },
   };
 
   // ---- Assessments -------------------------------------------------------
@@ -348,6 +352,7 @@ export function planRefresh(input: RefreshInput): Plan {
     internship: { 4: [0.72, 0.20, 0.06, 0.02], 6: [0.15, 0.45, 0.27, 0.13], 8: [0.06, 0.50, 0.24, 0.20] },
     placement: { 4: [0.86, 0.10, 0.03, 0.01], 6: [0.45, 0.33, 0.17, 0.05], 8: [0.08, 0.30, 0.32, 0.30] },
   };
+  const career = new Map<string, InformationalCareer>(); // `${source}:${student}` -> scored state
   for (const s of active) {
     const L = latent.get(s.studentId)!;
     for (const source of ["internship", "placement"] as const) {
@@ -363,6 +368,7 @@ export function planRefresh(input: RefreshInput): Plan {
       const missed = notApplicable ? 0 : u < pOk ? 0 : u < pOk + pOne ? 1 : pick(r, [[2, 0.6], [3, 0.27], [4, 0.13]]);
       const stage = notApplicable ? "not_applicable" : missed === 0 ? "on_track" : missed === 1 ? "one_missed" : "several_missed";
       const base = row.record as { recordId?: string; semester?: string };
+      career.set(`${source}:${s.studentId}`, { state: notApplicable ? "not_applicable" : "present", missed });
       plan.sourceUpdates.push({
         id: row.id, studentId: s.studentId, source,
         record: {
@@ -471,6 +477,18 @@ export function planRefresh(input: RefreshInput): Plan {
     if (to !== s.mentorId) plan.mentorMoves.push({ studentId: s.studentId, from: s.mentorId, to });
   }
 
+  // ---- Informational records (P2-5, never scored) ------------------------
+  plan.informational = planInformational({
+    seed, label, asOf: input.asOf, origin: "data_refresh",
+    courses: input.courses.map((c) => ({ offeringId: c.offeringId, code: c.code })),
+    students: active.map((s) => ({
+      studentId: s.studentId, semester: s.semester, offerings: input.courses.map((c) => c.offeringId),
+      coursePct: Object.fromEntries(input.courses.map((c) => [c.offeringId, coursePct.get(`${s.studentId}:${c.offeringId}`) ?? null])),
+      internship: career.get(`internship:${s.studentId}`) ?? null,
+      placement: career.get(`placement:${s.studentId}`) ?? null,
+    })),
+  });
+
   // ---- Summary ------------------------------------------------------------
   const stat = (xs: number[]) => {
     const m = xs.reduce((a, b) => a + b, 0) / Math.max(xs.length, 1);
@@ -488,6 +506,7 @@ export function planRefresh(input: RefreshInput): Plan {
     mentorLoads: Object.fromEntries(mentors.map((m) => [m.slice(0, 8), loadOf.get(m)])),
     mentorMoves: plan.mentorMoves.length,
     invoices: plan.invoiceInserts.length, receipts: plan.payments.length,
+    informational: plan.informational.summary,
   };
   return plan;
 }
@@ -503,4 +522,218 @@ export function histogram(values: number[], edges: number[]): Record<string, num
     out[k] = (out[k] ?? 0) + 1;
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Informational records (spec conformance P2-5). The lab manual's LMS, internship
+// and placement agents also gather quiz scores; internship registration, status and
+// evaluation; placement readiness, application activity and interview outcomes.
+// They are shown for context and carried in the agents' evidence, but no risk
+// signal, threshold or flag reads them.
+//
+// Same rules as above: pure, deterministic, and each student's draws depend only on
+// that student's key. The values lean on figures the student already has (course
+// percentages and the scored internship and placement records), so a student who
+// missed placement activities does not get a fresh application and a strong student
+// does not get a run of failing quizzes. A data refresh calls this for a future
+// generation; the backfill (informational-apply.ts) calls it for the current one.
+
+export const QUIZ_SOURCE = "LMS quiz log";
+export const INTERNSHIP_SOURCE = "Internship cell register";
+export const PLACEMENT_SOURCE = "Placement cell tracker";
+export const QUIZ_MAX = 10;
+const QUIZZES = [
+  { title: "Quiz 1", daysAgo: 41, shift: 0.3 },
+  { title: "Quiz 2", daysAgo: 27, shift: -0.4 },
+  { title: "Quiz 3", daysAgo: 12, shift: 0 },
+] as const;
+// Fictional host organisations and roles (no real company is named).
+const ORGANISATIONS = [
+  "Kaveri Data Labs", "Malaprabha Software", "Deccan Cloud Systems", "Sahyadri Embedded Works",
+  "Tungabhadra Analytics", "Ghataprabha Fintech", "Western Ghats Robotics", "Varada Health Informatics",
+  "Hubballi Logistics Tech", "Krishna Valley Networks", "Dharwad Agritech Studio", "Shalmala Web Services",
+];
+const ROLES = [
+  "Software engineering intern", "Data analytics intern", "Machine learning intern", "Web development intern",
+  "Embedded systems intern", "Quality assurance intern", "Cloud operations intern", "Mobile app intern",
+];
+export const INTERNSHIP_STATUSES = ["not_registered", "registered", "ongoing", "completed", "withdrawn"] as const;
+export const PLACEMENT_OUTCOMES = ["awaiting_result", "next_round", "not_selected", "offer", "offer_declined"] as const;
+export function evaluationGrade(score: number): string {
+  return score >= 90 ? "O" : score >= 80 ? "A+" : score >= 70 ? "A" : score >= 60 ? "B+" : score >= 55 ? "B" : score >= 50 ? "C" : score >= 40 ? "P" : "F";
+}
+
+export type InformationalCareer = { state: "present" | "missing" | "not_applicable"; missed: number };
+export type InformationalStudent = {
+  studentId: string;
+  semester: number;
+  excluded?: boolean;
+  /** Offerings the student is registered in; quiz scores are made for these only. */
+  offerings: string[];
+  /** Course percentage per offering (weighted marks or the course result). */
+  coursePct: Record<string, number | null | undefined>;
+  /** The scored internship and placement records this student has (state and missed count). */
+  internship: InformationalCareer | null;
+  placement: InformationalCareer | null;
+};
+export type InformationalInput = {
+  seed: string;
+  /** Label of the data generation the records are made for. */
+  label: string;
+  asOf: string;
+  /** Which process writes the rows ("data_refresh" or "informational_backfill"). */
+  origin: string;
+  courses: Array<{ offeringId: string; code: string }>;
+  students: InformationalStudent[];
+};
+export type QuizWrite = { id: string; studentId: string; offeringId: string; title: string; score: number; max: number; takenAt: string };
+export type InternshipWrite = {
+  id: string; studentId: string; status: (typeof INTERNSHIP_STATUSES)[number];
+  registeredOn: string | null; organisation: string | null; roleTitle: string | null;
+  evaluationGrade: string | null; evaluationScore: number | null; evaluatedOn: string | null; recordedOn: string;
+};
+export type PlacementWrite = {
+  id: string; studentId: string; readinessScore: number | null; readinessAsOf: string | null;
+  applications: number; lastAppliedOn: string | null; interviews: number; offers: number;
+  lastOutcome: (typeof PLACEMENT_OUTCOMES)[number] | null; outcomeOn: string | null; recordedOn: string;
+};
+export type InformationalPlan = {
+  label: string; seed: string; asOf: string; origin: string;
+  quizzes: QuizWrite[]; internships: InternshipWrite[]; placements: PlacementWrite[];
+  summary: Record<string, unknown>;
+};
+
+export function planInformational(input: InformationalInput): InformationalPlan {
+  const { seed, label } = input;
+  const asOf = Date.parse(input.asOf);
+  if (!Number.isFinite(asOf)) throw new Error("A valid as-of time is required");
+  const key = (...parts: Array<string | number>) => projectId(seed, `${label}:informational:${parts.join(":")}`);
+  const dayOf = (ms: number) => new Date(Math.min(ms, asOf)).toISOString().slice(0, 10);
+  // A daytime moment (09:30 to 16:30 IST) on the day of `ms`, never later than a day before the as-of time.
+  const daytime = (ms: number, r: Rng) =>
+    Math.min(Math.floor(ms / DAY) * DAY + (4 + Math.floor(r() * 7)) * 3600000 + Math.floor(r() * 60) * 60000, asOf - DAY);
+  const known = new Set(input.courses.map((c) => c.offeringId));
+  const plan: InformationalPlan = { label, seed, asOf: input.asOf, origin: input.origin, quizzes: [], internships: [], placements: [], summary: {} };
+
+  for (const s of input.students) {
+    if (s.excluded) continue;
+    const offerings = [...new Set(s.offerings)].filter((o) => known.has(o)).sort();
+    const pcts = offerings.map((o) => s.coursePct[o]).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    const meanPct = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : 62;
+    const z = clamp((meanPct - 62) / 12, -2.5, 2.5);
+
+    // ---- LMS quiz scores: three short quizzes per course, out of 10 ------
+    for (const offeringId of offerings) {
+      const r = stream(seed, label, "quiz", s.studentId, offeringId);
+      const pct = s.coursePct[offeringId] ?? meanPct;
+      const pMiss = clamp(0.03 + 0.005 * Math.max(0, 60 - pct), 0.02, 0.3);
+      QUIZZES.forEach((quiz, k) => {
+        const missed = r() < pMiss;
+        const level = (pct / 100) * QUIZ_MAX + quiz.shift + normal(r) * 1.15;
+        const when = daytime(asOf - (quiz.daysAgo + (r() - 0.5) * 3) * DAY, r);
+        if (missed) return; // not attempted: no score recorded
+        plan.quizzes.push({
+          id: key("quiz", s.studentId, offeringId, k + 1), studentId: s.studentId, offeringId, title: quiz.title,
+          score: clamp(roundHalf(level), 0, QUIZ_MAX), max: QUIZ_MAX, takenAt: new Date(when).toISOString(),
+        });
+      });
+    }
+
+    // ---- Internship registration, status and evaluation ------------------
+    if (s.internship) {
+      const r = stream(seed, label, "internship-record", s.studentId);
+      const missed = Math.max(0, Math.round(s.internship.missed));
+      const organisation = ORGANISATIONS[Math.floor(r() * ORGANISATIONS.length)]!;
+      const roleTitle = ROLES[Math.floor(r() * ROLES.length)]!;
+      const roll = r();
+      const registeredMs = asOf - (45 + r() * 75) * DAY;
+      const recentMs = asOf - (3 + r() * 20) * DAY;
+      const evalRoll = r();
+      const quality = 80 + 4 * z - 9 * Math.min(missed, 4) + 7 * normal(r);
+      const evalDays = r();
+      const lag = r() * 3 * DAY;
+      if (s.internship.state !== "present") {
+        plan.internships.push({
+          id: key("internship", s.studentId), studentId: s.studentId, status: "not_registered",
+          registeredOn: null, organisation: null, roleTitle: null, evaluationGrade: null, evaluationScore: null, evaluatedOn: null,
+          recordedOn: dayOf(asOf - (1 + evalDays * 12) * DAY),
+        });
+      } else {
+        const status: InternshipWrite["status"] =
+          missed === 0 && roll < (s.semester >= 8 ? 0.3 : 0.12) ? "completed" : missed === 0 && roll > 0.9 ? "registered" : "ongoing";
+        const registered = status === "registered" ? recentMs : registeredMs;
+        // A final evaluation when completed; a mid-term one for some ongoing internships
+        // that have run for at least a month; none yet when only registered.
+        let evaluatedMs: number | null = null;
+        if (status === "completed") evaluatedMs = asOf - (2 + evalDays * 18) * DAY;
+        else if (status === "ongoing" && registered < asOf - 32 * DAY && evalRoll < [0.65, 0.5, 0.35][Math.min(missed, 2)]!)
+          evaluatedMs = registered + 30 * DAY + evalDays * Math.max(0, asOf - 2 * DAY - (registered + 30 * DAY));
+        const score = evaluatedMs === null ? null : clamp(Math.round(quality), 35, 98);
+        plan.internships.push({
+          id: key("internship", s.studentId), studentId: s.studentId, status,
+          registeredOn: dayOf(registered), organisation, roleTitle,
+          evaluationGrade: score === null ? null : evaluationGrade(score), evaluationScore: score,
+          evaluatedOn: evaluatedMs === null ? null : dayOf(evaluatedMs),
+          recordedOn: dayOf(Math.min(Math.max(registered, evaluatedMs ?? 0) + lag, asOf - 0.2 * DAY)),
+        });
+      }
+    }
+
+    // ---- Placement readiness, applications and interview outcomes --------
+    if (s.placement) {
+      const r = stream(seed, label, "placement-record", s.studentId);
+      const missed = Math.max(0, Math.round(s.placement.missed));
+      if (s.placement.state !== "present") {
+        plan.placements.push({
+          id: key("placement", s.studentId), studentId: s.studentId, readinessScore: null, readinessAsOf: null,
+          applications: 0, lastAppliedOn: null, interviews: 0, offers: 0, lastOutcome: null, outcomeOn: null,
+          recordedOn: dayOf(asOf - (1 + r() * 14) * DAY),
+        });
+      } else {
+        const readinessScore = clamp(Math.round(60 + 11 * z - 7 * Math.min(missed, 4) + 9 * normal(r)), 15, 98);
+        const readinessMs = asOf - (2 + r() * 26) * DAY;
+        const base = s.semester >= 8 ? 7 : s.semester >= 6 ? 3 : 1.5;
+        const applications = clamp(Math.round(base * (1 + 0.15 * z) - 1.2 * missed + 2.2 * normal(r)), 0, 25);
+        // Students who missed placement activities applied longer ago (stale activity).
+        const appliedMs = asOf - (1 + r() * 10 + 7 * missed) * DAY;
+        const pInterview = clamp(0.25 + 0.08 * z, 0.05, 0.5);
+        let interviews = 0;
+        for (let k = 0; k < applications; k++) if (r() < pInterview) interviews += 1;
+        const pOffer = clamp((s.semester >= 8 ? 0.22 : 0.1) + 0.08 * z, 0.02, 0.45);
+        let offers = 0;
+        for (let k = 0; k < interviews; k++) if (r() < pOffer) offers += 1;
+        const declined = r() < 0.12;
+        const outcome = pick(r, [["awaiting_result", 0.45], ["not_selected", 0.4], ["next_round", 0.15]] as Array<[PlacementWrite["lastOutcome"], number]>);
+        const outcomeMs = asOf - (1 + r() * 20) * DAY;
+        const lastOutcome: PlacementWrite["lastOutcome"] = interviews === 0 ? null : offers > 0 ? (declined ? "offer_declined" : "offer") : outcome;
+        const latest = Math.max(readinessMs, applications ? appliedMs : 0, lastOutcome ? outcomeMs : 0);
+        plan.placements.push({
+          id: key("placement", s.studentId), studentId: s.studentId, readinessScore, readinessAsOf: dayOf(readinessMs),
+          applications, lastAppliedOn: applications ? dayOf(appliedMs) : null, interviews, offers, lastOutcome,
+          outcomeOn: lastOutcome ? dayOf(outcomeMs) : null, recordedOn: dayOf(Math.min(latest + r() * 2 * DAY, asOf - 0.2 * DAY)),
+        });
+      }
+    }
+  }
+
+  const count = <T>(rows: T[], f: (row: T) => string | null) => {
+    const out: Record<string, number> = {};
+    for (const row of rows) { const k = f(row) ?? "none"; out[k] = (out[k] ?? 0) + 1; }
+    return out;
+  };
+  const present = plan.placements.filter((p) => p.readinessScore !== null);
+  plan.summary = {
+    quizScores: plan.quizzes.length,
+    studentsWithQuizScores: new Set(plan.quizzes.map((q) => q.studentId)).size,
+    quizScorePctMean: plan.quizzes.length ? round1((plan.quizzes.reduce((a, q) => a + q.score / q.max, 0) / plan.quizzes.length) * 100) : null,
+    internshipStatus: count(plan.internships, (i) => i.status),
+    internshipEvaluated: plan.internships.filter((i) => i.evaluationScore !== null).length,
+    placementRecords: plan.placements.length,
+    placementReadiness: histogram(present.map((p) => p.readinessScore!), [0, 40, 50, 60, 70, 80, 90]),
+    placementApplications: histogram(present.map((p) => p.applications), [0, 1, 3, 6, 10]),
+    placementOutcomes: count(present, (p) => p.lastOutcome),
+    interviews: present.reduce((a, p) => a + p.interviews, 0),
+    offers: present.reduce((a, p) => a + p.offers, 0),
+  };
+  return plan;
 }

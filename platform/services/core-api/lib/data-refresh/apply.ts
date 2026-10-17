@@ -15,7 +15,11 @@ import type { PoolClient } from "pg";
 import { digest } from "../chapter11/engine";
 import { getCurrentGeneration, writeCommandLedger } from "../command-ledger";
 import {
+  INTERNSHIP_SOURCE,
+  PLACEMENT_SOURCE,
+  QUIZ_SOURCE,
   projectId,
+  type InformationalPlan,
   type Plan,
   type RefreshInput,
   type RefreshStudent,
@@ -235,6 +239,9 @@ export async function applyRefresh(c: PoolClient, input: Awaited<ReturnType<type
   // Internships and placements
   await revise(c, ctx, "ch11_sources", "career_record", [["record", "jsonb"]], plan.sourceUpdates.map((u) => ({ id: u.id, values: [JSON.stringify(u.record)] })), "");
   note("careerRecordsRevised", plan.sourceUpdates.length);
+  // Informational records (P2-5, never scored): quiz scores, internship and placement detail.
+  const info = await writeInformationalRecords(c, generation, plan.informational, { mode: "revise", ctx });
+  for (const [k, n] of Object.entries(info)) note(k, n);
 
   // Fees: the old unpaid invoice is voided (kept), new invoices and receipts are added.
   await revise(c, ctx, "fee_invoices", "fee_invoice", [["status", "text"], ["description", "text"]],
@@ -307,4 +314,90 @@ export async function supersedeStaleDrafts(
     });
   }
   return { superseded: target.length, keptPending: open.length - target.length };
+}
+
+// ---------------------------------------------------------------------------
+// Informational records (spec conformance P2-5): LMS quiz scores, internship
+// registration and evaluation, placement readiness, applications and interview
+// outcomes. Rows go into the tables of migration 013. When a data refresh meets a
+// record a student already has, the row is revised with its previous image kept in
+// `record_changes`; the backfill leaves such a student exactly as they are. Nothing
+// here writes a scored record, a data generation, an evidence snapshot or a case.
+
+export type InformationalCounts = {
+  quizScoresAdded: number;
+  quizScoresRevised: number;
+  internshipRecordsAdded: number;
+  internshipRecordsRevised: number;
+  placementRecordsAdded: number;
+  placementRecordsRevised: number;
+};
+
+/** What to do with a record a student already has: revise it (a data refresh) or
+ * leave it exactly as it is (the backfill, so a second run changes nothing). */
+export type ExistingRows =
+  | { mode: "revise"; ctx: { generation: string; actor: string; reason: string } }
+  | { mode: "skip" };
+
+export async function writeInformationalRecords(
+  c: PoolClient,
+  generation: string,
+  plan: InformationalPlan,
+  existing: ExistingRows,
+): Promise<InformationalCounts> {
+  const quizRows = (await c.query<{ id: string; student_id: string; course_offering_id: string; quiz_title: string }>(
+    "SELECT id,student_id,course_offering_id,quiz_title FROM lms_quiz_scores WHERE generation_id=$1",
+    [generation],
+  )).rows;
+  const quizId = new Map(quizRows.map((r) => [`${r.student_id}:${r.course_offering_id}:${r.quiz_title}`, r.id]));
+  const quizStudents = new Set(quizRows.map((r) => r.student_id));
+  const internshipId = new Map((await c.query<{ id: string; student_id: string }>(
+    "SELECT id,student_id FROM internship_records WHERE generation_id=$1", [generation])).rows.map((r) => [r.student_id, r.id]));
+  const placementId = new Map((await c.query<{ id: string; student_id: string }>(
+    "SELECT id,student_id FROM placement_records WHERE generation_id=$1", [generation])).rows.map((r) => [r.student_id, r.id]));
+
+  const revising = existing.mode === "revise";
+  // The backfill skips a student who already has any quiz score, so a partly
+  // filled student is never topped up with a second, different set.
+  const quizzes = plan.quizzes.filter((q) => revising || !quizStudents.has(q.studentId));
+  const quizUpdates = revising ? quizzes.filter((q) => quizId.has(`${q.studentId}:${q.offeringId}:${q.title}`)) : [];
+  const quizInserts = quizzes.filter((q) => !quizId.has(`${q.studentId}:${q.offeringId}:${q.title}`));
+  const internships = plan.internships.filter((i) => revising || !internshipId.has(i.studentId));
+  const internshipUpdates = revising ? internships.filter((i) => internshipId.has(i.studentId)) : [];
+  const internshipInserts = internships.filter((i) => !internshipId.has(i.studentId));
+  const placements = plan.placements.filter((p) => revising || !placementId.has(p.studentId));
+  const placementUpdates = revising ? placements.filter((p) => placementId.has(p.studentId)) : [];
+  const placementInserts = placements.filter((p) => !placementId.has(p.studentId));
+
+  const tag = [plan.label, plan.origin];
+  await bulkInsert(c, "lms_quiz_scores",
+    [["id", "uuid"], ["generation_id", "uuid"], ["student_id", "uuid"], ["course_offering_id", "uuid"], ["quiz_title", "text"], ["score", "numeric"], ["maximum_score", "numeric"], ["taken_at", "timestamptz"], ["source_label", "text"], ["data_generation", "text"], ["origin", "text"]],
+    quizInserts.map((q) => [q.id, generation, q.studentId, q.offeringId, q.title, q.score, q.max, q.takenAt, QUIZ_SOURCE, ...tag]));
+  await bulkInsert(c, "internship_records",
+    [["id", "uuid"], ["generation_id", "uuid"], ["student_id", "uuid"], ["status", "text"], ["registered_on", "date"], ["organisation", "text"], ["role_title", "text"], ["evaluation_grade", "text"], ["evaluation_score", "numeric"], ["evaluated_on", "date"], ["source_label", "text"], ["recorded_on", "date"], ["data_generation", "text"], ["origin", "text"]],
+    internshipInserts.map((i) => [i.id, generation, i.studentId, i.status, i.registeredOn, i.organisation, i.roleTitle, i.evaluationGrade, i.evaluationScore, i.evaluatedOn, INTERNSHIP_SOURCE, i.recordedOn, ...tag]));
+  await bulkInsert(c, "placement_records",
+    [["id", "uuid"], ["generation_id", "uuid"], ["student_id", "uuid"], ["readiness_score", "integer"], ["readiness_as_of", "date"], ["applications", "integer"], ["last_applied_on", "date"], ["interviews", "integer"], ["offers", "integer"], ["last_outcome", "text"], ["outcome_on", "date"], ["source_label", "text"], ["recorded_on", "date"], ["data_generation", "text"], ["origin", "text"]],
+    placementInserts.map((p) => [p.id, generation, p.studentId, p.readinessScore, p.readinessAsOf, p.applications, p.lastAppliedOn, p.interviews, p.offers, p.lastOutcome, p.outcomeOn, PLACEMENT_SOURCE, p.recordedOn, ...tag]));
+
+  if (existing.mode === "revise") {
+    const { ctx } = existing;
+    await revise(c, ctx, "lms_quiz_scores", "lms_quiz_score",
+      [["score", "numeric"], ["maximum_score", "numeric"], ["taken_at", "timestamptz"], ["source_label", "text"], ["data_generation", "text"], ["origin", "text"]],
+      quizUpdates.map((q) => ({ id: quizId.get(`${q.studentId}:${q.offeringId}:${q.title}`)!, values: [q.score, q.max, q.takenAt, QUIZ_SOURCE, ...tag] })), "");
+    await revise(c, ctx, "internship_records", "internship_record",
+      [["status", "text"], ["registered_on", "date"], ["organisation", "text"], ["role_title", "text"], ["evaluation_grade", "text"], ["evaluation_score", "numeric"], ["evaluated_on", "date"], ["source_label", "text"], ["recorded_on", "date"], ["data_generation", "text"], ["origin", "text"]],
+      internshipUpdates.map((i) => ({ id: internshipId.get(i.studentId)!, values: [i.status, i.registeredOn, i.organisation, i.roleTitle, i.evaluationGrade, i.evaluationScore, i.evaluatedOn, INTERNSHIP_SOURCE, i.recordedOn, ...tag] })), "");
+    await revise(c, ctx, "placement_records", "placement_record",
+      [["readiness_score", "integer"], ["readiness_as_of", "date"], ["applications", "integer"], ["last_applied_on", "date"], ["interviews", "integer"], ["offers", "integer"], ["last_outcome", "text"], ["outcome_on", "date"], ["source_label", "text"], ["recorded_on", "date"], ["data_generation", "text"], ["origin", "text"]],
+      placementUpdates.map((p) => ({ id: placementId.get(p.studentId)!, values: [p.readinessScore, p.readinessAsOf, p.applications, p.lastAppliedOn, p.interviews, p.offers, p.lastOutcome, p.outcomeOn, PLACEMENT_SOURCE, p.recordedOn, ...tag] })), "");
+  }
+  return {
+    quizScoresAdded: quizInserts.length,
+    quizScoresRevised: quizUpdates.length,
+    internshipRecordsAdded: internshipInserts.length,
+    internshipRecordsRevised: internshipUpdates.length,
+    placementRecordsAdded: placementInserts.length,
+    placementRecordsRevised: placementUpdates.length,
+  };
 }
