@@ -1324,6 +1324,8 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                 ":material/visibility_off: This plan is withdrawn. Saving an outcome keeps it hidden; "
                 "restore an approved version to show it to the student again."
             )
+        else:
+            render_withdraw(selected)
         with st.form("record_outcome", border=False):
             status = pick(
                 "Status",
@@ -1357,6 +1359,56 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                     },
                     "Intervention outcome saved.",
                 )
+
+
+def render_withdraw(plan: dict[str, Any]) -> None:
+    """One click to withdraw a shown plan, with a short reason (spec conformance P3-1).
+    It saves the same outcome as Status "Withdraw plan": the student and the family stop
+    seeing the plan, and it returns only by restoring an approved version."""
+    plan_id = str(plan.get("id"))
+    open_key = f"withdraw_open_{plan_id}"
+    student = labels.pretty_name(plan.get("display_name") or "the student")
+    if st.button(
+        "Withdraw this plan",
+        key=f"withdraw_{plan_id}",
+        icon=":material/undo:",
+    ):
+        st.session_state[open_key] = True
+    if not st.session_state.get(open_key):
+        return
+    with st.form(f"withdraw_form_{plan_id}"):
+        st.markdown(
+            f"**Withdraw the plan for {ui._md_safe(student)}?** The student and the family stop seeing it. "
+            "It comes back only by restoring an approved version."
+        )
+        reason = st.text_input(
+            "Reason for withdrawing",
+            max_chars=1200,
+            placeholder="For example: the student has changed course",
+        )
+        yes, cancel = st.columns(2)
+        with yes:
+            confirmed = st.form_submit_button("Withdraw the plan", type="primary", width="stretch")
+        with cancel:
+            cancelled = st.form_submit_button("Cancel", width="stretch")
+    if cancelled:
+        st.session_state.pop(open_key, None)
+        st.rerun()
+    if confirmed:
+        if len(reason.strip()) < 12:
+            st.error("Enter a reason of at least twelve characters.")
+        else:
+            st.session_state.pop(open_key, None)
+            save_action(
+                "outcome",
+                {
+                    "planId": plan_id,
+                    "expectedRevision": int(plan.get("revision", 0)),
+                    "status": "withdrawn",
+                    "outcome": reason.strip(),
+                },
+                f"Plan withdrawn: {student} and the family no longer see it.",
+            )
 
 
 def check_line(name: str, result: Any) -> str:

@@ -337,4 +337,31 @@ assert "2 students with a plan" in shown and len(buttons) == 2 and "can be revie
 shown, buttons = rereview([stale_plan("a", frozen=True)])
 assert not buttons and "None of these can be reviewed again here. 1 is kept unchanged" in shown, shown
 
+# P3-1: one click to withdraw a shown plan, with a short reason, through the same
+# outcome command as Status "Withdraw plan"; a withdrawn plan offers no button.
+WITHDRAW = run(
+    "def fake_save(action, data, success):\n"
+    "    st.session_state.setdefault('calls', []).append([action, data, success])\n"
+    "ns['save_action'] = fake_save\n"
+    f"ns['render_outcomes']({data({'plans': [{**PLAN_ROWS[0], 'revision': 2, 'outcome': ''}]})}, {{'role': 'faculty'}})"
+)
+assert "Withdraw this plan" in [b.label for b in WITHDRAW.button]
+next(b for b in WITHDRAW.button if b.label == "Withdraw this plan").click().run()
+assert "Withdraw the plan for Fictional Student 1?" in "\n".join(m.value for m in WITHDRAW.markdown)
+next(t for t in WITHDRAW.text_input if t.label == "Reason for withdrawing").set_value("Too short")
+next(b for b in WITHDRAW.button if b.label == "Withdraw the plan").click().run()
+assert "Enter a reason of at least twelve characters." in [e.value for e in WITHDRAW.error]
+assert "calls" not in WITHDRAW.session_state
+next(t for t in WITHDRAW.text_input if t.label == "Reason for withdrawing").set_value("The student has changed course this week")
+next(b for b in WITHDRAW.button if b.label == "Withdraw the plan").click().run()
+assert WITHDRAW.session_state["calls"][-1] == [
+    "outcome",
+    {"planId": "sp1", "expectedRevision": 2, "status": "withdrawn", "outcome": "The student has changed course this week"},
+    "Plan withdrawn: Fictional Student 1 and the family no longer see it.",
+], WITHDRAW.session_state["calls"]
+SHOWN_WITHDRAWN = run(f"ns['render_outcomes']({data({'plans': [PLAN_ROWS[2]]})}, {{'role': 'faculty'}})")
+assert "Withdraw this plan" not in [b.label for b in SHOWN_WITHDRAWN.button], "a withdrawn plan returns only by restore"
+SHOWN_AI = run(f"ns['render_outcomes']({data({'plans': [PLAN_ROWS[0]]})}, {{'role': 'governance'}})")
+assert "Withdraw this plan" not in [b.label for b in SHOWN_AI.button]
+
 print("verify_count_fixes: ok")
