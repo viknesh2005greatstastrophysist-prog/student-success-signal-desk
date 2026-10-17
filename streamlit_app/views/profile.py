@@ -1,4 +1,6 @@
-"""One student's profile for staff: a mentor (own mentees) or the department head (read-only)."""
+"""One student's profile for staff: a mentor (own mentees) or the department head (any
+student in the department). Mentors decide for their mentees; the department head can
+see and act on everything in the department."""
 
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ MENTOR_SECTIONS = [
     "Plans and outcomes",
     "Source records",
 ]
-HOD_SECTIONS = ["Overview", "Attendance", "Marks", "Support plans", "Source records"]
+HOD_SECTIONS = ["Overview", "Attendance", "Marks", "Signals", "Support plans", "Source records"]
 
 
 def student_options(students: list[dict[str, Any]]) -> tuple[list[str], dict[str, str]]:
@@ -215,15 +217,23 @@ def render_profile(student_id: str, role: str) -> None:
                 "Open Reviews to approve, edit or decline.",
                 title="Needs you",
             )
-        if not is_mentor and waiting:
-            # Other roles see that a plan is at the gate, never its content.
-            latest = max(waiting, key=lambda d: str(d.get("drafted_at") or ""))
-            ui.insight(
-                "Support plan drafted, waiting for the mentor",
-                f"The agents flagged this student and {labels.drafted_by(latest.get('mode'), latest.get('model_id'))} "
-                f"drafted a support plan on {labels.nice_time(latest.get('drafted_at'))}. It is waiting for "
-                f"{(mentor.get('name') or 'the assigned mentor')} to approve, edit or decline it; "
-                "only the assigned mentor sees its content.",
+        if role == "hod" and waiting:
+            # The department head reads the draft and decides with the mentor's form
+            # (owner decision, 17 Oct).
+            from views.reviews import render_draft_reviews
+
+            review = load("review_overview")
+            risk_by_student = {
+                str(r.get("studentId")): r
+                for r in review.get("riskView") or []
+                if r.get("latest", True)
+            }
+            render_draft_reviews(
+                {"drafts": waiting},
+                st.session_state.get("actor") or {"role": role},
+                risk_by_student,
+                {student_id: labels.pretty_name(mentor.get("name") or "Not assigned")},
+                show_list=False,
             )
         render_rereview(mine, role=role, key="profile_rereview")
         dataframe(

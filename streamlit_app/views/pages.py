@@ -88,6 +88,7 @@ def pages_for(portal: str) -> list[st.Page]:
                 default=True,
             ),
             _page(hod.students_page, "Students", ":material/groups:", "students"),
+            _page(hod.reviews_page, "Reviews", ":material/fact_check:", "reviews"),
             _page(
                 hod.mentors_page, "Mentors", ":material/supervisor_account:", "mentors"
             ),

@@ -23,6 +23,37 @@ from common import (
     value,
 )
 
+# Who decides (owner decision, 17 Oct): mentors for their mentees, and the
+# department head for every student in the department. The Core enforces the
+# same rule; the AI activity workspace only observes.
+DECIDER_ROLES = ("faculty", "hod")
+SHARED_AUTHORITY = (
+    "Mentors decide for their mentees; the department head can see and act on everything in the department."
+)
+
+
+def decides(actor: dict[str, Any]) -> bool:
+    return actor.get("role") in DECIDER_ROLES
+
+
+def mentor_names(review: dict[str, Any]) -> dict[str, str]:
+    """Mentor id to name, for the mentors who have mentees in this review scope."""
+    return {
+        str(row.get("mentor_id")): labels.pretty_name(row.get("mentor_name") or "Mentor")
+        for row in review.get("students") or []
+        if row.get("mentor_id")
+    }
+
+
+def mentor_of_student(review: dict[str, Any]) -> dict[str, str]:
+    """Student id to their mentor's id."""
+    return {
+        str(value(row, "id", "student_id", default="")): str(row.get("mentor_id"))
+        for row in review.get("students") or []
+        if row.get("mentor_id")
+    }
+
+
 SCORING_FIELDS = {
     "attendanceWeight": ("Attendance weight (points)", 20, 0),
     "markWeight": ("Marks weight (points)", 20, 0),
@@ -36,13 +67,28 @@ SCORING_FIELDS = {
 }
 
 
-def render_policy_form() -> None:
+def render_policy_form(mentors: dict[str, str] | None = None) -> None:
+    """The policy form. With `mentors` (the department head) it first asks which
+    mentor the policy is for; the policy then belongs to that mentor."""
     ui.section(
         "Approve a mentor policy",
-        "These thresholds and weights are exactly what reviews will apply. Only faculty can approve them.",
+        "These thresholds and weights are exactly what reviews will apply. "
+        + (
+            "Choose the mentor the policy is for; it records you as the approver."
+            if mentors is not None
+            else "Mentors approve their own; the department head can approve one for any mentor in the department."
+        ),
         icon=":material/rule:",
     )
     with st.form("approve_policy"):
+        mentor_id = None
+        if mentors is not None:
+            mentor_id = pick(
+                "Mentor",
+                [None, *sorted(mentors, key=lambda m: mentors[m])],
+                format_func=lambda m: "Choose a mentor" if m is None else mentors[m],
+                key="policy_mentor",
+            )
         version = st.text_input(
             "Policy version", max_chars=80, placeholder="For example, Mentor review 1"
         )
@@ -98,7 +144,9 @@ def render_policy_form() -> None:
         submitted = st.form_submit_button("Approve policy", type="primary")
     if submitted:
         values = [attendance_min, mark_min, inactivity_max, medium, high, freshness]
-        if (
+        if mentors is not None and not mentor_id:
+            st.error("Choose the mentor this policy is for.")
+        elif (
             len(version.strip()) < 3
             or any(item is None for item in values)
             or len(rationale.strip()) < 12
@@ -119,10 +167,13 @@ def render_policy_form() -> None:
                 "freshnessDays": int(freshness),
                 **scoring,
             }
+            payload: dict[str, Any] = {"policy": policy, "rationale": rationale.strip()}
+            if mentor_id:
+                payload["facultyId"] = mentor_id
             save_action(
                 "policy_approve",
-                {"policy": policy, "rationale": rationale.strip()},
-                "Mentor policy approved.",
+                payload,
+                f"Policy approved for {mentors[mentor_id]}." if mentor_id and mentors else "Mentor policy approved.",
             )
 
 
@@ -163,9 +214,10 @@ def student_name_map(review: dict[str, Any]) -> dict[str, str]:
 
 def render_policies(review: dict[str, Any], actor: dict[str, Any]) -> None:
     policies = policy_rows(review.get("policies") or [])
+    mentors = mentor_names(review)
     ui.section(
         "Approved mentor policies",
-        "Every review applies one of these faculty-approved policies. Reviews cannot run without one.",
+        "Every review applies one of these approved mentor policies. Reviews cannot run without one.",
         icon=":material/policy:",
     )
     full_rows = [
@@ -183,12 +235,25 @@ def render_policies(review: dict[str, Any], actor: dict[str, Any]) -> None:
                 row.get("Mark threshold (%)"),
                 row.get("Learning inactivity (days)"),
             )
-            groups.setdefault(key, {"row": row, "n": 0})["n"] += 1
+            groups.setdefault(key, {"row": row, "n": 0, "owners": set()})["n"] += 1
+        for row in policies:
+            key = (
+                row.get("Policy version"),
+                row.get("Reason"),
+                row.get("Attendance threshold (%)"),
+                row.get("Mark threshold (%)"),
+                row.get("Learning inactivity (days)"),
+            )
+            if key in groups and mentors.get(str(row.get("owner"))):
+                groups[key]["owners"].add(mentors[str(row.get("owner"))])
         ui.inset_list(
             [
                 {
                     "title": g["row"].get("Policy version"),
-                    "sub": f"{g['row'].get('Reason') or ''}"
+                    "sub": (
+                        f"For {', '.join(sorted(g['owners']))}. " if len(mentors) > 1 and g["owners"] else ""
+                    )
+                    + f"{g['row'].get('Reason') or ''}"
                     + (f" Approved {g['n']} times." if g["n"] > 1 else ""),
                     "end": f"Attendance {g['row'].get('Attendance threshold (%)')}% · Marks {g['row'].get('Mark threshold (%)')}% · Inactive {g['row'].get('Learning inactivity (days)')} days",
                 }
@@ -200,10 +265,11 @@ def render_policies(review: dict[str, Any], actor: dict[str, Any]) -> None:
     if actor.get("role") == "faculty":
         with ui.card("policy_form"):
             render_policy_form()
+    elif actor.get("role") == "hod":
+        with ui.card("policy_form"):
+            render_policy_form(mentors)
     else:
-        st.caption(
-            ":material/lock: Only the assigned faculty mentor can approve a scoring policy."
-        )
+        st.caption(f":material/lock: {SHARED_AUTHORITY}")
 
 
 def policy_text(text: Any, policy_by_id: dict[str, dict[str, Any]]) -> str:
@@ -244,9 +310,9 @@ def ai_unavailable_rows(jobs: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def withheld_reason_count(job: dict[str, Any]) -> int | None:
-    """How many stop reasons the Core kept with the assigned mentor, or None when this
-    account receives the reasons themselves. They can name courses and figures, so
-    the department head and AI activity get only the count (review R-01)."""
+    """How many stop reasons the Core kept with the mentor and the department head, or
+    None when this account receives the reasons themselves. They can name courses and
+    figures, so AI activity gets only the count (review R-01)."""
     if "failure_reason_count" not in job:
         return None
     diagnosis = job.get("failure_diagnosis")
@@ -255,7 +321,7 @@ def withheld_reason_count(job: dict[str, Any]) -> int | None:
 
 
 def reasons_kept_line(count: int) -> str:
-    return f"{count} reason{'s' if count != 1 else ''}, kept with the assigned mentor."
+    return f"{count} reason{'s' if count != 1 else ''}, kept with the mentor and the department head."
 
 
 def render_ai_unavailable(
@@ -331,7 +397,7 @@ def render_plan_scope(
                 f"The plan stays on your **{selected}** until you choose."
             )
             if not can_plan:
-                st.caption("Only the assigned mentor can answer this.")
+                st.caption("Only the mentor or the department head can answer this.")
             else:
                 keep_col, switch_col = st.columns(2)
                 with keep_col:
@@ -410,10 +476,11 @@ GATE_WAITING = {"awaiting_faculty", "awaiting_review", "human_review"}
 
 
 def render_gate_actions(job: dict[str, Any], actor: dict[str, Any], review: dict[str, Any]) -> None:
-    """The yellow "Mentor gate" and "Publish" steps, made actionable. Only the student's
-    assigned mentor can decide (the Core scopes a mentor's jobs to their own students);
-    every other role sees who the run is waiting on. Publishing is part of the mentor's
-    "Approve and publish", so it is never offered on its own."""
+    """The yellow "Mentor gate" and "Publish" steps, made actionable. The student's mentor
+    and the department head can decide (the Core scopes a mentor's jobs to their own
+    students and the department head's to the department); AI activity sees who the
+    run is waiting on. Publishing is part of "Approve and publish", so it is never
+    offered on its own."""
     if str(job.get("status") or "") not in GATE_WAITING or not job.get("support_case_id"):
         return
     student = next(
@@ -422,7 +489,8 @@ def render_gate_actions(job: dict[str, Any], actor: dict[str, Any], review: dict
     )
     mentor = labels.pretty_name(student.get("mentor_name") or "the assigned mentor")
     since = labels.nice_time(job.get("updated_at"))
-    if actor.get("role") == "faculty":
+    role = actor.get("role")
+    if role in DECIDER_ROLES:
         if st.button(
             "Mentor gate · Waiting: open this draft to approve and publish",
             icon=":material/how_to_reg:",
@@ -432,23 +500,23 @@ def render_gate_actions(job: dict[str, Any], actor: dict[str, Any], review: dict
             from views.pages import pages_for
 
             st.session_state["open_gate_case"] = str(job["support_case_id"])
-            target = next((p for p in pages_for("faculty") if p.url_path == "reviews"), None)
+            target = next((p for p in pages_for(str(role)) if p.url_path == "reviews"), None)
             if target is not None:
                 st.switch_page(target)
-        st.caption("Publish follows your approval; nothing reaches the student before it.")
+        st.caption("Publish follows the approval; nothing reaches the student before it.")
         return
     gate, publish = st.columns(2)
     with gate:
         with st.popover("Mentor gate · Waiting", icon=":material/hourglass_top:", width="stretch"):
             st.markdown(f"Waiting on **{mentor}** since {since}.")
             st.caption(
-                "Only the student's assigned mentor can approve or decline this exact draft. "
+                "Only the student's mentor or the department head can approve or decline this exact draft. "
                 "This workspace observes and never decides."
             )
     with publish:
         with st.popover("Publish · Waiting", icon=":material/send:", width="stretch"):
             st.caption(
-                "Publishing happens when the mentor approves. The student and parent see the plan only after that."
+                "Publishing happens when the mentor or the department head approves. The student and parent see the plan only after that."
             )
 
 
@@ -472,9 +540,22 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
     }
     policy_by_id = {row["id"]: row for row in policies if row["id"]}
     plans = review.get("plans") or []
-    # Plans are created, revised, locked, run and paused by the assigned mentor
-    # only; the department head and AI-activity roles observe (the Core enforces it).
-    can_plan = role == "faculty"
+    # Plans are created, revised, locked, run and paused by the mentor or the
+    # department head; the AI-activity role observes (the Core enforces it).
+    can_plan = role in DECIDER_ROLES
+    head = role == "hod"
+    mentors = mentor_names(review)
+    mentor_of = mentor_of_student(review)
+
+    def for_mentor(mentor_id: str | None) -> tuple[list[str], dict[str, dict[str, Any]]]:
+        """The students and policies a plan may use. A policy belongs to one mentor, so
+        the department head first chooses the mentor; a mentor has only their own."""
+        if not head or not mentor_id:
+            return student_options, policy_by_id
+        return (
+            [sid for sid in student_options if mentor_of.get(sid) == mentor_id],
+            {pid: row for pid, row in policy_by_id.items() if str(row.get("owner")) == mentor_id},
+        )
     st.caption(
         ":material/route: **How a review runs:** describe it → answer the planner's questions → "
         "lock the plan → run the agents → decide each draft in the review queue."
@@ -495,15 +576,39 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     "Nothing is drafted by rules: saving will ask you to retry.",
                     icon=":material/cloud_off:",
                 )
+            chosen_mentor = None
+            if head:
+                st.caption(
+                    "A review uses one mentor's approved policy and covers that mentor's students. "
+                    "The plan records the policy and that you started it."
+                )
+                chosen_mentor = pick(
+                    "Mentor",
+                    sorted(mentors, key=lambda m: mentors[m]),
+                    format_func=lambda m: mentors.get(m, "Mentor"),
+                    key="plan_mentor",
+                )
+            create_students, create_policies = for_mentor(chosen_mentor)
+            if head and not create_policies:
+                st.caption(
+                    ":material/policy: This mentor has no approved policy yet. Approve one under Policies first."
+                )
+            if "plan_students" in st.session_state:
+                # A student of another mentor cannot stay selected after the mentor changes.
+                st.session_state["plan_students"] = [
+                    sid for sid in st.session_state["plan_students"] if sid in create_students
+                ]
             with st.form("create_plan", border=False):
                 request_text = st.text_area(
                     "Review request",
                     max_chars=2000,
-                    placeholder="For example: check my mentees whose attendance dropped this month.",
+                    placeholder="For example: check the students whose attendance dropped this month."
+                    if head
+                    else "For example: check my mentees whose attendance dropped this month.",
                 )
                 chosen_students = st.multiselect(
                     "Students in scope",
-                    student_options,
+                    create_students,
                     format_func=lambda item: student_labels.get(item, item),
                     max_selections=50,
                     filter_mode=None,
@@ -523,12 +628,13 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 with right:
                     policy_id = pick(
                         "Approved mentor policy",
-                        [None, *policy_by_id.keys()],
+                        [None, *create_policies.keys()],
                         format_func=lambda item: (
                             "Choose an approved policy"
                             if item is None
-                            else policy_by_id[item]["Policy version"]
+                            else create_policies[item]["Policy version"]
                         ),
+                        key=f"plan_policy_{chosen_mentor or 'own'}",
                     )
                 feedback = st.text_area("Planning notes", max_chars=1000)
                 submitted = st.form_submit_button(
@@ -547,6 +653,8 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     payload["policyId"] = policy_id
                 if len(request_text.strip()) < 3:
                     st.error("Describe the review in at least three characters.")
+                elif head and not policy_id:
+                    st.error("Choose the mentor's approved policy for this review.")
                 else:
                     save_action("plan_save", payload, "Review plan saved.")
 
@@ -652,6 +760,12 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             # revision always opens a fresh form: the feedback box is empty and
             # every field shows the saved values again, never the old typed text.
             form_key = f"revise_plan_{selected_id}_{selected_plan['revision']}_{selector_revision}"
+            # The department head revises within the plan's mentor: that mentor's
+            # students and policies (a mentor's lists are their own already).
+            plan_owner = str((policy_by_id.get(body.get("policyId")) or {}).get("owner") or "") or None
+            revise_students, revise_policies = for_mentor(plan_owner)
+            if head and plan_owner:
+                st.caption(f"This plan uses a policy of {mentors.get(plan_owner, 'the mentor')}.")
             with st.form(form_key, border=False):
                 revised_request = st.text_area(
                     "Revised review request",
@@ -661,11 +775,11 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 )
                 revised_students = st.multiselect(
                     "Revised students in scope",
-                    student_options,
+                    revise_students,
                     default=[
                         sid
                         for sid in body.get("studentIds", [])
-                        if sid in student_options
+                        if sid in revise_students
                     ],
                     format_func=lambda sid: student_labels.get(sid, sid),
                     max_selections=50,
@@ -684,7 +798,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                         ),
                         key=f"{form_key}_focus",
                     )
-                policy_ids = [None, *policy_by_id]
+                policy_ids = [None, *revise_policies]
                 with right:
                     revised_policy = pick(
                         "Revised policy",
@@ -693,7 +807,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                         if body.get("policyId") in policy_ids
                         else 0,
                         format_func=lambda item: (
-                            policy_by_id[item]["Policy version"]
+                            revise_policies[item]["Policy version"]
                             if item
                             else "Choose a policy"
                         ),
@@ -742,7 +856,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             st.caption(
                 ":material/lock: This plan is locked"
                 + (" and paused" if selected_plan.get("paused") else "")
-                + ". Only the assigned mentor can run or pause it."
+                + ". Only the mentor or the department head can run or pause it."
             )
         elif selected_plan.get("status") == "locked":
             paused = bool(selected_plan.get("paused"))
@@ -936,11 +1050,11 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
 
 
 def render_composite_risk(review: dict[str, Any], actor: dict[str, Any]) -> None:
-    if actor.get("role") != "faculty":
+    if not decides(actor):
         return
     ui.section(
         "Composite risk view",
-        "Scores combine the four signals using your approved policy. A flag only opens a review path; it is never a label.",
+        "Scores combine the four signals using the approved mentor policy. A flag only opens a review path; it is never a label.",
     )
     rows = review.get("riskView") or []
     render_earlier_reviews_note(review)
@@ -1055,7 +1169,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     if not plans:
         ui.empty_state(
             "No approved plans yet",
-            "Plans appear here after a mentor approves a draft.",
+            "Plans appear here after a draft is approved.",
         )
         return
     # Every figure below counts the same approved plans by their current status;
@@ -1067,7 +1181,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
                 "label": "Approved plans",
                 "value": outcome["plans"],
                 "icon": ":material/verified:",
-                "help": "Every plan a mentor approved. The cards beside it split the same plans by where each stands now.",
+                "help": "Every approved plan. The cards beside it split the same plans by where each stands now.",
             },
             {
                 "label": "Planned",
@@ -1150,7 +1264,7 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             width="stretch",
         )
     dataframe(log_rows)
-    if actor.get("role") != "faculty":
+    if not decides(actor):
         return
     with ui.card("intervention_update"):
         st.markdown("##### Update an intervention")
@@ -1412,10 +1526,10 @@ def _provenance_rows(
 
 
 def judge_rows(judge: Any, role: str | None = None) -> list[dict[str, str]]:
-    """The judge agent's scores, and its reasons for the assigned mentor only.
+    """The judge agent's scores, and its reasons for the mentor and the department head.
 
-    The reasons name draft sentences and student figures, so the department head
-    and AI activity see the scores alone (the Core withholds the reasons too).
+    The reasons name draft sentences and student figures, so AI activity sees the
+    scores alone (the Core withholds the reasons too).
     """
     if not isinstance(judge, dict):
         return []
@@ -1449,7 +1563,7 @@ def judge_rows(judge: Any, role: str | None = None) -> list[dict[str, str]]:
             ),
         },
     ]
-    for name in labels.JUDGE_DIMENSIONS if role == "faculty" else ():
+    for name in labels.JUDGE_DIMENSIONS if role in DECIDER_ROLES else ():
         if reasons.get(name):
             rows.append({"Step": f"Judge: {name}", "Detail": str(reasons[name])})
     previous = judge.get("previous")
@@ -1638,7 +1752,7 @@ def render_draft_provenance(
             st.caption(
                 f":material/build: {len(repairs)} targeted repair attempt(s) before review."
             )
-        # Only the assigned mentor reaches a draft's contents (render_draft_reviews).
+        # Only the mentor and the department head reach a draft's contents (render_draft_reviews).
         dataframe(
             provenance_rows(
                 validation,
@@ -1692,19 +1806,76 @@ def plan_label(plan: dict[str, Any]) -> str:
     return " · ".join(part for part in parts if part)
 
 
+def risk_cell(risk: dict[str, Any] | None) -> str:
+    """Band and score in one cell, or a dash when the student has no risk score."""
+    if not risk or not risk.get("band"):
+        return "—"
+    score = risk.get("score")
+    return f"{labels.risk_label(risk['band'])} · {score:g}" if isinstance(score, (int, float)) else labels.risk_label(risk["band"])
+
+
+def render_head_draft_list(
+    drafts: list[dict[str, Any]],
+    risk_by_student: dict[str, dict[str, Any]],
+    mentor_by_student: dict[str, str],
+) -> list[dict[str, Any]]:
+    """The department head's drafts at the gate: a mentor filter and one row per student
+    with their mentor. Returns the drafts the filter keeps."""
+    names = sorted({mentor_by_student.get(str(d.get("student_id")), "Not assigned") for d in drafts})
+    chosen = pick(
+        "Mentor",
+        ["All mentors", *names],
+        format_func=lambda item: item,
+        key="head_draft_mentor",
+    )
+    shown = [
+        d
+        for d in drafts
+        if chosen == "All mentors" or mentor_by_student.get(str(d.get("student_id")), "Not assigned") == chosen
+    ]
+    dataframe(
+        [
+            {
+                "Student": labels.pretty_name(d.get("display_name", "Student")),
+                "Register number": d.get("register_number", "Not listed"),
+                "Mentor": mentor_by_student.get(str(d.get("student_id")), "Not assigned"),
+                "Risk": risk_cell(risk_by_student.get(str(d.get("student_id")))),
+                "Drafted by": labels.drafted_by(d.get("mode"), d.get("model_id")),
+                "Drafted": labels.nice_time(d.get("drafted_at")),
+            }
+            for d in shown
+        ],
+        empty="No drafts are waiting for this mentor's students.",
+    )
+    return shown
+
+
 def render_draft_reviews(
     queue: dict[str, Any],
     actor: dict[str, Any],
     risk_by_student: dict[str, dict[str, Any]],
+    mentor_by_student: dict[str, str] | None = None,
+    *,
+    show_list: bool = True,
 ) -> None:
+    """Drafts at the gate and the decision card. The mentor sees their mentees' drafts;
+    the department head sees the department's, with a Mentor column and filter, and
+    decides with the same form. `show_list=False` (a student's profile) skips the list."""
     drafts = queue.get("drafts") or []
-    is_mentor = actor.get("role") == "faculty"
-    render_rereview(drafts, role=str(actor.get("role")), key="drafts_rereview", noun="draft")
+    role = actor.get("role")
+    is_mentor = role == "faculty"
+    is_head = role == "hod"
+    render_rereview(drafts, role=str(role), key="drafts_rereview", noun="draft")
     ui.section(
-        "Drafts at the gate" if is_mentor else "Drafts waiting on mentors",
+        "Drafts at the gate" if decides(actor) else "Drafts waiting on mentors",
         "Drafts the agents prepared for flagged students. Nothing reaches a student or family until you approve it."
         if is_mentor
-        else "Drafts waiting on each student's assigned mentor. Nothing reaches a student or family until that mentor approves it.",
+        else (
+            "Drafts the agents prepared for flagged students in the department. "
+            f"{SHARED_AUTHORITY} Nothing reaches a student or family until a draft is approved."
+            if is_head
+            else "Drafts waiting on each student's mentor. Nothing reaches a student or family until a draft is approved."
+        ),
     )
     if not drafts:
         ui.empty_state(
@@ -1712,16 +1883,20 @@ def render_draft_reviews(
             if is_mentor
             else "Nothing is waiting on a mentor",
             "When a review run drafts support for a flagged student, it appears here for your decision."
-            if is_mentor
-            else "When a review run drafts support for a flagged student, it appears here until the mentor decides.",
+            if decides(actor)
+            else "When a review run drafts support for a flagged student, it appears here until it is decided.",
         )
         if queue.get("legacyDrafts"):
             st.caption(
                 f":material/inventory_2: Older drafts from the retired rule-based path are kept below, read-only ({len(queue['legacyDrafts'])})."
             )
         return
-    if not is_mentor:
-        # Department oversight: who is waiting on a mentor, never the draft's
+    if is_head and show_list:
+        drafts = render_head_draft_list(drafts, risk_by_student, mentor_by_student or {})
+        if not drafts:
+            return
+    if not decides(actor):
+        # Oversight without content: who is waiting on a mentor, never the draft's
         # content, risk score or evidence (the Core does not send them either).
         dataframe(
             [
@@ -1739,14 +1914,20 @@ def render_draft_reviews(
             ]
         )
         st.caption(
-            ":material/lock: One row per student, showing the latest AI draft. Draft contents, risk scores and evidence are visible only to the student's assigned mentor."
+            ":material/lock: One row per student, showing the latest AI draft. Draft contents, risk scores and evidence "
+            "are visible to the student's mentor and the department head."
         )
         return
     if len(drafts) > 1:
         selected = pick(
             "Draft",
             drafts,
-            format_func=lambda row: draft_option_label(row, risk_by_student),
+            format_func=lambda row: draft_option_label(row, risk_by_student)
+            + (
+                f" · {mentor_by_student.get(str(row.get('student_id')), 'no mentor')}"
+                if is_head and mentor_by_student
+                else ""
+            ),
             key="support_draft",
         )
     else:
@@ -1800,7 +1981,11 @@ def render_draft_reviews(
             + "</div>"
         )
         ui.provenance_caption(model_id=selected.get("model_id"))
-        if validation.get("mentorEdited"):
+        if validation.get("editorRole") == "hod":
+            st.caption(
+                ":material/edit: This version includes edits by the department head."
+            )
+        elif validation.get("mentorEdited"):
             st.caption(
                 ":material/edit: This version includes edits by the mentor account."
             )
@@ -1889,7 +2074,7 @@ def render_draft_reviews(
                     if open_fallback
                     else "The latest diagnosis of what is still wrong and the fix that was requested."
                 )
-        if actor.get("role") != "faculty":
+        if not decides(actor):
             st.info("This view is read-only for your role.", icon=":material/visibility:")
             return
         if selected.get("frozen"):
@@ -1909,6 +2094,13 @@ def render_draft_reviews(
         audience = f"{student_name} and " + (
             "their parent" if selected.get("parent_support_access") else "any parent with access"
         )
+        if is_head:
+            mentor = (mentor_by_student or {}).get(str(selected.get("student_id")))
+            st.caption(
+                ":material/badge: You decide as the department head"
+                + (f" for {mentor}'s mentee" if mentor else "")
+                + ". The decision is recorded under your name."
+            )
         with st.form(
             f"decide_draft_{selected['id']}_{selected.get('artifact_id')}", border=False
         ):
@@ -2101,7 +2293,7 @@ def render_legacy_drafts(queue: dict[str, Any], actor: dict[str, Any]) -> None:
     legacy = queue.get("legacyDrafts") or []
     if not legacy:
         return
-    is_mentor = actor.get("role") == "faculty"
+    is_mentor = decides(actor)
     with st.expander(
         f"Legacy drafts ({len(legacy)})", expanded=False, icon=":material/inventory_2:"
     ):

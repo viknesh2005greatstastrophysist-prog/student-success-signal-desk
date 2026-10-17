@@ -805,8 +805,10 @@ def signal_chips(signals: Iterable[dict[str, Any]]) -> str:
 
 
 def html_block(markup: str) -> None:
-    """For markup assembled exclusively from esc()-escaped values."""
-    st.html(markup)
+    """For markup assembled exclusively from esc()-escaped values. Empty markup (for
+    example a student with a score but no signals) draws nothing; st.html refuses it."""
+    if markup:
+        st.html(markup)
 
 
 # ---------------------------------------------------------------------------

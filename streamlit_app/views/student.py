@@ -83,7 +83,7 @@ def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> Non
     heading = "Your support plan" if audience == "student" else "Approved support plan"
     ui.section(
         heading,
-        "Agreed by the assigned mentor. These are the next steps, not a judgement.",
+        "Agreed by the mentor or the department head. These are the next steps, not a judgement.",
     )
     for index, item in enumerate(support):
         plan = item.get("plan") or {}

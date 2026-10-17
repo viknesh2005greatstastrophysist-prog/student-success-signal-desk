@@ -2,7 +2,7 @@
 model or network.
 
 R-01: the judge's written reasons quote draft sentences and student figures, so only
-the assigned mentor (role faculty) sees them; the department head and AI activity see
+the mentor and (owner decision, 17 Oct) the department head see them; AI activity sees
 the scores.
 R-02: a search that matches nothing keeps a selection instead of stopping the page, and
 a cleared "Due in days" cell in "Edit the draft" gives a plain error, not a crash.
@@ -11,8 +11,8 @@ gate and is never offered for a new review.
 R-05: a draft on earlier figures offers no Approve button, and the confirmation and the
 success message name who can actually see an approved plan.
 Batch B2: stop reasons (a blocked data check, a model that did not answer) stay with the
-assigned mentor; the department head and AI activity see "N reasons, kept with the
-assigned mentor". A frozen record's card is headed "Kept unchanged", not a question.
+mentor and the department head; AI activity sees "N reasons, kept with the mentor and the
+department head". A frozen record's card is headed "Kept unchanged", not a question.
 P2-2: in "Edit the draft" the Action and Owner columns are read-only (the Core refuses any
 other catalogue label or owner); the summary and the due days are what a mentor edits."""
 
@@ -43,13 +43,15 @@ def details(rows: list[dict[str, str]]) -> str:
 
 
 # R-01
-assert "Cites 61% attendance" in details(judge_rows(JUDGE, "faculty"))
-for role in ("hod", "governance", None):
+for role in ("faculty", "hod"):
+    assert "Cites 61% attendance" in details(judge_rows(JUDGE, role)), role
+for role in ("governance", None):
     shown = details(judge_rows(JUDGE, role))
     assert "Cites 61% attendance" not in shown, (role, shown)
     assert "mean 4.5 of 5" in shown and "Grounding 4" in shown, (role, shown)
 validation = {"valid": True, "provenance": {"provider": "groq", "model": "qwen", "judge": JUDGE}}
-assert "Cites 61%" not in details(provenance_rows(validation, "model", "groq:qwen", role="hod"))
+assert "Cites 61%" not in details(provenance_rows(validation, "model", "groq:qwen", role="governance"))
+assert "Cites 61%" in details(provenance_rows(validation, "model", "groq:qwen", role="hod"))
 assert "Cites 61%" in details(provenance_rows(validation, "model", "groq:qwen", role="faculty"))
 # the shaped report the Core sends to other roles (repairCount, no repairs list) renders
 shaped = {"valid": True, "repairCount": 2, "provenance": {"provider": "groq", "model": "qwen", "repairs": 2}}
@@ -248,14 +250,15 @@ def workbench_text(jobs: list[dict], role: str) -> str:
     return "\n".join(parts)
 
 
-for role in ("hod", "governance"):
+for role in ("governance",):
     shown = workbench_text(stopped_jobs(shaped=True), role)
-    assert "2 reasons, kept with the assigned mentor." in shown, shown
-    assert "1 reason, kept with the assigned mentor." in shown, shown
+    assert "2 reasons, kept with the mentor and the department head." in shown, shown
+    assert "1 reason, kept with the mentor and the department head." in shown, shown
     assert "CS201" not in shown and "MODEL_HTTP_503" not in shown, shown
-# the assigned mentor still reads the reasons themselves, and no withheld line
-shown = workbench_text(stopped_jobs(shaped=False), "faculty")
-assert "MODEL_HTTP_503" in shown and "CS201" in shown, shown
-assert "kept with the assigned mentor" not in shown, shown
+# the mentor and the department head read the reasons themselves, and no withheld line
+for role in ("faculty", "hod"):
+    shown = workbench_text(stopped_jobs(shaped=False), role)
+    assert "MODEL_HTTP_503" in shown and "CS201" in shown, (role, shown)
+    assert "kept with the mentor" not in shown, shown
 
 print("verify_safety_fixes: ok")

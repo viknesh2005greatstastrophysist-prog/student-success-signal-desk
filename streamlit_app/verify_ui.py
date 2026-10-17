@@ -26,7 +26,7 @@ EXPECTED_PAGES = {
     "student": ["", "courses", "learning", "support-plan", "profile"],
     "parent": ["", "support-plan", "fees", "profile"],
     "faculty": ["", "mentees", "reviews", "classroom"],
-    "hod": ["", "students", "mentors", "policies"],
+    "hod": ["", "students", "reviews", "mentors", "policies"],
     "governance": ["", "agent-graph", "evaluation", "audit"],
     "lms": [""],
 }

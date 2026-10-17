@@ -1,7 +1,8 @@
 """AI activity pages: runs, agent graph, evaluation, audit and replay.
 
 This workspace observes the agents; it never decides. Individual source rows and
-risk scores are not shown here.
+risk scores are not shown here. Mentors decide for their mentees; the department head
+can see and act on everything in the department.
 """
 
 from __future__ import annotations
@@ -162,7 +163,8 @@ def runs_body(actor: dict[str, Any]) -> None:
     )
     with st.expander("How each student is assessed", icon=":material/help:"):
         st.markdown(
-            "1. A mentor starts a review for their students; the planner agent sets it up.\n"
+            "1. A mentor starts a review for their students, or the department head starts one for a mentor's "
+            "students; the planner agent sets it up.\n"
             "2. Collector agents gather the student's attendance (college records), marks, LMS activity, "
             "internship and placement records, and an evidence check confirms they are complete and current.\n"
             "3. The risk agent scores the student against the department's support policy.\n"
@@ -170,10 +172,11 @@ def runs_body(actor: dict[str, Any]) -> None:
             "no model and no replay.\n"
             "5. **Flagged:** specialist agents and an investigator build the case, an AI model drafts a plan, "
             "a validator and a separate judge model check it, and it waits for the mentor.\n"
-            "6. The mentor approves, edits or declines. Students and parents see a plan only after approval.\n\n"
+            "6. The mentor or the department head approves, edits or declines. Students and parents see a plan "
+            "only after approval.\n\n"
             "**Replay** re-checks a saved run from its recorded inputs and compares fingerprints; it does not "
             "call the model again. Each agent's step for a run is under *Plans and traces*. A student's score "
-            "and reasons are shown only to their own mentor."
+            "and reasons are shown only to their mentor and the department head."
         )
     people = {str(s.get("id")): s for s in review.get("students") or []}
     clicked = dataframe(

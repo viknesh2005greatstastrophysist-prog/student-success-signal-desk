@@ -1,4 +1,6 @@
-"""Department head pages: department trends, any student read-only, mentors, policies."""
+"""Department head pages: department trends, any student's profile, reviews, mentors and
+policies. Mentors decide for their mentees; the department head can see and act on
+everything in the department (owner decision, 17 Oct)."""
 
 from __future__ import annotations
 
@@ -10,10 +12,18 @@ import streamlit as st
 
 import labels
 import ui
-from common import dataframe, load, load_many, paged, value
+from common import dataframe, load, load_many, paged, sections, value
 from views.metrics import render_review_trends
 from views.profile import pick_student, render_profile
-from views.reviews import render_policies
+from views.reviews import (
+    SHARED_AUTHORITY,
+    render_draft_reviews,
+    render_legacy_drafts,
+    render_outcomes,
+    render_plan_workbench,
+    render_policies,
+    risk_cell,
+)
 
 
 def mentor_workload(
@@ -127,9 +137,8 @@ def waiting_gap_note(listed: set[str], queue: dict[str, Any]) -> str | None:
 
 
 def render_flagged_students(review: dict[str, Any], queue: dict[str, Any] | None = None) -> None:
-    """Every student whose latest review flagged them, a page at a time, then the
-    reviews that stopped before the risk check. No score, band or draft content:
-    those stay with the student's own mentor."""
+    """Every student whose latest review flagged them, a page at a time, with the risk
+    band and score, then the reviews that stopped before the risk check."""
     from views.operations import latest_per_student
 
     jobs = [j for j in review.get("jobs") or [] if j.get("status") != "queued"]
@@ -160,8 +169,8 @@ def render_flagged_students(review: dict[str, Any], queue: dict[str, Any] | None
     )
     ui.section(
         f"Flagged students ({len(flagged)})",
-        "Every student the agents flagged in their latest review, and where their plan stands. "
-        "Scores, reasons and draft content are visible only to the student's mentor.",
+        "Every student the agents flagged in their latest review, their risk, and where their plan stands. "
+        "Open a student under Students, or a draft under Reviews, for the reasons and the draft.",
     )
     listed = {str(j.get("student_id")) for j in flagged if str(j.get("status")) in AWAITING_OUTCOMES}
     note = waiting_gap_note(listed, queue or {})
@@ -173,6 +182,7 @@ def render_flagged_students(review: dict[str, Any], queue: dict[str, Any] | None
             [
                 {
                     **student(j),
+                    "Risk": risk_cell(j.get("risk") if isinstance(j.get("risk"), dict) else None),
                     "Drafted by": labels.drafted_by(j.get("mode"), j.get("model_id"), j.get("status")),
                     "Reviewed": labels.nice_time(j.get("updated_at") or j.get("created_at")),
                 }
@@ -244,7 +254,8 @@ def overview_page() -> None:
 def students_page() -> None:
     ui.page_header(
         "Students",
-        "Search the department's students and open a read-only profile.",
+        "Search the department's students and open a profile: signals, support plans and drafts, "
+        "with the same decisions a mentor has.",
     )
     students_body()
 
@@ -272,8 +283,8 @@ def mentors_page() -> None:
     )
     render_unassigned_line(overview)
     st.caption(
-        "Wait is measured from when an AI draft reached the mentor's gate until now. "
-        "Decisions made counts approvals and declines. Mentors alone decide; the department head observes."
+        "Wait is measured from when an AI draft reached the gate until now. "
+        f"Decisions made counts approvals and declines. {SHARED_AUTHORITY}"
     )
 
 
@@ -281,6 +292,72 @@ def policies_page() -> None:
     actor = st.session_state.get("actor") or {}
     ui.page_header(
         "Policies",
-        "The thresholds and rules the review agents apply. Mentors approve them; you can read them.",
+        "The thresholds and rules the review agents apply. You can approve one for any mentor in the department.",
     )
     render_policies(load("review_overview"), actor)
+
+
+def reviews_page() -> None:
+    """Drafts across the department, starting a review for a mentor's students,
+    outcomes and policies: the mentor's Reviews, department-wide."""
+    actor = st.session_state.get("actor") or {}
+    ui.page_header(
+        "Reviews",
+        f"AI agents gather evidence, score risk and draft support. {SHARED_AUTHORITY}",
+    )
+    review = load("review_overview")
+    if not review.get("modelConfigured"):
+        ui.insight(
+            "The AI model is not connected",
+            "Drafts cannot be produced until it is. Existing drafts and decisions are not affected.",
+        )
+    reviews_body(actor)
+
+
+@st.fragment
+def reviews_body(actor: dict[str, Any]) -> None:
+    queue, review = load_many([("review_queue", None), ("review_overview", None)])
+    risk_by_student = {
+        str(r.get("studentId")): r
+        for r in review.get("riskView") or []
+        if r.get("latest", True)
+    }
+    people = {str(s.get("id")): s for s in review.get("students") or []}
+    mentor_by_student = {
+        sid: labels.pretty_name(s.get("mentor_name") or "Not assigned") for sid, s in people.items()
+    }
+    awaiting = int(queue.get("awaitingCount", len(queue.get("drafts") or [])))
+    drafts_label = f"Drafts at the gate ({awaiting})"
+    # A click on "Mentor gate" in an agent trace opens that student's draft at the gate.
+    gate_case = st.session_state.pop("open_gate_case", None)
+    if gate_case:
+        st.session_state["head_reviews_section"] = drafts_label
+        st.session_state["head_draft_mentor"] = "All mentors"
+        match = next(
+            (d for d in queue.get("drafts") or [] if str(d.get("id")) == str(gate_case)),
+            None,
+        )
+        if match:
+            st.session_state["support_draft"] = match
+    # "Review again with the latest figures" lands on Start a review with the
+    # student's mentor and the student chosen.
+    again = st.session_state.pop("rereview_student", None)
+    if again:
+        st.session_state["head_reviews_section"] = "Start a review"
+        mentor_id = (people.get(str(again)) or {}).get("mentor_id")
+        if mentor_id:
+            st.session_state["plan_mentor"] = str(mentor_id)
+        st.session_state["plan_students"] = [str(again)]
+    section = sections(
+        [drafts_label, "Start a review", "Outcomes", "Policies"],
+        key="head_reviews_section",
+    )
+    if section.startswith("Drafts"):
+        render_draft_reviews(queue, actor, risk_by_student, mentor_by_student)
+        render_legacy_drafts(queue, actor)
+    elif section == "Start a review":
+        render_plan_workbench(review, actor)
+    elif section == "Outcomes":
+        render_outcomes(queue, actor)
+    else:
+        render_policies(review, actor)

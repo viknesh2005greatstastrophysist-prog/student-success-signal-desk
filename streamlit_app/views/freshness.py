@@ -31,9 +31,9 @@ REREVIEW_BUTTONS = 3
 
 
 def render_rereview(rows: list[dict[str, Any]] | None, *, role: str, key: str, noun: str = "plan") -> None:
-    """One quiet note when any row is on earlier figures, and (mentor only) a button that
-    opens a new review for that student. When some students get no button, a caption
-    says why, so the count and the buttons always agree."""
+    """One quiet note when any row is on earlier figures, and (for the mentor and the
+    department head) a button that opens a new review for that student. When some
+    students get no button, a caption says why, so the count and the buttons always agree."""
     stale = stale_rows(rows)
     if not stale:
         return
@@ -47,7 +47,7 @@ def render_rereview(rows: list[dict[str, Any]] | None, *, role: str, key: str, n
         "Students and families do not see these; they are told the mentor will review again. "
         "The record stays here as history.",
     )
-    if role != "faculty":
+    if role not in ("faculty", "hod"):
         return
     # A frozen record (the Core marks it frozen) is kept unchanged: no new review.
     frozen = [sid for sid, found in by_student.items() if any(r.get("frozen") for r in found)]
@@ -77,7 +77,7 @@ def render_rereview(rows: list[dict[str, Any]] | None, *, role: str, key: str, n
             from views.pages import pages_for
 
             st.session_state["rereview_student"] = student_id
-            target = next((p for p in pages_for("faculty") if p.url_path == "reviews"), None)
+            target = next((p for p in pages_for(role) if p.url_path == "reviews"), None)
             if target is not None:
                 st.switch_page(target)
 

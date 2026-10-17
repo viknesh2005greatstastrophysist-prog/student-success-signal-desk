@@ -27,7 +27,8 @@ PAGES = {portal: {path: title for path, title, _ in rows} for portal, rows in RA
 assert list(PAGES["student"].values()) == ["Overview", "Courses", "Learning", "My support plan", "Profile"], PAGES["student"]
 assert list(PAGES["parent"].values()) == ["Overview", "Support plan and mentor updates", "Fees and receipts", "Profile"]
 assert list(PAGES["faculty"].values()) == ["Today", "Mentees", "Reviews", "Classroom"]
-assert list(PAGES["hod"].values()) == ["Overview", "Students", "Mentors", "Policies"]
+assert list(PAGES["hod"].values()) == ["Overview", "Students", "Reviews", "Mentors", "Policies"]
+assert list(PAGES["hod"]) == ["overview", "students", "reviews", "mentors", "policies"]
 assert list(PAGES["governance"].values()) == ["Runs", "Agent graph", "Evaluation", "Audit and replay"]
 # Every page has its own URL, and each workspace has exactly one landing page.
 for portal, pages in PAGES.items():
@@ -46,7 +47,8 @@ assert "fees" in PAGES["parent"]
 from views.profile import HOD_SECTIONS, MENTOR_SECTIONS  # noqa: E402
 
 assert "Source records" in MENTOR_SECTIONS and "Source records" in HOD_SECTIONS
-assert "Signals" in MENTOR_SECTIONS and "Signals" not in HOD_SECTIONS, "no per-student risk for the department head"
+# Owner decision (17 Oct): the department head sees everything a mentor sees.
+assert "Signals" in MENTOR_SECTIONS and "Signals" in HOD_SECTIONS
 
 # --- Pickers: short lists are segmented; long lists are a drop-down that cannot be typed into.
 SCRIPT = """

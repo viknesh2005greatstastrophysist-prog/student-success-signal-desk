@@ -310,15 +310,15 @@ def render_review_trends(review: dict[str, Any]) -> None:
             "Gaps mean no evaluated students in that band for the cycle."
             + (
                 ""
-                if (st.session_state.get("actor") or {}).get("role") == "faculty"
-                else " Department views show a band average only when at least three students are in it, so no single student's score is exposed."
+                if (st.session_state.get("actor") or {}).get("role") in ("faculty", "hod")
+                else " This workspace shows a band average only when at least three students are in it, so no single student's score is exposed."
             )
         )
 
 
 def render_agent_graph(review: dict[str, Any]) -> None:
     st.caption(
-        "The executor runs this graph for every student. Validation can regenerate at most twice; publication waits for the assigned mentor's approval of the exact draft."
+        "The executor runs this graph for every student. Validation can regenerate at most twice; publication waits for the approval of the exact draft by the student's mentor or the department head."
     )
     jobs = [job for job in review.get("jobs", []) if job.get("node_trace")]
     names = {
