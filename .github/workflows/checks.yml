@@ -61,6 +61,7 @@ jobs:
           RUN_CH11_LEASE_DB_TESTS=1 CORE_DATABASE_SCHEMA=aura_core_test_ch11_lease_ci npx tsx --test tests/chapter11-lease-database.test.ts
           RUN_DEVICE_TOKEN_DB_TESTS=1 CORE_DATABASE_SCHEMA=aura_core_test_device_ci npx tsx --test tests/device-tokens.test.ts
           RUN_CONSISTENCY_DB_TESTS=1 CORE_DATABASE_SCHEMA=aura_core_test_consistency_ci npx tsx --test tests/data-consistency.test.ts
+          RUN_INFORMATIONAL_DB_TESTS=1 CORE_DATABASE_SCHEMA=aura_core_test_informational_ci npx tsx --test tests/informational-database.test.ts
 
   streamlit:
     name: Streamlit offline checks
@@ -89,3 +90,4 @@ jobs:
       - run: python streamlit_app/verify_drafted_by.py
       - run: python streamlit_app/verify_safety_fixes.py
       - run: python streamlit_app/verify_count_fixes.py
+      - run: python streamlit_app/verify_informational_records.py
