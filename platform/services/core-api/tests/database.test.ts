@@ -60,7 +60,7 @@ test("isolated Core schema includes the Chapter 11 tables and resets serially", 
     "SELECT count(DISTINCT trigger_name)::text AS count FROM information_schema.triggers WHERE trigger_schema = $1 AND trigger_name LIKE '%_append_only'",
     [schema],
   );
-  assert.equal(Number(triggerCount.rows[0]?.count), 16);
+  assert.equal(Number(triggerCount.rows[0]?.count), 17); // 16 + support_meetings (014)
 
   const fixtures = await pool.query<{
     generation_id: string; hod_person_id: string; cse_department_id: string; faculty_person_id: string; cse_offering_id: string; ece_offering_id: string;
