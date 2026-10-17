@@ -670,6 +670,14 @@ def dataframe(
 def paged(items: list[Any], key: str, *, per_page: int = 10, noun: str = "students") -> list[Any]:
     """Show a long list a page at a time: returns this page's items and draws
     Previous / Next with "Page 2 of 4 · 35 students", so every item can be reached."""
+    if len(items) == 1:
+        # "1 meeting to record", "1 flagged student": singular for a single item.
+        words = noun.split()
+        for i, word in enumerate(words):
+            if word.endswith("s") and not word.endswith("ss"):
+                words[i] = word[:-1]
+                break
+        noun = " ".join(words)
     pages = max(1, -(-len(items) // per_page))
     page = min(max(int(st.session_state.get(key, 0)), 0), pages - 1)
     st.session_state[key] = page
