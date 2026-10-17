@@ -12,12 +12,14 @@ from bridge import BridgeError
 from common import (
     attachment_payload,
     clear_read_cache,
+    dataframe,
     load,
     pick,
     request,
     save_action,
     select_id,
 )
+from views.sources import quiz_rows
 
 
 def render_lms(actor: dict[str, Any]) -> None:
@@ -357,6 +359,9 @@ def render_lms(actor: dict[str, Any]) -> None:
                             )
                         save_action("lms_command", payload, "Assignment saved.")
 
+    if is_student:
+        render_quiz_scores(detail.get("quizzes"))
+
     if is_student and assignments:
         ui.section("Submit your work", icon=":material/upload_file:")
         submissions_by_assignment = {
@@ -541,6 +546,19 @@ def render_lms(actor: dict[str, Any]) -> None:
                     st.error(str(error))
             except (KeyError, TypeError, ValueError):
                 st.error("The selected file could not be prepared for download.")
+
+
+def render_quiz_scores(quizzes: Any) -> None:
+    """The student's own quiz scores for this course, with the day each was taken."""
+    ui.section(
+        "Your quiz scores",
+        "For your information. Quiz scores are shown for context and do not count towards any support flag.",
+        icon=":material/quiz:",
+    )
+    dataframe(
+        quiz_rows(quizzes if isinstance(quizzes, list) else [], with_course=False),
+        empty="No quiz scores recorded for this course yet.",
+    )
 
 
 def learning_page() -> None:

@@ -17,6 +17,7 @@ from common import (
     sections,
     value,
 )
+from views.sources import render_informational_records
 
 
 def render_course_cards(courses: list[dict[str, Any]]) -> None:
@@ -309,3 +310,4 @@ def profile_page() -> None:
         "Your mentor, your department head and your course teachers can also see your college record. "
         "Your parent or guardian sees the parts the college shares with their account."
     )
+    render_informational_records(detail, heading="Your learning and career records")

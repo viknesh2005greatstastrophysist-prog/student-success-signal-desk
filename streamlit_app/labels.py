@@ -85,6 +85,24 @@ SOURCES = {
     "placement": "Placement records",
 }
 
+# Informational records (quiz scores, internship and placement detail): shown for
+# context with their source and date, never part of a risk score or a flag.
+INFORMATIONAL_NOTE = "For context, not scored"
+INTERNSHIP_STATUS = {
+    "not_registered": "Not registered",
+    "registered": "Registered, not started yet",
+    "ongoing": "In progress",
+    "completed": "Completed",
+    "withdrawn": "Withdrawn",
+}
+PLACEMENT_OUTCOMES = {
+    "awaiting_result": "Waiting for the result",
+    "next_round": "Through to the next round",
+    "not_selected": "Not selected",
+    "offer": "Offer received",
+    "offer_declined": "Offer declined",
+}
+
 ISSUES = {
     "ADVISOR_REVIEW_REQUIRED": "Mentor review required",
     "CATALOGUE_OR_DOMAIN_MISMATCH": "Action outside the approved catalogue",
@@ -261,6 +279,14 @@ def signal_label(code: Any) -> str:
 
 def source_label(code: Any) -> str:
     return SOURCES.get(str(code or ""), humanize(code))
+
+
+def internship_status_label(code: Any) -> str:
+    return INTERNSHIP_STATUS.get(str(code), humanize(code)) if code else "Not recorded"
+
+
+def placement_outcome_label(code: Any) -> str:
+    return PLACEMENT_OUTCOMES.get(str(code), humanize(code)) if code else "No interview yet"
 
 
 def issue_label(code: Any) -> str:

@@ -17,6 +17,7 @@ from common import (
     select_id,
     short_time,
 )
+from views.sources import render_informational_records
 from views.student import (
     attendance_this_term,
     render_course_cards,
@@ -382,3 +383,4 @@ def profile_page() -> None:
     st.caption(
         "The student's mentor, department head and course teachers can also see the student's college record."
     )
+    render_informational_records(detail)

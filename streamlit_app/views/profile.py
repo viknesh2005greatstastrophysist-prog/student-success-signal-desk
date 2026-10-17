@@ -19,7 +19,11 @@ from common import (
     sections,
 )
 from views.freshness import figures_label, render_rereview
-from views.sources import render_source_evidence
+from views.sources import (
+    render_context_fields,
+    render_informational_records,
+    render_source_evidence,
+)
 from views.student import render_course_cards
 
 MENTOR_SECTIONS = [
@@ -192,6 +196,7 @@ def render_profile(student_id: str, role: str) -> None:
     elif section == "Signals":
         review = load("review_overview")
         render_signals(latest_risk(review.get("riskView") or [], student_id))
+        render_context_fields(detail)
     elif section in ("Plans and outcomes", "Support plans"):
         queue = load("review_queue")
         mine = [
@@ -227,4 +232,6 @@ def render_profile(student_id: str, role: str) -> None:
             + (" A drafted plan is waiting for the mentor (above)." if waiting else ""),
         )
     else:
+        render_informational_records(detail)
+        ui.section("College records")
         render_source_evidence(student.get("register_number"), student.get("name"))
