@@ -305,9 +305,9 @@ var require_postgres_interval = __commonJS({
     var NUMBER2 = "([+-]?\\d+)";
     var YEAR = NUMBER2 + "\\s+years?";
     var MONTH = NUMBER2 + "\\s+mons?";
-    var DAY = NUMBER2 + "\\s+days?";
+    var DAY2 = NUMBER2 + "\\s+days?";
     var TIME = "([+-])?([\\d]*):(\\d\\d):(\\d\\d)\\.?(\\d{1,6})?";
-    var INTERVAL = new RegExp([YEAR, MONTH, DAY, TIME].map(function(regexString) {
+    var INTERVAL = new RegExp([YEAR, MONTH, DAY2, TIME].map(function(regexString) {
       return "(" + regexString + ")?";
     }).join("\\s*"));
     var positions = {
@@ -7615,7 +7615,7 @@ var require_lib3 = __commonJS({
 });
 
 // scripts/streamlit-worker.mts
-import { createHash as createHash9, randomBytes as randomBytes5, randomUUID as randomUUID11 } from "node:crypto";
+import { createHash as createHash9, randomBytes as randomBytes5, randomUUID as randomUUID12 } from "node:crypto";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -29901,6 +29901,203 @@ function guardPlansForFamily(rows) {
   return { plans, notice: held && plans.length === 0 ? STUDENT_REREVIEW_NOTICE : null };
 }
 
+// services/core-api/lib/meetings.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+var MEETING_REASONS = [
+  "Health",
+  "Family responsibilities",
+  "Financial pressure",
+  "Transport or distance",
+  "Course difficulty",
+  "Lost motivation or interest",
+  "Part-time work",
+  "Personal or mental-health concern",
+  "Timetable clash",
+  "Other"
+];
+var CHECKIN_NOTE = "Check-in after the support plan";
+var DEFAULT_CHECKIN_DAYS = 7;
+var COLLEGE_TIME_ZONE = "Asia/Kolkata";
+var HEAD_NOTICE_DAYS = 7;
+var DAY = /^\d{4}-\d{2}-\d{2}$/;
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function collegeDate(at = /* @__PURE__ */ new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: COLLEGE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date(at));
+}
+function addDays(day, days) {
+  const date6 = /* @__PURE__ */ new Date(`${day}T00:00:00Z`);
+  date6.setUTCDate(date6.getUTCDate() + days);
+  return date6.toISOString().slice(0, 10);
+}
+function daysBetween(from, to) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 864e5);
+}
+function checkinWindowDays(plan) {
+  const actions2 = plan?.actions;
+  const windows = Array.isArray(actions2) ? actions2.map((action) => Number(action?.dueInDays)).filter((days) => Number.isInteger(days) && days > 0) : [];
+  return windows.length ? Math.min(...windows) : DEFAULT_CHECKIN_DAYS;
+}
+function checkinDueOn(approvedAt, plan) {
+  return addDays(collegeDate(approvedAt), checkinWindowDays(plan));
+}
+function backfillDueOn(approvedAt) {
+  return addDays(collegeDate(approvedAt), DEFAULT_CHECKIN_DAYS);
+}
+function dayLabel(day) {
+  const [year, month, date6] = day.split("-").map(Number);
+  return `${date6} ${MONTHS[(month ?? 1) - 1]} ${year}`;
+}
+function meetingOutcome(metOn) {
+  return `Met on ${dayLabel(metOn)}`;
+}
+function validateMeeting(input2, options = {}) {
+  const today = options.today ?? collegeDate();
+  const metOn = String(input2.metOn ?? "");
+  if (!DAY.test(metOn) || Number.isNaN(Date.parse(`${metOn}T00:00:00Z`)) || (/* @__PURE__ */ new Date(`${metOn}T00:00:00Z`)).toISOString().slice(0, 10) !== metOn)
+    throw new ConflictError("MEETING_DATE_INVALID", "Enter the date you met the student.");
+  if (metOn > today)
+    throw new ConflictError("MEETING_DATE_IN_FUTURE", "The meeting date cannot be in the future.");
+  if (options.approvedOn && metOn < options.approvedOn)
+    throw new ConflictError(
+      "MEETING_BEFORE_PLAN",
+      `The meeting date is before the plan was approved on ${dayLabel(options.approvedOn)}.`
+    );
+  const given = (input2.reasons ?? []).map((reason2) => String(reason2));
+  const unknown2 = given.filter((reason2) => !MEETING_REASONS.includes(reason2));
+  if (unknown2.length)
+    throw new ConflictError("MEETING_REASON_UNKNOWN", "Choose the reasons from the list.");
+  const reasons = MEETING_REASONS.filter((reason2) => given.includes(reason2));
+  if (!reasons.length)
+    throw new ConflictError("MEETING_REASON_REQUIRED", "Choose at least one reason the student gave.");
+  const note = String(input2.note ?? "").trim();
+  if (reasons.includes("Other") && note.length < 3)
+    throw new ConflictError("MEETING_NOTE_REQUIRED", "Add a note saying what the other reason was.");
+  return { metOn, reasons: [...reasons], note, agreedNextStep: String(input2.agreedNextStep ?? "").trim() };
+}
+var ready2 = /* @__PURE__ */ new Set();
+async function meetingTablesPresent(client) {
+  const schema = loadCoreConfig().databaseSchema;
+  if (ready2.has(schema)) return true;
+  const row = await client.query("SELECT to_regclass('support_meetings') IS NOT NULL AS ok");
+  if (row.rows[0]?.ok) ready2.add(schema);
+  return !!row.rows[0]?.ok;
+}
+var MEETINGS_NOT_READY = "Meeting records are not switched on yet: the database update (migration 014) has not run.";
+async function ensurePlanCheckin(client, input2) {
+  const open2 = await client.query(
+    "SELECT id,due_on::text AS due_on,mentor_person_id FROM support_followups WHERE generation_id=$1 AND support_plan_id=$2 AND status<>'completed' ORDER BY due_on LIMIT 1",
+    [input2.generation, input2.planId]
+  );
+  if (open2.rowCount)
+    return { created: false, id: open2.rows[0].id, dueOn: open2.rows[0].due_on, mentorPersonId: open2.rows[0].mentor_person_id };
+  const mentor = (await client.query(
+    "SELECT faculty_person_id FROM mentor_assignments WHERE generation_id=$1 AND student_id=$2",
+    [input2.generation, input2.studentId]
+  )).rows[0]?.faculty_person_id ?? input2.fallbackMentorId;
+  const id = randomUUID2();
+  const row = {
+    id,
+    student_id: input2.studentId,
+    support_plan_id: input2.planId,
+    mentor_person_id: mentor,
+    due_on: input2.dueOn,
+    note: CHECKIN_NOTE,
+    shared: true,
+    status: "planned",
+    outcome: ""
+  };
+  await client.query(
+    "INSERT INTO support_followups(id,generation_id,student_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,true,'planned','')",
+    [id, input2.generation, input2.studentId, input2.planId, mentor, input2.dueOn, CHECKIN_NOTE]
+  );
+  await client.query(
+    "INSERT INTO record_changes(id,generation_id,actor_id,resource_type,resource_id,reason,previous,updated) VALUES($1,$2,$3,'support_followups',$4,$5,NULL,$6::jsonb)",
+    [randomUUID2(), input2.generation, input2.actorPersonId, id, input2.reason, JSON.stringify(row)]
+  );
+  return { created: true, id, dueOn: input2.dueOn, mentorPersonId: mentor };
+}
+async function planMeetingFacts(client, generation, planIds, today = collegeDate()) {
+  const facts = /* @__PURE__ */ new Map();
+  if (!planIds.length) return facts;
+  const base = await client.query(
+    `SELECT p.id AS plan_id,d.decided_at AS approved_at,f.id AS checkin_id,f.due_on::text AS checkin_due_on,f.status AS checkin_status
+     FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id
+     LEFT JOIN LATERAL (SELECT f.id,f.due_on,f.status FROM support_followups f WHERE f.generation_id=p.generation_id AND f.support_plan_id=p.id
+       ORDER BY (f.status<>'completed') DESC,f.due_on DESC LIMIT 1) f ON true
+     WHERE p.generation_id=$1 AND p.id=ANY($2::uuid[])`,
+    [generation, planIds]
+  );
+  const meetings = /* @__PURE__ */ new Map();
+  if (await meetingTablesPresent(client)) {
+    const rows = await client.query(
+      `SELECT DISTINCT ON (m.support_plan_id) m.support_plan_id,m.id,m.followup_id,m.met_on::text AS met_on,m.reasons,m.note,m.agreed_next_step,
+         r.display_name AS recorded_by,m.recorded_at
+       FROM support_meetings m JOIN people r ON r.id=m.recorded_by
+       WHERE m.generation_id=$1 AND m.support_plan_id=ANY($2::uuid[]) ORDER BY m.support_plan_id,m.met_on DESC,m.recorded_at DESC`,
+      [generation, planIds]
+    );
+    for (const row of rows.rows) {
+      const { support_plan_id, ...meeting } = row;
+      meetings.set(support_plan_id, meeting);
+    }
+  }
+  for (const row of base.rows) {
+    const due = row.checkin_due_on ?? (row.approved_at ? backfillDueOn(row.approved_at) : null);
+    facts.set(row.plan_id, {
+      meeting: meetings.get(row.plan_id) ?? null,
+      checkin: row.checkin_id ? { id: row.checkin_id, due_on: row.checkin_due_on, status: row.checkin_status } : null,
+      due_on: due,
+      days_overdue: due ? daysBetween(due, today) : null
+    });
+  }
+  return facts;
+}
+async function meetingStatus(client, generation, actor, today = collegeDate()) {
+  if (actor.role !== "faculty" && actor.role !== "hod") return [];
+  const clock = await loadGenerationClock(client);
+  const plans = await client.query(
+    `SELECT p.id AS plan_id,p.student_id,sp.display_name AS student_name,s.register_number,
+       m.faculty_person_id AS mentor_id,mp.display_name AS mentor_name,d.decided_at AS approved_at,
+       ${caseEvidenceCapturedSql("p.support_case_id")} AS evidence_captured_at
+     FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id AND d.decision='approved'
+     JOIN student_profiles s ON s.id=p.student_id JOIN people sp ON sp.id=s.person_id
+     LEFT JOIN mentor_assignments m ON m.generation_id=p.generation_id AND m.student_id=p.student_id
+     LEFT JOIN people mp ON mp.id=m.faculty_person_id
+     WHERE p.generation_id=$1 AND p.visible_to_student
+       AND (($2::text='hod' AND s.department_id=$3::uuid) OR ($2::text='faculty' AND m.faculty_person_id=$4::uuid))
+     ORDER BY p.created_at DESC`,
+    [generation, actor.role, actor.departmentId ?? null, actor.personId]
+  );
+  const seen = /* @__PURE__ */ new Set();
+  const current = plans.rows.filter((row) => {
+    if (seen.has(row.student_id) || !isCurrentEvidence(clock, row.evidence_captured_at)) return false;
+    seen.add(row.student_id);
+    return true;
+  });
+  const frozen = await frozenStudentIds(client, current.map((row) => row.student_id));
+  const kept = current.filter((row) => !frozen.has(row.student_id));
+  const facts = await planMeetingFacts(client, generation, kept.map((row) => row.plan_id), today);
+  return kept.map((row) => {
+    const fact = facts.get(row.plan_id) ?? { meeting: null, checkin: null, due_on: null, days_overdue: null };
+    return {
+      plan_id: row.plan_id,
+      student_id: row.student_id,
+      student_name: row.student_name,
+      register_number: row.register_number,
+      mentor_id: row.mentor_id,
+      mentor_name: row.mentor_name,
+      approved_at: row.approved_at ? new Date(row.approved_at).toISOString() : null,
+      ...fact,
+      head_notice: !fact.meeting && (fact.days_overdue ?? 0) >= HEAD_NOTICE_DAYS
+    };
+  }).sort((a, b) => (b.days_overdue ?? -Infinity) - (a.days_overdue ?? -Infinity) || a.student_name.localeCompare(b.student_name));
+}
+
 // services/core-api/lib/experience-queries.ts
 async function requireExperienceStudent(client, generation, actor, id) {
   external_exports.string().uuid().parse(id);
@@ -30009,6 +30206,7 @@ async function experienceOverview(actor) {
       "SELECT id,term_id,opens_at,closes_at,status,revision FROM registration_windows WHERE generation_id=$1 AND department_id=$2",
       [gen, actor.departmentId]
     )).rows : [];
+    const meetings = ["faculty", "hod"].includes(actor.role) ? await meetingStatus(client, gen, actor) : [];
     return {
       actor: {
         role: actor.role,
@@ -30025,6 +30223,7 @@ async function experienceOverview(actor) {
       terms,
       grading,
       followups,
+      meetings,
       windows,
       counts: {
         students: students.length,
@@ -30033,7 +30232,8 @@ async function experienceOverview(actor) {
         pending_reviews: status?.pending ?? 0,
         failed_reviews: status?.failed ?? 0,
         overdue_followups: followups.filter((f) => f.overdue).length,
-        draft_courses: courses.filter((c) => c.status === "draft").length
+        draft_courses: courses.filter((c) => c.status === "draft").length,
+        meetings_pending: meetings.filter((m) => !m.meeting).length
       }
     };
   });
@@ -30117,7 +30317,17 @@ async function experienceStudent(actor, id) {
     )).rows.map((row) => stampEvidence(clock, row)) : [];
     let support = [];
     let supportNotice = null;
-    if (privateView) support = supportRows;
+    const meetingFacts = await planMeetingFacts(client, gen, supportRows.map((row) => row.id));
+    if (privateView)
+      support = supportRows.map((row) => {
+        const fact = meetingFacts.get(row.id);
+        return {
+          ...row,
+          meeting: fact?.meeting ?? null,
+          checkin_due_on: fact?.due_on ?? null,
+          checkin_days_overdue: fact?.days_overdue ?? null
+        };
+      });
     else {
       const guarded = guardPlansForFamily(
         supportRows.map((row) => ({ ...row, intervention_outcome: row.intervention_outcome }))
@@ -30127,7 +30337,7 @@ async function experienceStudent(actor, id) {
         delete rest.intervention_status;
         delete rest.intervention_outcome;
         delete rest.evidence_captured_at;
-        return rest;
+        return { ...rest, met_on: meetingFacts.get(row.id)?.meeting?.met_on ?? null };
       });
       supportNotice = guarded.notice;
     }
@@ -30226,10 +30436,10 @@ async function experienceClassroom(actor, id) {
 }
 
 // services/core-api/lib/experience-commands.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 
 // services/core-api/lib/registration-commands.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 var registerInput = external_exports.object({ offeringId: external_exports.string().uuid() });
 async function registerForOffering(actor, commandId, input2, transaction) {
   assertCommandId(commandId);
@@ -30315,7 +30525,7 @@ async function registerForOffering(actor, commandId, input2, transaction) {
       [generationId, actor.studentId, course.id]
     );
     if (clash.rowCount) throw new ConflictError("TIMETABLE_CLASH", `This class overlaps ${clash.rows[0].code}`);
-    const registrationId = existing.rows[0]?.id ?? randomUUID2();
+    const registrationId = existing.rows[0]?.id ?? randomUUID3();
     if (existing.rowCount) {
       await client.query("UPDATE registrations SET status = 'registered', grade = NULL, registered_at = now() WHERE id = $1", [registrationId]);
     } else {
@@ -30515,6 +30725,19 @@ var experienceCommandSchema = external_exports.discriminatedUnion("action", [
     reason
   }).strict(),
   external_exports.object({
+    // Meeting record after a support plan (meetings.ts): the day they met, the
+    // reasons from the fixed list, a note and what was agreed. Completes the
+    // plan's check-in. The audit reason is fixed, so none is typed.
+    action: external_exports.literal("record-meeting"),
+    studentId: uuid3,
+    supportPlanId: uuid3,
+    followupId: uuid3.optional(),
+    metOn: external_exports.string().trim().max(10),
+    reasons: external_exports.array(external_exports.string().trim().min(1).max(80)).max(10),
+    note: external_exports.string().trim().max(3e3).default(""),
+    agreedNextStep: external_exports.string().trim().max(1e3).default("")
+  }).strict(),
+  external_exports.object({
     action: external_exports.literal("save-attendance"),
     ...editable,
     offeringId: uuid3,
@@ -30549,7 +30772,7 @@ async function recordChange(client, generation, actor, resourceType, id, why, pr
   await client.query(
     "INSERT INTO record_changes(id,generation_id,actor_id,resource_type,resource_id,reason,previous,updated) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)",
     [
-      randomUUID3(),
+      randomUUID4(),
       generation,
       actor.personId,
       resourceType,
@@ -30601,7 +30824,7 @@ async function experienceCommand(actor, commandId, raw) {
         receipt: prior.receipt
       };
     }
-    let id = randomUUID3();
+    let id = randomUUID4();
     let previous = null;
     let updated = {};
     let resource = input2.action;
@@ -30650,12 +30873,12 @@ async function experienceCommand(actor, commandId, raw) {
       previous = registrations.rows;
       for (const r of registrations.rows)
         if (!input2.offeringIds.includes(r.course_offering_id))
-          await withdrawRegistration(actor, r.id, randomUUID3(), client);
+          await withdrawRegistration(actor, r.id, randomUUID4(), client);
       for (const o of offerings.rows)
         if (!registrations.rows.some((r) => r.course_offering_id === o.id))
           await registerForOffering(
             actor,
-            randomUUID3(),
+            randomUUID4(),
             { offeringId: o.id },
             client
           );
@@ -30752,7 +30975,7 @@ async function experienceCommand(actor, commandId, raw) {
         [gen, input2.termId]
       );
       if (!term.rowCount) throw new NotFoundError("Semester not found");
-      let courseId = randomUUID3();
+      let courseId = randomUUID4();
       id = input2.id ?? id;
       if (input2.id) {
         const row = (await client.query(
@@ -30863,7 +31086,7 @@ async function experienceCommand(actor, commandId, raw) {
       );
       await client.query(
         "INSERT INTO faculty_assignments(id,generation_id,faculty_person_id,course_offering_id,assigned_by_person_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(generation_id,faculty_person_id,course_offering_id) DO UPDATE SET active=true,assigned_by_person_id=$5,assigned_at=now()",
-        [randomUUID3(), gen, facultyId, id, actor.personId]
+        [randomUUID4(), gen, facultyId, id, actor.personId]
       );
       await client.query(
         "DELETE FROM timetable_slots WHERE course_offering_id=$1",
@@ -30872,7 +31095,7 @@ async function experienceCommand(actor, commandId, raw) {
       for (const s of input2.slots)
         await client.query(
           "INSERT INTO timetable_slots(id,generation_id,course_offering_id,weekday,starts_at,ends_at,room) VALUES($1,$2,$3,$4,$5,$6,$7)",
-          [randomUUID3(), gen, id, s.weekday, s.startsAt, s.endsAt, s.room]
+          [randomUUID4(), gen, id, s.weekday, s.startsAt, s.endsAt, s.room]
         );
       resource = "course_offerings";
       updated = { ...input2, courseId };
@@ -31041,6 +31264,63 @@ async function experienceCommand(actor, commandId, raw) {
           ]
         );
       updated = { ...input2, studentId };
+    } else if (input2.action === "record-meeting") {
+      requireRole(actor, "faculty", "hod");
+      const { student } = await requireExperienceStudent(client, gen, actor, input2.studentId);
+      studentId = input2.studentId;
+      await assertStudentNotFrozen(client, studentId);
+      if (!await meetingTablesPresent(client))
+        throw new ConflictError("MEETINGS_NOT_READY", MEETINGS_NOT_READY);
+      const plan = (await client.query(
+        "SELECT p.id,d.decided_at AS approved_at FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id AND d.decision='approved' WHERE p.generation_id=$1 AND p.id=$2 AND p.student_id=$3 FOR UPDATE OF p",
+        [gen, input2.supportPlanId, studentId]
+      )).rows[0];
+      if (!plan) throw new NotFoundError("Approved support plan not found for this student");
+      const meeting = validateMeeting(input2, { approvedOn: collegeDate(plan.approved_at) });
+      const checkin = (await client.query(
+        `SELECT f.*,EXISTS(SELECT 1 FROM support_meetings m WHERE m.followup_id=f.id) AS recorded FROM support_followups f
+           WHERE f.generation_id=$1 AND f.student_id=$2 AND f.support_plan_id=$3 AND ($4::uuid IS NULL OR f.id=$4::uuid)
+           AND ($4::uuid IS NOT NULL OR f.status<>'completed') ORDER BY f.due_on LIMIT 1 FOR UPDATE OF f`,
+        [gen, studentId, plan.id, input2.followupId ?? null]
+      )).rows[0];
+      if (input2.followupId && !checkin) throw new NotFoundError("Check-in not found for this plan");
+      if (checkin?.recorded)
+        throw new ConflictError("MEETING_ALREADY_RECORDED", "This check-in already has its meeting record.");
+      const outcome = meetingOutcome(meeting.metOn);
+      let followupId;
+      if (checkin) {
+        followupId = checkin.id;
+        previous = checkin;
+        await client.query(
+          "UPDATE support_followups SET status='completed',outcome=$2,revision=revision+1,updated_at=now() WHERE id=$1",
+          [followupId, outcome]
+        );
+      } else {
+        followupId = randomUUID4();
+        const mentorId = student.mentor_id ?? actor.personId;
+        await client.query(
+          "INSERT INTO support_followups(id,generation_id,student_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,true,'completed',$8)",
+          [followupId, gen, studentId, plan.id, mentorId, meeting.metOn, CHECKIN_NOTE, outcome]
+        );
+      }
+      id = randomUUID4();
+      await client.query(
+        "INSERT INTO support_meetings(id,generation_id,followup_id,support_plan_id,student_id,met_on,reasons,note,agreed_next_step,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10)",
+        [id, gen, followupId, plan.id, studentId, meeting.metOn, meeting.reasons, meeting.note, meeting.agreedNextStep, actor.personId]
+      );
+      resource = "support_meetings";
+      facultyId = student.mentor_id ?? void 0;
+      updated = {
+        studentId,
+        supportPlanId: plan.id,
+        followupId,
+        metOn: meeting.metOn,
+        reasons: meeting.reasons,
+        note: meeting.note,
+        agreedNextStep: meeting.agreedNextStep,
+        followupOutcome: outcome,
+        recordedByRole: actor.role
+      };
     } else {
       requireRole(actor, "faculty", "hod");
       await requireLmsCourse(client, gen, actor, input2.offeringId, true);
@@ -31094,7 +31374,7 @@ async function experienceCommand(actor, commandId, raw) {
         for (const r of input2.records)
           await client.query(
             "INSERT INTO attendance_records(id,generation_id,attendance_session_id,student_id,status,recorded_by_person_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(generation_id,attendance_session_id,student_id) DO UPDATE SET status=$5,recorded_by_person_id=$6,recorded_at=now(),revision=attendance_records.revision+1",
-            [randomUUID3(), gen, id, r.studentId, r.status, actor.personId]
+            [randomUUID4(), gen, id, r.studentId, r.status, actor.personId]
           );
         updated = { ...input2, studentIds: ids };
       } else {
@@ -31147,7 +31427,7 @@ async function experienceCommand(actor, commandId, raw) {
           await client.query(
             "INSERT INTO marks(id,generation_id,assessment_id,student_id,score,feedback,recorded_by_person_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(generation_id,assessment_id,student_id) DO UPDATE SET score=$5,feedback=$6,recorded_by_person_id=$7,recorded_at=now(),revision=marks.revision+1",
             [
-              randomUUID3(),
+              randomUUID4(),
               gen,
               id,
               m.studentId,
@@ -31165,7 +31445,7 @@ async function experienceCommand(actor, commandId, raw) {
       actor,
       resource,
       id,
-      "reason" in input2 ? input2.reason : "Student submitted the final course selection",
+      "reason" in input2 ? input2.reason : input2.action === "record-meeting" ? "Meeting with the student recorded after the support plan" : "Student submitted the final course selection",
       previous,
       updated
     );
@@ -31746,7 +32026,7 @@ async function loadProjectSources(actor) {
 }
 
 // services/core-api/lib/lms-commands.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 var fileSchema = external_exports.object({
   name: external_exports.string().trim().min(1).max(100).regex(
     /^[\p{L}\p{N} ._()\-]+$/u,
@@ -31844,7 +32124,7 @@ async function lmsCommand(actor, commandId, raw) {
       offeringId = input2.offeringId;
       await requireLmsCourse(client, generation, actor, offeringId, true);
       table = input2.action === "save-lesson" ? "lms_lessons" : "lms_assignments";
-      resourceId = input2.id ?? randomUUID4();
+      resourceId = input2.id ?? randomUUID5();
       if (input2.id) {
         const prior = await client.query(
           `SELECT revision FROM ${table} WHERE generation_id=$1 AND id=$2 AND course_offering_id=$3 FOR UPDATE`,
@@ -31950,7 +32230,7 @@ async function lmsCommand(actor, commandId, raw) {
       eventType = "lms.lesson_opened";
       await client.query(
         "INSERT INTO lms_activity(id,generation_id,student_id,course_offering_id,resource_id,kind) VALUES($1,$2,$3,$4,$5,'lesson_opened')",
-        [randomUUID4(), generation, actor.studentId, offeringId, resourceId]
+        [randomUUID5(), generation, actor.studentId, offeringId, resourceId]
       );
     } else if (input2.action === "submit-assignment") {
       requireRole(actor, "student");
@@ -31995,7 +32275,7 @@ async function lmsCommand(actor, commandId, raw) {
           "ALREADY_REVIEWED",
           "Feedback has been published. Contact your faculty member before replacing this work."
         );
-      resourceId = prior.rows[0]?.id ?? randomUUID4();
+      resourceId = prior.rows[0]?.id ?? randomUUID5();
       revision2 = prior.rows[0] ? prior.rows[0].revision + 1 : 0;
       table = "lms_submissions";
       eventType = "lms.assignment_submitted";
@@ -32024,7 +32304,7 @@ async function lmsCommand(actor, commandId, raw) {
         );
       await client.query(
         "INSERT INTO lms_activity(id,generation_id,student_id,course_offering_id,resource_id,kind) VALUES($1,$2,$3,$4,$5,'assignment_submitted')",
-        [randomUUID4(), generation, actor.studentId, offeringId, resourceId]
+        [randomUUID5(), generation, actor.studentId, offeringId, resourceId]
       );
     } else {
       const submission = await client.query(
@@ -32069,7 +32349,7 @@ async function lmsCommand(actor, commandId, raw) {
     if (table !== "lms_activity")
       await client.query(
         `INSERT INTO lms_versions(id,generation_id,resource_type,resource_id,revision,record,actor_id) SELECT $1,$2,$3,$4,$5,to_jsonb(r),$6 FROM ${table} r WHERE id=$4`,
-        [randomUUID4(), generation, table, resourceId, revision2, actor.personId]
+        [randomUUID5(), generation, table, resourceId, revision2, actor.personId]
       );
     const receipt = await writeCommandLedger(client, {
       generationId: generation,
@@ -32095,10 +32375,10 @@ async function lmsCommand(actor, commandId, raw) {
 }
 
 // services/core-api/lib/chapter11/service.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 
 // services/core-api/lib/support-commands.ts
-import { createHash as createHash4, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash4, randomUUID as randomUUID6 } from "node:crypto";
 
 // services/core-api/lib/chapter11/authority.ts
 var REVIEW_ACTOR_ROLES = ["faculty", "hod"];
@@ -32208,6 +32488,7 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
         supportCase: priorCase,
         decision: duplicate.payload.decision,
         plan: duplicate.payload.plan,
+        checkin: duplicate.payload.checkin ?? null,
         duplicate: true,
         receipt: duplicate.receipt
       };
@@ -32250,21 +32531,32 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
         if (!authority.rowCount) throw new ConflictError("POLICY_VALIDATION_REQUIRED", "Faculty policy provenance must be verified before approving this artifact. Revalidate the draft or create a new review.");
       }
     }
-    const decisionId = randomUUID5();
+    const decisionId = randomUUID6();
     await client.query(
       `INSERT INTO faculty_decisions (id, generation_id, support_case_id, agent_artifact_id, faculty_person_id, decision, rationale)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [decisionId, generationId, caseId, input2.artifactId, actor.personId, input2.decision, input2.rationale]
     );
     let plan = null;
+    let checkin = null;
     if (input2.decision === "approved") {
-      const planId = randomUUID5();
+      const planId = randomUUID6();
       await client.query(
         `INSERT INTO support_plans (id, generation_id, support_case_id, faculty_decision_id, student_id, plan)
          VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
         [planId, generationId, caseId, decisionId, current.student_id, JSON.stringify(current.recommendation)]
       );
       plan = { id: planId, plan: current.recommendation, visibleToStudent: true };
+      const created = await ensurePlanCheckin(client, {
+        generation: generationId,
+        planId,
+        studentId: current.student_id,
+        dueOn: checkinDueOn(/* @__PURE__ */ new Date(), current.recommendation),
+        fallbackMentorId: current.assigned_faculty_person_id || actor.personId,
+        actorPersonId: actor.personId,
+        reason: "Check-in after the support plan, created when the plan was approved"
+      });
+      checkin = { id: created.id, dueOn: created.dueOn, created: created.created };
     }
     await client.query(`UPDATE ch11_jobs SET checkpoint=jsonb_set(jsonb_set(checkpoint,'{nodeTrace,HumanGate}',$3::jsonb,true),'{nodeTrace,DashboardPublisher}',$4::jsonb,true) WHERE generation_id=$1 AND support_case_id=$2 AND checkpoint ? 'nodeTrace'`, [generationId, caseId, JSON.stringify({ status: "completed", visits: 1, elapsedMs: 0, decisionId }), JSON.stringify({ status: input2.decision === "approved" ? "completed" : "cancelled", visits: input2.decision === "approved" ? 1 : 0, elapsedMs: 0, decisionId })]);
     const nextStatus = input2.decision === "approved" ? "approved" : "rejected";
@@ -32281,6 +32573,8 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
       supportCase,
       decision,
       plan,
+      checkin,
+      deciderRole: actor.role,
       request: { artifactId: input2.artifactId, contentHash: input2.contentHash, decision: input2.decision, rationale: input2.rationale }
     };
     const receipt = await writeCommandLedger(client, {
@@ -32295,7 +32589,7 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
       payload,
       metadata: { artifactId: input2.artifactId, contentHash: input2.contentHash, expectedRevision: input2.expectedRevision }
     });
-    return { supportCase, decision, plan, duplicate: false, receipt };
+    return { supportCase, decision, plan, checkin, duplicate: false, receipt };
   });
 }
 function verifyReplay(original) {
@@ -32334,7 +32628,7 @@ async function replayAgentRun(actor, runId, commandId) {
     if (!result.rowCount) throw new NotFoundError("Replayable agent run not found");
     const original = result.rows[0];
     const { inputHash, outputHash, matched } = verifyReplay(original);
-    const replayId = randomUUID5();
+    const replayId = randomUUID6();
     const inserted = await client.query(
       `INSERT INTO replay_receipts
        (id, generation_id, original_agent_run_id, replay_agent_run_id, requested_by_person_id, input_hash, output_hash, matched, command_id)
@@ -33489,7 +33783,7 @@ async function audit(client, generation, actor, subject, event, input2, output2)
   await client.query(
     "INSERT INTO ch11_events(id,generation_id,subject_id,actor_person_id,event_type,input_hash,output_hash,detail) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",
     [
-      randomUUID6(),
+      randomUUID7(),
       generation,
       subject,
       actor.personId,
@@ -33550,7 +33844,7 @@ var approvePolicySchema = external_exports.object({
   facultyId: external_exports.string().uuid().optional(),
   rationale: external_exports.string().trim().min(12).max(600)
 }).strict();
-async function approvePolicy(actor, raw, commandId = randomUUID6()) {
+async function approvePolicy(actor, raw, commandId = randomUUID7()) {
   requireReviewActor(actor);
   external_exports.string().uuid().parse(commandId);
   const input2 = approvePolicySchema.parse(raw);
@@ -33638,7 +33932,7 @@ async function approvePolicy(actor, raw, commandId = randomUUID6()) {
     };
   });
 }
-async function savePlannedPlan(actor, input2, id, expectedRevision, commandId = randomUUID6()) {
+async function savePlannedPlan(actor, input2, id, expectedRevision, commandId = randomUUID7()) {
   return persistPlan(actor, planInputSchema.parse(input2), id, expectedRevision, commandId);
 }
 async function persistPlan(actor, parsed, id, expectedRevision, commandId) {
@@ -33811,7 +34105,7 @@ async function lockPlan(actor, id, expectedRevision) {
       await client.query(
         "INSERT INTO ch11_jobs(id,generation_id,plan_id,student_id,faculty_person_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
         [
-          randomUUID6(),
+          randomUUID7(),
           plan.generation_id,
           id,
           student,
@@ -34232,7 +34526,7 @@ async function publishDraft(actor, job, plan) {
         "VALIDATION_REQUIRED",
         "A passing acceptance report is required before mentor review"
       );
-    const caseId = randomUUID6(), snapshotId = randomUUID6(), runId = randomUUID6(), artifactId = randomUUID6();
+    const caseId = randomUUID7(), snapshotId = randomUUID7(), runId = randomUUID7(), artifactId = randomUUID7();
     const reason2 = cp.risk.signals.map((s) => s.explanation).join(" ");
     const evidence = {
       ...cp.evidence,
@@ -34414,7 +34708,7 @@ async function executePlan(actor, planId, options = {}) {
       const job = await withCoreTransaction(async (client) => {
         const plan = await getPlan(client, actor, planId, true);
         if (plan.paused) return void 0;
-        const lease = randomUUID6();
+        const lease = randomUUID7();
         const claimed = await client.query(
           "UPDATE ch11_jobs SET status='running',lease_token=$2,lease_until=now()+interval '180 seconds',attempts=attempts+1,error_code=NULL WHERE id=$1 AND escalated_at IS NULL AND attempts<3 AND (status IN ('queued','blocked','failed') OR (status='running' AND lease_until<now())) RETURNING *",
           [id, lease]
@@ -34958,7 +35252,7 @@ async function setReviewPaused(actor, id, raw) {
 }
 
 // services/core-api/lib/chapter11/planning.ts
-import { createHash as createHash7, randomUUID as randomUUID7 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID8 } from "node:crypto";
 
 // services/core-api/lib/chapter11/planner.ts
 import { createHash as createHash6, randomBytes as randomBytes3 } from "node:crypto";
@@ -35455,7 +35749,7 @@ var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 var unique = (texts) => [...new Set(texts)];
 async function planWithAgent(actor, raw, options = {}) {
   requireReviewActor(actor);
-  const commandId = options.commandId ?? randomUUID7();
+  const commandId = options.commandId ?? randomUUID8();
   external_exports.string().uuid().parse(commandId);
   const input2 = withoutAgentFields(planInputSchema.parse(raw));
   const { id, expectedRevision } = options;
@@ -35600,7 +35894,7 @@ async function answerScopeConflict(actor, before, choice, id, expectedRevision, 
 }
 
 // services/core-api/lib/chapter11/review.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 var editSchema = external_exports.object({
   expectedRevision: external_exports.number().int().nonnegative(),
   artifactId: external_exports.string().uuid(),
@@ -35663,7 +35957,7 @@ async function editDraft(actor, caseId, commandId, raw) {
         "EDIT_VALIDATION_FAILED",
         validation.failures.map((f) => `${f.field}: ${f.code}`).join("; ")
       );
-    const id = randomUUID8(), contentHash = hashJson(input2.packet);
+    const id = randomUUID9(), contentHash = hashJson(input2.packet);
     await client.query(
       "INSERT INTO agent_artifacts(id,generation_id,agent_run_id,artifact_version,content_hash,recommendation,validation) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)",
       [
@@ -35765,7 +36059,7 @@ async function recordOutcome(actor, planId, commandId, raw) {
       `INSERT INTO ch11_interventions(id,generation_id,support_plan_id,faculty_person_id,status,outcome,revision)
       VALUES($1,$2,$3,$4,$5,$6,1) ON CONFLICT (generation_id,support_plan_id) DO UPDATE SET status=$5,outcome=$6,revision=ch11_interventions.revision+1,updated_at=now()`,
       [
-        randomUUID8(),
+        randomUUID9(),
         generation,
         planId,
         actor.personId,
@@ -35893,9 +36187,19 @@ async function reviewQueue(actor) {
         frozen: row.frozen
       })
     );
+    const meetings = await planMeetingFacts(client, generation, plans.rows.map((row) => row.id));
+    const withMeeting = (row) => {
+      const fact = meetings.get(row.id);
+      return {
+        ...row,
+        meeting: fact?.meeting ?? null,
+        checkin_due_on: fact?.due_on ?? null,
+        checkin_days_overdue: fact?.days_overdue ?? null
+      };
+    };
     return {
       versions: versions.rows,
-      plans: plans.rows.map((row) => frozen(stampEvidence(clock, row))),
+      plans: plans.rows.map((row) => withMeeting(frozen(stampEvidence(clock, row)))),
       drafts: shape(active.map((row) => frozen(stampEvidence(clock, row)))),
       awaitingCount: groups.length,
       legacyDrafts: shape(legacy.map((row) => frozen(stampEvidence(clock, row)))),
@@ -35954,7 +36258,7 @@ async function restoreVersion(actor, planId, commandId, raw) {
     )).rows[0];
     if (!original)
       throw new NotFoundError("Approved publication version not found");
-    const artifactId = randomUUID8(), version2 = latest + 1;
+    const artifactId = randomUUID9(), version2 = latest + 1;
     const artifactVersion = (await client.query(
       "SELECT max(artifact_version)::int+1 AS version FROM agent_artifacts WHERE agent_run_id=$1",
       [original.agent_run_id]
@@ -35979,7 +36283,7 @@ async function restoreVersion(actor, planId, commandId, raw) {
     await client.query(
       "INSERT INTO ch11_publications(id,generation_id,support_plan_id,artifact_id,original_decision_id,version,actor_person_id,restored_from) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
       [
-        randomUUID8(),
+        randomUUID9(),
         generation,
         planId,
         artifactId,
@@ -35995,7 +36299,7 @@ async function restoreVersion(actor, planId, commandId, raw) {
     );
     await client.query(
       `INSERT INTO ch11_interventions(id,generation_id,support_plan_id,faculty_person_id,status,outcome,revision) VALUES($1,$2,$3,$4,'planned','Earlier approved publication restored',1) ON CONFLICT(generation_id,support_plan_id) DO UPDATE SET status='planned',outcome='Earlier approved publication restored',revision=ch11_interventions.revision+1,updated_at=now()`,
-      [randomUUID8(), generation, planId, actor.personId]
+      [randomUUID9(), generation, planId, actor.personId]
     );
     const payload = {
       requestHash: hashJson({ planId, input: input2 }),
@@ -36027,7 +36331,7 @@ async function restoreVersion(actor, planId, commandId, raw) {
 }
 
 // services/core-api/lib/payment-commands.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 var paymentAttemptInput = external_exports.object({
   expectedRevision: external_exports.number().int().nonnegative(),
   scenario: external_exports.enum(["success", "decline"])
@@ -36076,7 +36380,7 @@ async function createPaymentAttempt(actor, invoiceId, commandId, input2) {
     if (remainingPaise <= 0 || invoice.status === "paid" || invoice.status === "void") {
       throw new ConflictError("INVOICE_NOT_PAYABLE", "This invoice has no payable balance");
     }
-    const transactionId = randomUUID9();
+    const transactionId = randomUUID10();
     const status = input2.scenario === "success" ? "captured" : "failed";
     const providerReference = `AURA-SBX-${commandId}`;
     await client.query(
@@ -36220,7 +36524,7 @@ async function bindActorToPortal(c, userId, portal) {
 }
 
 // services/core-api/lib/device-tokens.ts
-import { createHash as createHash8, randomBytes as randomBytes4, randomUUID as randomUUID10 } from "node:crypto";
+import { createHash as createHash8, randomBytes as randomBytes4, randomUUID as randomUUID11 } from "node:crypto";
 var DEVICE_TOKEN_TTL_DAYS = 7;
 var DEVICE_TOKEN_GRACE_SECONDS = 120;
 var DEVICE_TOKENS_DDL = [
@@ -36235,7 +36539,7 @@ async function issueDeviceToken(c, input2) {
   const token = randomBytes4(32).toString("base64url");
   const row = (await c.query(
     `INSERT INTO device_tokens(id,token_hash,user_id,portal,credential_hash,expires_at,last_used_at) VALUES($1,$2,$3,$4,$5,now()+make_interval(days=>$6),now()) RETURNING expires_at`,
-    [randomUUID10(), hashDeviceToken(token), input2.userId, portal, input2.credentialHash, DEVICE_TOKEN_TTL_DAYS]
+    [randomUUID11(), hashDeviceToken(token), input2.userId, portal, input2.credentialHash, DEVICE_TOKEN_TTL_DAYS]
   )).rows[0];
   return { token, expiresAt: new Date(row.expires_at).toISOString() };
 }
@@ -36405,7 +36709,7 @@ async function login(raw) {
   });
 }
 async function openSession(c, userId, portal, credentialHash) {
-  const token = randomBytes5(32).toString("base64url"), authId = randomUUID11();
+  const token = randomBytes5(32).toString("base64url"), authId = randomUUID12();
   await c.query(
     `WITH s AS (INSERT INTO ${authSchema}.session(id,"expiresAt",token,"updatedAt","userId") VALUES($1,now()+interval '8 hours',$2,now(),$3) RETURNING id) INSERT INTO ${authSchema}.streamlit_sessions(token_hash,user_id,portal,expires_at,auth_session_id,credential_hash) SELECT $2,$3,$4,now()+interval '8 hours',s.id,$5 FROM s`,
     [authId, sha2(token), userId, portal, credentialHash]
@@ -36567,7 +36871,7 @@ async function dispatch(action, p, token) {
     });
     return { signedOut: true };
   }
-  const a = await authenticated(token), cmd = external_exports.string().uuid().parse(p.commandId ?? randomUUID11()), body = { ...p };
+  const a = await authenticated(token), cmd = external_exports.string().uuid().parse(p.commandId ?? randomUUID12()), body = { ...p };
   delete body.commandId;
   if (action === "actor") return a;
   if (action === "batch") {

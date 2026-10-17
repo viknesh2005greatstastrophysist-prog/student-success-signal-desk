@@ -10,6 +10,7 @@ import { validateAnyPacket, riskAnalysis, digest, type Evidence, type Risk, type
 import { assertCaseNotFrozen, assertStudentNotFrozen } from "./chapter11/frozen";
 import { actorScopeParams, actsOnStudentSql, requireReviewActor } from "./chapter11/authority";
 import { caseEvidenceCapturedSql, isCurrentEvidence, loadGenerationClock } from "./data-refresh/generation";
+import { checkinDueOn, ensurePlanCheckin } from "./meetings";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
 export const supportDecisionInput = z.object({
@@ -242,6 +243,8 @@ type DecisionResult = {
   supportCase: { id: string; status: string; revision: number };
   decision: { id: string; decision: "approved" | "rejected"; rationale: string };
   plan: { id: string; plan: Recommendation; visibleToStudent: true } | null;
+  /** The check-in created with an approval (meetings.ts); null for a decline. */
+  checkin?: { id: string; dueOn: string; created: boolean } | null;
   duplicate: boolean;
   receipt: Awaited<ReturnType<typeof writeCommandLedger>>;
 };
@@ -271,7 +274,9 @@ export async function decideSupportCase(
       return {
         supportCase: priorCase,
         decision: duplicate.payload.decision as DecisionResult["decision"],
-        plan: duplicate.payload.plan as DecisionResult["plan"], duplicate: true, receipt: duplicate.receipt,
+        plan: duplicate.payload.plan as DecisionResult["plan"],
+        checkin: (duplicate.payload.checkin ?? null) as DecisionResult["checkin"],
+        duplicate: true, receipt: duplicate.receipt,
       };
     }
     const result = await client.query<{
@@ -327,6 +332,7 @@ export async function decideSupportCase(
       [decisionId, generationId, caseId, input.artifactId, actor.personId, input.decision, input.rationale],
     );
     let plan: DecisionResult["plan"] = null;
+    let checkin: DecisionResult["checkin"] = null;
     if (input.decision === "approved") {
       const planId = randomUUID();
       await client.query(
@@ -335,6 +341,19 @@ export async function decideSupportCase(
         [planId, generationId, caseId, decisionId, current.student_id, JSON.stringify(current.recommendation)],
       );
       plan = { id: planId, plan: current.recommendation, visibleToStudent: true };
+      // One check-in after the plan (meetings.ts): due on the approval day plus the
+      // plan's earliest action window, assigned to the student's mentor even when the
+      // department head approved, shared with the family.
+      const created = await ensurePlanCheckin(client, {
+        generation: generationId,
+        planId,
+        studentId: current.student_id,
+        dueOn: checkinDueOn(new Date(), current.recommendation),
+        fallbackMentorId: current.assigned_faculty_person_id || actor.personId,
+        actorPersonId: actor.personId,
+        reason: "Check-in after the support plan, created when the plan was approved",
+      });
+      checkin = { id: created.id, dueOn: created.dueOn, created: created.created };
     }
     await client.query(`UPDATE ch11_jobs SET checkpoint=jsonb_set(jsonb_set(checkpoint,'{nodeTrace,HumanGate}',$3::jsonb,true),'{nodeTrace,DashboardPublisher}',$4::jsonb,true) WHERE generation_id=$1 AND support_case_id=$2 AND checkpoint ? 'nodeTrace'`,[generationId,caseId,JSON.stringify({status:'completed',visits:1,elapsedMs:0,decisionId}),JSON.stringify({status:input.decision==='approved'?'completed':'cancelled',visits:input.decision==='approved'?1:0,elapsedMs:0,decisionId})]);
     const nextStatus = input.decision === "approved" ? "approved" : "rejected";
@@ -345,7 +364,8 @@ export async function decideSupportCase(
     const supportCase = { id: caseId, status: nextStatus, revision: updated.rows[0]!.revision };
     const decision = { id: decisionId, decision: input.decision, rationale: input.rationale };
     const payload = {
-      studentId: current.student_id, departmentId: current.department_id, facultyPersonId: actor.personId, supportCase, decision, plan,
+      studentId: current.student_id, departmentId: current.department_id, facultyPersonId: actor.personId, supportCase, decision, plan, checkin,
+      deciderRole: actor.role,
       request: { artifactId: input.artifactId, contentHash: input.contentHash, decision: input.decision, rationale: input.rationale },
     };
     const receipt = await writeCommandLedger(client, {
@@ -355,7 +375,7 @@ export async function decideSupportCase(
       action: "decide_support_artifact", topic: input.decision === "approved" ? "support.plan.approved" : "support.proposal.rejected",
       payload, metadata: { artifactId: input.artifactId, contentHash: input.contentHash, expectedRevision: input.expectedRevision },
     });
-    return { supportCase, decision, plan, duplicate: false, receipt };
+    return { supportCase, decision, plan, checkin, duplicate: false, receipt };
   });
 }
 

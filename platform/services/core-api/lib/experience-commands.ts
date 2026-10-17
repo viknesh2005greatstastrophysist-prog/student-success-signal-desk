@@ -20,6 +20,14 @@ import {
 } from "./registration-commands";
 import { digest } from "./chapter11/engine";
 import { assertStudentNotFrozen } from "./chapter11/frozen";
+import {
+  CHECKIN_NOTE,
+  MEETINGS_NOT_READY,
+  collegeDate,
+  meetingOutcome,
+  meetingTablesPresent,
+  validateMeeting,
+} from "./meetings";
 const uuid = z.string().uuid();
 const revision = z.number().int().nonnegative();
 const reason = z.string().trim().min(5).max(1000);
@@ -158,6 +166,21 @@ export const experienceCommandSchema = z.discriminatedUnion("action", [
       status: z.enum(["planned", "in_progress", "completed"]),
       outcome: z.string().trim().max(3000),
       reason,
+    })
+    .strict(),
+  z
+    .object({
+      // Meeting record after a support plan (meetings.ts): the day they met, the
+      // reasons from the fixed list, a note and what was agreed. Completes the
+      // plan's check-in. The audit reason is fixed, so none is typed.
+      action: z.literal("record-meeting"),
+      studentId: uuid,
+      supportPlanId: uuid,
+      followupId: uuid.optional(),
+      metOn: z.string().trim().max(10),
+      reasons: z.array(z.string().trim().min(1).max(80)).max(10),
+      note: z.string().trim().max(3000).default(""),
+      agreedNextStep: z.string().trim().max(1000).default(""),
     })
     .strict(),
   z
@@ -780,6 +803,72 @@ export async function experienceCommand(
           ],
         );
       updated = { ...input, studentId };
+    } else if (input.action === "record-meeting") {
+      // The assigned mentor, or the department head for a student in the department
+      // (chapter11/authority.ts); requireExperienceStudent enforces the scope.
+      requireRole(actor, "faculty", "hod");
+      const { student } = await requireExperienceStudent(client, gen, actor, input.studentId);
+      studentId = input.studentId;
+      await assertStudentNotFrozen(client, studentId);
+      if (!(await meetingTablesPresent(client)))
+        throw new ConflictError("MEETINGS_NOT_READY", MEETINGS_NOT_READY);
+      const plan = (
+        await client.query<{ id: string; approved_at: Date }>(
+          "SELECT p.id,d.decided_at AS approved_at FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id AND d.decision='approved' WHERE p.generation_id=$1 AND p.id=$2 AND p.student_id=$3 FOR UPDATE OF p",
+          [gen, input.supportPlanId, studentId],
+        )
+      ).rows[0];
+      if (!plan) throw new NotFoundError("Approved support plan not found for this student");
+      const meeting = validateMeeting(input, { approvedOn: collegeDate(plan.approved_at) });
+      // The check-in this meeting completes: the one named, else the plan's open
+      // check-in, else a new one (dated the day they met) when every earlier one
+      // already has its meeting.
+      const checkin = (
+        await client.query<{ id: string; revision: number; status: string; support_plan_id: string | null; recorded: boolean }>(
+          `SELECT f.*,EXISTS(SELECT 1 FROM support_meetings m WHERE m.followup_id=f.id) AS recorded FROM support_followups f
+           WHERE f.generation_id=$1 AND f.student_id=$2 AND f.support_plan_id=$3 AND ($4::uuid IS NULL OR f.id=$4::uuid)
+           AND ($4::uuid IS NOT NULL OR f.status<>'completed') ORDER BY f.due_on LIMIT 1 FOR UPDATE OF f`,
+          [gen, studentId, plan.id, input.followupId ?? null],
+        )
+      ).rows[0];
+      if (input.followupId && !checkin) throw new NotFoundError("Check-in not found for this plan");
+      if (checkin?.recorded)
+        throw new ConflictError("MEETING_ALREADY_RECORDED", "This check-in already has its meeting record.");
+      const outcome = meetingOutcome(meeting.metOn);
+      let followupId: string;
+      if (checkin) {
+        followupId = checkin.id;
+        previous = checkin;
+        await client.query(
+          "UPDATE support_followups SET status='completed',outcome=$2,revision=revision+1,updated_at=now() WHERE id=$1",
+          [followupId, outcome],
+        );
+      } else {
+        followupId = randomUUID();
+        const mentorId = student.mentor_id ?? actor.personId;
+        await client.query(
+          "INSERT INTO support_followups(id,generation_id,student_id,support_plan_id,mentor_person_id,due_on,note,shared,status,outcome) VALUES($1,$2,$3,$4,$5,$6,$7,true,'completed',$8)",
+          [followupId, gen, studentId, plan.id, mentorId, meeting.metOn, CHECKIN_NOTE, outcome],
+        );
+      }
+      id = randomUUID();
+      await client.query(
+        "INSERT INTO support_meetings(id,generation_id,followup_id,support_plan_id,student_id,met_on,reasons,note,agreed_next_step,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7::text[],$8,$9,$10)",
+        [id, gen, followupId, plan.id, studentId, meeting.metOn, meeting.reasons, meeting.note, meeting.agreedNextStep, actor.personId],
+      );
+      resource = "support_meetings";
+      facultyId = student.mentor_id ?? undefined;
+      updated = {
+        studentId,
+        supportPlanId: plan.id,
+        followupId,
+        metOn: meeting.metOn,
+        reasons: meeting.reasons,
+        note: meeting.note,
+        agreedNextStep: meeting.agreedNextStep,
+        followupOutcome: outcome,
+        recordedByRole: actor.role,
+      };
     } else {
       requireRole(actor, "faculty", "hod");
       await requireLmsCourse(client, gen, actor, input.offeringId, true);
@@ -917,7 +1006,9 @@ export async function experienceCommand(
       id,
       "reason" in input
         ? input.reason
-        : "Student submitted the final course selection",
+        : input.action === "record-meeting"
+          ? "Meeting with the student recorded after the support plan"
+          : "Student submitted the final course selection",
       previous,
       updated,
     );

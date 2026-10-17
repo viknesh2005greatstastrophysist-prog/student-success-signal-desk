@@ -24,6 +24,7 @@ import {
   loadGenerationClock,
   stampEvidence,
 } from "./data-refresh/generation";
+import { meetingStatus, planMeetingFacts } from "./meetings";
 
 export async function requireExperienceStudent(
   client: PoolClient,
@@ -192,6 +193,11 @@ export async function experienceOverview(
             )
           ).rows
         : [];
+    // Each student's approved current plan and its meeting record (meetings.ts):
+    // a mentor's own mentees, the department head's whole department.
+    const meetings = ["faculty", "hod"].includes(actor.role)
+      ? await meetingStatus(client, gen, actor)
+      : [];
     return {
       actor: {
         role: actor.role,
@@ -208,6 +214,7 @@ export async function experienceOverview(
       terms,
       grading,
       followups,
+      meetings,
       windows,
       counts: {
         students: students.length,
@@ -217,6 +224,7 @@ export async function experienceOverview(
         failed_reviews: status?.failed ?? 0,
         overdue_followups: followups.filter((f) => f.overdue).length,
         draft_courses: courses.filter((c) => c.status === "draft").length,
+        meetings_pending: meetings.filter((m) => !m.meeting).length,
       },
     };
   });
@@ -350,7 +358,19 @@ export async function experienceStudent(
       : [];
     let support: StudentDetail["support"] = [];
     let supportNotice: string | null = null;
-    if (privateView) support = supportRows;
+    // The meeting after each plan (meetings.ts). Staff get the record with its
+    // reasons and the due date; the student and parent only the day they met.
+    const meetingFacts = await planMeetingFacts(client, gen, supportRows.map((row) => row.id));
+    if (privateView)
+      support = supportRows.map((row) => {
+        const fact = meetingFacts.get(row.id);
+        return {
+          ...row,
+          meeting: fact?.meeting ?? null,
+          checkin_due_on: fact?.due_on ?? null,
+          checkin_days_overdue: fact?.days_overdue ?? null,
+        };
+      });
     else {
       const guarded = guardPlansForFamily(
         supportRows.map((row) => ({ ...row, intervention_outcome: row.intervention_outcome })),
@@ -360,7 +380,7 @@ export async function experienceStudent(
         delete rest.intervention_status;
         delete rest.intervention_outcome;
         delete rest.evidence_captured_at;
-        return rest as StudentDetail["support"][number];
+        return { ...rest, met_on: meetingFacts.get(row.id)?.meeting?.met_on ?? null } as StudentDetail["support"][number];
       });
       supportNotice = guarded.notice;
     }

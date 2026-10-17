@@ -120,6 +120,35 @@ export type Followup = {
   /** Staff only: the plan this check-in belongs to was computed on earlier figures. */
   plan_stale?: boolean;
 };
+/** A meeting the mentor (or the department head) recorded after a support plan. */
+export type MeetingRecord = {
+  id: string;
+  followup_id: string;
+  met_on: string;
+  /** From the fixed list (Health, Family responsibilities, ... Other). Staff only. */
+  reasons: string[];
+  note: string;
+  agreed_next_step: string;
+  recorded_by: string;
+  recorded_at: string;
+};
+/** One student's approved current plan and its meeting: recorded, or due on a date. */
+export type MeetingStatus = {
+  plan_id: string;
+  student_id: string;
+  student_name: string;
+  register_number: string;
+  mentor_id: string | null;
+  mentor_name: string | null;
+  approved_at: string | null;
+  meeting: MeetingRecord | null;
+  checkin: { id: string; due_on: string; status: string } | null;
+  due_on: string | null;
+  /** Days past the due date in the college's time zone (0 on the day, negative before). */
+  days_overdue: number | null;
+  /** Overdue by seven days or more without a record: the department head is told. */
+  head_notice: boolean;
+};
 export type SupportPlan = {
   id: string;
   case_id: string;
@@ -137,6 +166,12 @@ export type SupportPlan = {
   intervention_outcome?: string | null;
   /** Model that drafted the plan, as recorded on its agent run (null for retired rule-based drafts). */
   model_id?: string | null;
+  /** Staff only: the meeting recorded after this plan, and when it is (or was) due. */
+  meeting?: MeetingRecord | null;
+  checkin_due_on?: string | null;
+  checkin_days_overdue?: number | null;
+  /** Student and parent: only the day the mentor met the student, never the reasons. */
+  met_on?: string | null;
 };
 export type Invoice = {
   payment_simulation_allowed?: boolean;
@@ -262,6 +297,8 @@ export type ExperienceOverview = {
   terms: { id: string; name: string; active: boolean }[];
   grading: GradingScale | null;
   followups: Followup[];
+  /** Mentor and department head: each student's approved current plan and its meeting. */
+  meetings?: MeetingStatus[];
   counts: {
     students: number;
     faculty: number;
@@ -270,6 +307,8 @@ export type ExperienceOverview = {
     failed_reviews: number;
     overdue_followups: number;
     draft_courses: number;
+    /** Approved current plans still waiting for their meeting record. */
+    meetings_pending?: number;
   };
   windows: {
     id: string;

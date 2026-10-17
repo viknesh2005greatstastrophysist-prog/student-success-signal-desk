@@ -17,6 +17,7 @@ const migrations = [
   { id: "011_data_refresh", url: new URL("../migrations/011_data_refresh.sql", import.meta.url) },
   { id: "012_device_tokens", url: new URL("../migrations/012_device_tokens.sql", import.meta.url) },
   { id: "013_informational_records", url: new URL("../migrations/013_informational_records.sql", import.meta.url) },
+  { id: "014_meeting_records", url: new URL("../migrations/014_meeting_records.sql", import.meta.url) },
 ];
 
 export async function migrateCoreDatabase(): Promise<void> {
