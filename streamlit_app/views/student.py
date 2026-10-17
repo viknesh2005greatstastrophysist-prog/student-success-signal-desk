@@ -57,7 +57,8 @@ def render_mentor_updates(followups: list[dict[str, Any]]) -> None:
                 f'<div class="aura-item-sub">{ui.esc(labels.nice_date(row.get("due_on")))} · {ui.esc(labels.due_phrase(row.get("due_on")))}</div></div>'
                 f'<div class="aura-item-end">{ui.status_html(labels.status_label(row.get("status")), labels.status_tone(row.get("status")))}</div></div>'
             )
-            ui.plain_text(row.get("note"))
+            if row.get("note"):
+                ui.plain_text(row.get("note"))
 
 
 def render_plan_notice(detail: dict[str, Any]) -> bool:

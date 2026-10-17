@@ -1148,9 +1148,11 @@ def render_outcomes(queue: dict[str, Any], actor: dict[str, Any]) -> None:
             "Visible to family": "Yes"
             if row.get("visible_to_student") and row.get("evidence_current") is not False
             else "No",
-            # The meeting after the plan: its day and reasons, or when it is due. A
-            # withdrawn plan needs none.
-            "Meeting": labels.meeting_cell(row) if row.get("visible_to_student") else "Not needed, plan withdrawn",
+            # The conversation about the plan's AI report: its day and reasons, or where it
+            # stands. A withdrawn plan needs none.
+            "Meeting": labels.meeting_cell(row, for_mentor=actor.get("role") != "hod")
+            if row.get("visible_to_student")
+            else "Not needed, plan withdrawn",
             "Decision": labels.status_label(row.get("decision")),
             "Decided by": row.get("decided_by"),
             "Decision time": labels.nice_time(row.get("decided_at")),

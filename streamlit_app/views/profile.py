@@ -109,7 +109,7 @@ def current_plan(support: list[dict[str, Any]]) -> dict[str, Any] | None:
     )
 
 
-def plan_rows(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def plan_rows(plans: list[dict[str, Any]], *, for_mentor: bool = True) -> list[dict[str, Any]]:
     return [
         {
             "Approved actions": "; ".join(
@@ -117,7 +117,7 @@ def plan_rows(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
             ),
             "Status": labels.status_label(p.get("status")),
             "Outcome": p.get("outcome") or "Not recorded",
-            "Meeting": labels.meeting_cell(p)
+            "Meeting": labels.meeting_cell(p, for_mentor=for_mentor)
             if p.get("visible_to_student")
             else "Not needed, plan withdrawn",
             "Figures": figures_label(p),
@@ -150,15 +150,14 @@ def render_profile(student_id: str, role: str) -> None:
             if part
         )
     )
-    # The meeting after the approved current plan: held (with the reasons the student
-    # gave) or not recorded yet, with its due date.
-    plan = current_plan(detail.get("support") or [])
-    if plan:
-        overdue = (plan.get("checkin_days_overdue") or 0) > 0 and not plan.get("meeting")
+    # The conversation about the student's current AI report: submitted (with the
+    # reasons the student gave) or where it stands, in the words of the mentor's Today.
+    meeting = detail.get("meeting") or current_plan(detail.get("support") or [])
+    if meeting and labels.meeting_timeline(meeting).get("report_on"):
+        late = not meeting.get("meeting") and labels.meeting_timeline(meeting).get("stage") in ("meet_now", "past_deadline")
         st.caption(
-            (":material/event_busy: " if overdue else ":material/handshake: ")
-            + labels.meeting_line(plan)
-            + (f" ({labels.days_word(int(plan['checkin_days_overdue']))} overdue)" if overdue else "")
+            (":material/event_busy: " if late else ":material/handshake: ")
+            + labels.meeting_line(meeting, for_mentor=is_mentor)
         )
     section = sections(
         MENTOR_SECTIONS if is_mentor else HOD_SECTIONS, key=f"profile_section_{role}"
@@ -263,7 +262,7 @@ def render_profile(student_id: str, role: str) -> None:
             )
         render_rereview(mine, role=role, key="profile_rereview")
         dataframe(
-            plan_rows(mine),
+            plan_rows(mine, for_mentor=is_mentor),
             empty="No approved plans yet."
             + (" A drafted plan is waiting for the mentor (above)." if waiting else ""),
         )

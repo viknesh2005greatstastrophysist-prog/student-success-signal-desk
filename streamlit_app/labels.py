@@ -671,7 +671,9 @@ def hours_phrase(hours: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Meeting records after a support plan (owner request, 17 Oct). The reasons are the
+# The conversation with the student about the AI report (owner decisions, 17 Oct). The
+# clock starts when the AI writes the report (the draft reaches the mentor gate): meet
+# the student within 7 days, submit the conversation within 14. The reasons are the
 # Core's fixed list, in the same order (platform/services/core-api/lib/meetings.ts and
 # migration 014); "Other" needs a note.
 MEETING_REASONS = [
@@ -686,8 +688,9 @@ MEETING_REASONS = [
     "Timetable clash",
     "Other",
 ]
-# Overdue by this many days or more, a meeting shows on the department head's overview as overdue by over a week.
-HEAD_NOTICE_DAYS = 7
+MEET_WITHIN_DAYS = 7
+SUBMIT_WITHIN_DAYS = 14
+PAST_DEADLINE_NOTE = "Past the deadline; the department head can see this."
 
 
 def college_today() -> date:
@@ -701,49 +704,82 @@ def days_word(n: int) -> str:
     return f"{n} day{'s' if n != 1 else ''}"
 
 
-def meeting_due_text(due_on: Any, days_overdue: Any) -> str:
-    """For example: was due 12 Oct 2026 (5 days ago); is due today; is due 20 Oct 2026 (in 3 days)."""
-    when = nice_date(due_on)
-    try:
-        days = int(days_overdue)
-    except (TypeError, ValueError):
-        return f"is due {when}"
-    if days > 0:
-        return f"was due {when} ({days_word(days)} ago)"
-    if days == 0:
-        return "is due today"
-    return f"is due {when} (in {days_word(-days)})"
-
-
-def meeting_line(row: dict[str, Any] | None) -> str:
-    """One plan's meeting, for staff: "Meeting held 15 Oct 2026: Health, Course difficulty"
-    or "Meeting not recorded, due 20 Oct 2026"."""
+def meeting_timeline(row: dict[str, Any] | None) -> dict[str, Any]:
+    """The report dates and stage of a row: a plan row carries them under `meeting_due`,
+    a meeting-status row (Today, Overview, profile) carries them itself."""
     if not row:
-        return "No approved plan"
+        return {}
+    nested = row.get("meeting_due")
+    return nested if isinstance(nested, dict) else row
+
+
+def _int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def meeting_stage_text(row: dict[str, Any] | None, *, for_mentor: bool = True) -> str:
+    """Where the conversation stands, in the words of the mentor's card: "Due in 3 days",
+    "Meet by now (2 days overdue)", "Past the deadline; the department head can see this."
+    (for the department head: "Past the deadline"), or "Conversation submitted"."""
+    timeline = meeting_timeline(row)
+    stage = timeline.get("stage")
+    if stage == "met" or (row or {}).get("meeting"):
+        return "Conversation submitted"
+    if stage == "due":
+        left = _int(timeline.get("days_left"))
+        return f"Due in {days_word(left)}" if left is not None else "Due"
+    if stage == "meet_now":
+        overdue = _int(timeline.get("days_overdue")) or 0
+        return "Meet by now (" + (f"{days_word(overdue)} overdue" if overdue else "due today") + ")"
+    if stage == "past_deadline":
+        return PAST_DEADLINE_NOTE if for_mentor else "Past the deadline"
+    return "Not tracked"
+
+
+def meeting_schedule_text(row: dict[str, Any] | None) -> str:
+    """"AI report on 10 Oct 2026. Meet the student by 17 Oct 2026 and submit the
+    conversation by 24 Oct 2026." """
+    timeline = meeting_timeline(row)
+    return (
+        f"AI report on {nice_date(timeline.get('report_on'))}. "
+        f"Meet the student by {nice_date(timeline.get('meet_by'))} and submit the conversation by "
+        f"{nice_date(timeline.get('deadline'))}."
+    )
+
+
+def met_text(meeting: dict[str, Any]) -> str:
+    """"Met on 15 Oct 2026: Health, Course difficulty" """
+    reasons = ", ".join(str(r) for r in meeting.get("reasons") or [])
+    return f"Met on {nice_date(meeting.get('met_on'))}" + (f": {reasons}" if reasons else "")
+
+
+def meeting_line(row: dict[str, Any] | None, *, for_mentor: bool = True) -> str:
+    """One student's conversation about their AI report, for staff (the profile line):
+    "Met on 15 Oct 2026: Health" or "AI report on 10 Oct 2026. Meet the student by ...
+    and submit the conversation by .... Due in 3 days." """
+    if not row:
+        return "No AI report to discuss"
     meeting = row.get("meeting")
     if isinstance(meeting, dict) and meeting.get("met_on"):
-        reasons = ", ".join(str(r) for r in meeting.get("reasons") or [])
-        return f"Meeting held {nice_date(meeting['met_on'])}" + (f": {reasons}" if reasons else "")
-    due = row.get("checkin_due_on") or row.get("due_on")
-    return f"Meeting not recorded, due {nice_date(due)}" if due else "Meeting not recorded"
+        report = meeting_timeline(row).get("report_on")
+        return met_text(meeting) + (f" (AI report of {nice_date(report)})" if report else "")
+    if not meeting_timeline(row).get("report_on"):
+        return "Meeting not recorded"
+    stage = meeting_stage_text(row, for_mentor=for_mentor)
+    return f"{meeting_schedule_text(row)} {stage}" + ("" if stage.endswith(".") else ".")
 
 
-def meeting_standing(days_overdue: Any) -> str:
-    """Where a pending meeting stands, for the department head's list."""
-    try:
-        days = int(days_overdue)
-    except (TypeError, ValueError):
-        return "No due date"
-    if days >= HEAD_NOTICE_DAYS:
-        return f"Overdue by {days_word(days)}, more than a week"
-    if days > 0:
-        return f"Overdue by {days_word(days)}"
-    if days == 0:
-        return "Due today"
-    return f"Due in {days_word(-days)}"
-
-
-def meeting_cell(row: dict[str, Any] | None) -> str:
-    """meeting_line for a table's Meeting column: "Held 15 Oct 2026: Health" or "Not recorded, due 20 Oct 2026"."""
-    line = meeting_line(row)
-    return line[len("Meeting "):][:1].upper() + line[len("Meeting ") + 1:] if line.startswith("Meeting ") else line
+def meeting_cell(row: dict[str, Any] | None, *, for_mentor: bool = True) -> str:
+    """meeting_line for a table's Meeting column: "Met on 15 Oct 2026: Health" or where it
+    stands ("Due in 3 days", "Meet by now (2 days overdue)", ...)."""
+    if not row:
+        return "No AI report to discuss"
+    meeting = row.get("meeting")
+    if isinstance(meeting, dict) and meeting.get("met_on"):
+        return met_text(meeting)
+    if not meeting_timeline(row).get("report_on"):
+        return "Meeting not recorded"
+    return meeting_stage_text(row, for_mentor=for_mentor)
