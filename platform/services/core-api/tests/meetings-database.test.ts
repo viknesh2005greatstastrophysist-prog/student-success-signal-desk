@@ -22,6 +22,7 @@ import {
   meetingOutcome,
   reportCheckinNote,
 } from "../lib/meetings";
+import { reminderText } from "../lib/staff-messages";
 import { groundedComposer } from "./agent-fixtures";
 
 /** The conversation with the student about the AI report (owner decisions, 17 Oct),
@@ -31,9 +32,10 @@ import { groundedComposer } from "./agent-fixtures";
  * only); the backfill finds a current report without one; record-meeting validates,
  * works while the draft is still at the gate, completes the check-in and is append-only;
  * an approval by the department head creates no second check-in; reads give staff the
- * reasons and the family only the day. */
+ * reasons and the family only the day; the department head messages the mentor
+ * (send-message, audited, never automatic) and only the mentor marks it read. */
 test(
-  "meeting records: check-in at the gate, backfill, record-meeting, approval and who sees what",
+  "meeting records: check-in at the gate, backfill, record-meeting, approval, who sees what, and messages to the mentor",
   { skip: process.env.RUN_MEETINGS_DB_TESTS !== "1", timeout: 180000 },
   async () => {
     assert.match(process.env.CORE_DATABASE_SCHEMA ?? "", /^aura_core_test_meetings/);
@@ -67,6 +69,7 @@ test(
           student: student.id,
           register: student.register_number,
           faculty: make("faculty1@aura.invalid", "faculty"),
+          otherMentor: make("faculty2@aura.invalid", "faculty"),
           hod: make("hod.cse@aura.invalid", "hod"),
           otherHod: make("hod.ece@aura.invalid", "hod"),
           governance: make("governance@aura.invalid", "governance"),
@@ -74,7 +77,7 @@ test(
           parentActor: { subject: parent.email, role: "parent", displayName: parent.display_name, email: parent.email, clientId: portalOidcClients.parent, personId: parent.id } as ActorContext,
         };
       });
-      const { faculty, hod, otherHod, governance, student } = world;
+      const { faculty, otherMentor, hod, otherHod, governance, student } = world;
       const offering = await withCoreTransaction(async (client) => {
         const course = (
           await client.query<{ id: string }>(
@@ -307,6 +310,73 @@ test(
         for (const leak of ["Course difficulty", "Health", "Timetable clash", "Tired after a fever", "AI report"])
           assert.equal(JSON.stringify({ support: family.support, followups: family.followups }).includes(leak), false, leak);
       } else assert.deepEqual(family.support, []);
+
+      // ---- Messages from the department head (migration 016) ----
+      const note = "Please do it this week.";
+      const send = { action: "send-message", supportCaseId: caseId, note: `  ${note}  ` };
+      for (const actor of [faculty, governance, world.studentActor])
+        await assert.rejects(() => experienceCommand(actor, randomUUID(), send), /not permitted/, actor.role);
+      await assert.rejects(() => experienceCommand(otherHod, randomUUID(), send), { code: "NOT_FOUND" }, "another department");
+      await assert.rejects(() => experienceCommand(hod, randomUUID(), { ...send, supportCaseId: randomUUID() }), { code: "NOT_FOUND" });
+      const frozenBefore = process.env.CORE_FROZEN_REGISTER_NUMBERS;
+      process.env.CORE_FROZEN_REGISTER_NUMBERS = world.register;
+      try {
+        await assert.rejects(() => experienceCommand(hod, randomUUID(), send), { code: "FROZEN_RECORD" });
+      } finally {
+        if (frozenBefore === undefined) delete process.env.CORE_FROZEN_REGISTER_NUMBERS;
+        else process.env.CORE_FROZEN_REGISTER_NUMBERS = frozenBefore;
+      }
+      assert.equal((await experienceOverview(faculty)).counts.unread_messages, 0, "nothing is sent automatically");
+      const sendCommand = randomUUID();
+      const sent = await experienceCommand(hod, sendCommand, send);
+      const repeated = await experienceCommand(hod, sendCommand, send);
+      assert.equal(repeated.duplicate, true, "a repeated command sends nothing new");
+      const studentName = (await experienceStudent(hod, student)).student.name as string;
+      const inStore = await withCoreTransaction(async (c) => {
+        const rows = await c.query("SELECT * FROM staff_messages WHERE support_case_id=$1", [caseId]);
+        const audit = (await c.query("SELECT count(*)::int AS n FROM record_changes WHERE resource_type='staff_messages' AND resource_id=$1", [sent.id])).rows[0]!.n;
+        const ledger = (await c.query("SELECT count(*)::int AS n FROM command_receipts WHERE command_id=$1", [sendCommand])).rows[0]!.n;
+        return { rows: rows.rows, audit, ledger };
+      });
+      assert.equal(inStore.rows.length, 1, "one message");
+      const message = inStore.rows[0]!;
+      assert.equal(message.id, sent.id);
+      assert.equal(message.from_person_id, hod.personId);
+      assert.equal(message.to_person_id, faculty.personId, "to the student's mentor");
+      assert.equal(message.student_id, student);
+      assert.equal(message.body, `${reminderText(studentName, reportOn)}\n\n${note}`, "the standard reminder and the note");
+      assert.equal(message.read_at, null);
+      assert.equal(inStore.audit, 1, "audited in record_changes");
+      assert.equal(inStore.ledger, 1, "and in the command ledger");
+      // The mentor sees it unread; the department head's row shows the reminder.
+      const inbox = await experienceOverview(faculty);
+      assert.equal(inbox.counts.unread_messages, 1);
+      assert.equal(inbox.messages![0]!.id, sent.id);
+      assert.equal(inbox.messages![0]!.support_case_id, caseId);
+      assert.deepEqual((await experienceOverview(otherMentor)).messages, [], "another mentor receives nothing");
+      assert.deepEqual((await experienceOverview(hod)).messages, [], "the department head has no inbox");
+      const headRow = (await experienceOverview(hod)).meetings!.find((m) => m.case_id === caseId)!;
+      assert.ok(headRow.reminder?.sent_at, "Reminder sent <date>");
+      assert.equal(headRow.reminder?.read_at, null);
+      // Only the recipient marks it read; read_at is set once.
+      const read = { action: "mark-message-read", messageId: sent.id };
+      await assert.rejects(() => experienceCommand(hod, randomUUID(), read), /not permitted/);
+      await assert.rejects(() => experienceCommand(otherMentor, randomUUID(), read), { code: "NOT_FOUND" }, "not the recipient");
+      await assert.rejects(() => experienceCommand(faculty, randomUUID(), { ...read, messageId: randomUUID() }), { code: "NOT_FOUND" });
+      await experienceCommand(faculty, randomUUID(), read);
+      const firstRead = await withCoreTransaction(async (c) => (await c.query<{ read_at: Date }>("SELECT read_at FROM staff_messages WHERE id=$1", [sent.id])).rows[0]!.read_at);
+      assert.ok(firstRead, "read_at is set");
+      await experienceCommand(faculty, randomUUID(), read);
+      const secondRead = await withCoreTransaction(async (c) => (await c.query<{ read_at: Date }>("SELECT read_at FROM staff_messages WHERE id=$1", [sent.id])).rows[0]!.read_at);
+      assert.equal(new Date(secondRead).toISOString(), new Date(firstRead).toISOString(), "read once; a second mark keeps the first time");
+      assert.equal((await experienceOverview(faculty)).counts.unread_messages, 0);
+      const readRow = (await experienceOverview(hod)).meetings!.find((m) => m.case_id === caseId)!;
+      assert.equal(new Date(readRow.reminder!.read_at!).toISOString(), new Date(firstRead).toISOString(), "Read <date> on the department head's row");
+      // A message without a note is the reminder alone.
+      const plain = await experienceCommand(hod, randomUUID(), { action: "send-message", supportCaseId: caseId });
+      const plainBody = await withCoreTransaction(async (c) => (await c.query<{ body: string }>("SELECT body FROM staff_messages WHERE id=$1", [plain.id])).rows[0]!.body);
+      assert.equal(plainBody, reminderText(studentName, reportOn));
+      assert.equal((await experienceOverview(hod)).meetings!.find((m) => m.case_id === caseId)!.reminder?.read_at, null, "the latest reminder is the new, unread one");
     } finally {
       await closePool();
     }

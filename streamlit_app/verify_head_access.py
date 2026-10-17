@@ -8,8 +8,10 @@ review); the Policies page lists the approved policies and the scoring detail re
 with the footnote "Mentors approve their own scoring policies; the department head can
 read them."; a student's profile, Support plans tab, shows the draft and the mentor's
 approve, edit and decline form; the Overview's flagged list shows the risk band and
-score; and none of the old "the department head only observes" or "acts on everything"
-wording is left in the screens."""
+score, below "Conversations not submitted" (the department head's main job: check that
+mentors met their students and message the mentor when they have not); and none of the
+old "the department head only observes" or "acts on everything" wording is left in the
+screens."""
 
 import json
 import re
@@ -70,7 +72,11 @@ QUEUE = {"drafts": [DRAFT, OTHER], "legacyDrafts": [], "plans": [PLAN], "version
 DETAIL = {"student": {"id": S1, "name": "ASHA RAO", "register_number": "01FE23BCI024", "semester": 5},
           "mentor": {"name": "DR MIRA SEN"}, "courses": [], "followups": [], "support": [],
           "grants": ["attendance", "marks", "fees", "support", "private"]}
-OVERVIEW = {"students": STUDENTS, "faculty": [], "counts": {"students": 2}}
+LATE = {"case_id": DRAFT["id"], "plan_id": None, "case_status": "awaiting_faculty", "student_id": S1,
+        "student_name": "ASHA RAO", "register_number": "01FE23BCI024", "mentor_id": M1, "mentor_name": "DR MIRA SEN",
+        "report_on": "2026-09-30", "meet_by": "2026-10-07", "deadline": "2026-10-14", "days_since": 17,
+        "stage": "past_deadline", "days_left": None, "days_overdue": 10, "checkin": None, "meeting": None, "reminder": None}
+OVERVIEW = {"students": STUDENTS, "faculty": [], "counts": {"students": 2}, "meetings": [LATE]}
 
 
 def data(value: object) -> str:
@@ -157,8 +163,15 @@ assert action == "case_decide" and payload["decision"] == "rejected" and payload
 choose(at, "Section", "Signals").run()
 assert not at.exception, [e.message for e in at.exception]
 
-# 6. Overview: the flagged list shows the band and score.
+# 6. Overview: the department head's main job comes first, conversations not submitted
+# with "Message the mentor" for a past-deadline student; then the flagged list with the
+# band and score.
 at = run("import views.hod as hod\nhod.overview_page()")
+headings = [h.value for h in at.subheader]
+assert headings.index("Conversations not submitted (1)") < headings.index("Flagged students (1)"), headings
+assert "Message the mentor" in [b.label for b in at.button]
+late = next(m for m in at.metric if m.label == "Conversations past the deadline")
+assert late.value == "1", late.value
 flagged = next(df.value for df in at.dataframe if "Risk" in df.value.columns)
 assert list(flagged["Risk"]) == ["High risk · 72"], list(flagged["Risk"])
 
@@ -174,6 +187,9 @@ OLD = [
     "can see and act on everything",
     "You can approve one for any mentor",
     "starts one for a mentor's",
+    "Meetings pending",
+    "Meetings to record",
+    "Approve a mentor policy for",
 ]
 for path in sorted((APP / "views").glob("*.py")):
     source = path.read_text(encoding="utf-8")
@@ -184,5 +200,6 @@ assert re.search(r"the department head can see everything", (APP / "views" / "re
 print(json.dumps({"status": "passed", "checks": [
     "HoD Reviews drafts with Mentor column and filter, no Start a review",
     "HoD Outcomes update form", "HoD Policies read-only with footnote", "HoD profile draft and decision form",
-    "HoD flagged list band and score", "old observe-only wording removed",
+    "HoD Overview leads with conversations not submitted", "HoD flagged list band and score",
+    "old observe-only wording removed",
 ]}))
