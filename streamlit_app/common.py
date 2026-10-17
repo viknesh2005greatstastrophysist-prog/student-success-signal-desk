@@ -576,9 +576,12 @@ def _sized_columns(
     """Give every column a width that fits its header and longest value (no clipped cells).
 
     Columns the caller already configured keep their configuration."""
-    config = dict(column_config or {})
+    config = centred(dict(column_config or {}))
     if len(rows[0]) <= 2:
-        return config  # two columns share the width, on any screen
+        # Two columns share the width on any screen; they still get the shared alignment.
+        for name in rows[0]:
+            config.setdefault(name, st.column_config.Column(name, alignment="center"))
+        return config
     sized: dict[str, int] = {}
     for name in rows[0]:
         if name in config:
@@ -597,8 +600,40 @@ def _sized_columns(
     total = sum(sized.values()) + 120 * len(config)
     factor = min(1.7, 880 / total) if 0 < total < 880 else 1.0
     for name, width in sized.items():
-        config[name] = st.column_config.Column(name, width=int(width * factor))
+        config[name] = st.column_config.Column(name, width=int(width * factor), alignment="center")
     return config
+
+
+def centred(column_config: dict[str, Any]) -> dict[str, Any]:
+    """The one table style for the app: every cell centred (the header follows its column).
+    Applied to every table and editor through dataframe() and the editors' column_config."""
+    for name, config in column_config.items():
+        if isinstance(config, dict) and config.get("alignment") is None:
+            config["alignment"] = "center"
+    return column_config
+
+
+_CHAR_PX = 7.4  # average glyph width at the table's font size
+_NAMED_WIDTH = {"small": 150, "medium": 240, "large": 330}
+
+
+def _row_height(rows: list[dict[str, Any]], config: dict[str, Any]) -> int:
+    """Tall enough for the longest cell to wrap instead of being cut off.
+
+    The data grid wraps text only when the row height is above 64 px, so a table whose
+    longest value fits on one line keeps the compact 44 px rows, and any other table
+    gets rows for two to five lines of text."""
+    lines = 1
+    for name in rows[0]:
+        column = config.get(name) if isinstance(config.get(name), dict) else {}
+        width = column.get("width")
+        width = _NAMED_WIDTH.get(width, width) if width else 200
+        usable = max(60, int(width) - 24)
+        for row in rows[:80]:
+            text = str(row.get(name) or "")
+            needed = -(-int(len(text) * _CHAR_PX) // usable) if text else 1
+            lines = max(lines, needed)
+    return 44 if lines <= 1 else min(24 + 20 * lines, 124)
 
 
 def dataframe(
@@ -616,13 +651,14 @@ def dataframe(
     frame = pd.DataFrame(rows)
     for column in frame.columns[frame.dtypes == object]:
         frame[column] = frame[column].where(frame[column].notna(), "—")
+    config = _sized_columns(rows, column_config)
     event = st.dataframe(
         frame,
         hide_index=True,
         width="stretch",
-        row_height=44,
+        row_height=_row_height(rows, config),
         key=key,
-        column_config=_sized_columns(rows, column_config),
+        column_config=config,
         **({"on_select": "rerun", "selection_mode": "single-cell"} if select_cell else {}),
     )
     if not select_cell:

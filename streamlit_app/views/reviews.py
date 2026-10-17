@@ -11,6 +11,7 @@ import ui
 from common import pick
 from views.freshness import figures_label, render_earlier_reviews_note, render_rereview
 from common import (
+    centred,
     ACTION_OWNER_LABELS,
     CHECK_LABELS,
     PLAN_DOMAINS,
@@ -2009,7 +2010,7 @@ def render_draft_reviews(
                 # the due days can change here (spec conformance P2-2).
                 edited_actions = st.data_editor(
                     pd.DataFrame(action_rows),
-                    column_config={
+                    column_config=centred({
                         "Action": st.column_config.TextColumn("Action", disabled=True),
                         "Owner": st.column_config.TextColumn("Owner", disabled=True),
                         "Due in days": st.column_config.NumberColumn(
@@ -2019,7 +2020,7 @@ def render_draft_reviews(
                             step=1,
                             required=True,
                         ),
-                    },
+                    }),
                     disabled=["Action", "Owner"],
                     hide_index=True,
                     num_rows="fixed",

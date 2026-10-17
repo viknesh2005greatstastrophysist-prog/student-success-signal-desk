@@ -8,6 +8,7 @@ import streamlit as st
 import labels
 import ui
 from common import (
+    centred,
     ATTENDANCE_STATES,
     FOLLOWUP_STATES,
     PERCENT_COLUMN,
@@ -261,12 +262,12 @@ def render_attendance_editor(
         )
         edited_attendance = st.data_editor(
             pd.DataFrame(attendance_rows),
-            column_config={
+            column_config=centred({
                 "Student": st.column_config.TextColumn("Student", disabled=True),
                 "Status": st.column_config.SelectboxColumn(
                     "Status", options=ATTENDANCE_STATES, required=True
                 ),
-            },
+            }),
             disabled=["Student"],
             hide_index=True,
             num_rows="fixed",
@@ -360,13 +361,13 @@ def render_marks_editor(
         )
         edited_marks = st.data_editor(
             pd.DataFrame(marks_rows),
-            column_config={
+            column_config=centred({
                 "Student": st.column_config.TextColumn("Student", disabled=True),
                 "Score": st.column_config.NumberColumn(
                     "Score", min_value=0.0, max_value=float(maximum_score), step=0.5
                 ),
                 "Feedback": st.column_config.TextColumn("Feedback", max_chars=500),
-            },
+            }),
             disabled=["Student"],
             hide_index=True,
             num_rows="fixed",
