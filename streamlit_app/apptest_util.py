@@ -48,6 +48,7 @@ MODULES = [
     "views.parent",
     "views.reviews",
     "views.metrics",
+    "views.meetings",
     "views.mentor",
     "views.hod",
     "views.operations",

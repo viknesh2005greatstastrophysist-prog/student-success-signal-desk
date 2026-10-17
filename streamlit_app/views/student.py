@@ -76,7 +76,17 @@ def support_status(detail: dict[str, Any]) -> str:
     return "Being reviewed" if detail.get("support_notice") else "None yet"
 
 
-def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> None:
+def met_line(item: dict[str, Any], *, audience: str, child: str | None = None) -> str | None:
+    """The only part of a meeting record a student or parent sees: the day they met."""
+    if not item.get("met_on"):
+        return None
+    day = labels.nice_date(item["met_on"])
+    if audience == "student":
+        return f"Your mentor met you on {day}."
+    return f"{child}'s mentor met them on {day}." if child else f"The mentor met your child on {day}."
+
+
+def render_support_cards(support: list[dict[str, Any]], *, audience: str, child: str | None = None) -> None:
     """The approved support plan as plain, readable text."""
     if not support:
         return
@@ -105,6 +115,9 @@ def render_support_cards(support: list[dict[str, Any]], *, audience: str) -> Non
                     flat=True,
                 )
             ui.provenance_caption(model_id=item.get("model_id"))
+            met = met_line(item, audience=audience, child=child)
+            if met:
+                st.caption(f":material/handshake: {met}")
             if plan.get("citations"):
                 with st.expander("Why this plan was suggested", icon=":material/info:"):
                     ui.citation_chips(plan.get("citations", []))

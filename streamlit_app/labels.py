@@ -668,3 +668,82 @@ def hours_phrase(hours: float) -> str:
         return f"{count} hour{'s' if count != 1 else ''}"
     days = round(hours / 24)
     return f"{days} days"
+
+
+# ---------------------------------------------------------------------------
+# Meeting records after a support plan (owner request, 17 Oct). The reasons are the
+# Core's fixed list, in the same order (platform/services/core-api/lib/meetings.ts and
+# migration 014); "Other" needs a note.
+MEETING_REASONS = [
+    "Health",
+    "Family responsibilities",
+    "Financial pressure",
+    "Transport or distance",
+    "Course difficulty",
+    "Lost motivation or interest",
+    "Part-time work",
+    "Personal or mental-health concern",
+    "Timetable clash",
+    "Other",
+]
+# Overdue by this many days or more, a meeting shows on the department head's overview as overdue by over a week.
+HEAD_NOTICE_DAYS = 7
+
+
+def college_today() -> date:
+    """Today in the college's time zone (India), the day the Core checks a meeting date against."""
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
+
+def days_word(n: int) -> str:
+    return f"{n} day{'s' if n != 1 else ''}"
+
+
+def meeting_due_text(due_on: Any, days_overdue: Any) -> str:
+    """For example: was due 12 Oct 2026 (5 days ago); is due today; is due 20 Oct 2026 (in 3 days)."""
+    when = nice_date(due_on)
+    try:
+        days = int(days_overdue)
+    except (TypeError, ValueError):
+        return f"is due {when}"
+    if days > 0:
+        return f"was due {when} ({days_word(days)} ago)"
+    if days == 0:
+        return "is due today"
+    return f"is due {when} (in {days_word(-days)})"
+
+
+def meeting_line(row: dict[str, Any] | None) -> str:
+    """One plan's meeting, for staff: "Meeting held 15 Oct 2026: Health, Course difficulty"
+    or "Meeting not recorded, due 20 Oct 2026"."""
+    if not row:
+        return "No approved plan"
+    meeting = row.get("meeting")
+    if isinstance(meeting, dict) and meeting.get("met_on"):
+        reasons = ", ".join(str(r) for r in meeting.get("reasons") or [])
+        return f"Meeting held {nice_date(meeting['met_on'])}" + (f": {reasons}" if reasons else "")
+    due = row.get("checkin_due_on") or row.get("due_on")
+    return f"Meeting not recorded, due {nice_date(due)}" if due else "Meeting not recorded"
+
+
+def meeting_standing(days_overdue: Any) -> str:
+    """Where a pending meeting stands, for the department head's list."""
+    try:
+        days = int(days_overdue)
+    except (TypeError, ValueError):
+        return "No due date"
+    if days >= HEAD_NOTICE_DAYS:
+        return f"Overdue by {days_word(days)}, more than a week"
+    if days > 0:
+        return f"Overdue by {days_word(days)}"
+    if days == 0:
+        return "Due today"
+    return f"Due in {days_word(-days)}"
+
+
+def meeting_cell(row: dict[str, Any] | None) -> str:
+    """meeting_line for a table's Meeting column: "Held 15 Oct 2026: Health" or "Not recorded, due 20 Oct 2026"."""
+    line = meeting_line(row)
+    return line[len("Meeting "):][:1].upper() + line[len("Meeting ") + 1:] if line.startswith("Meeting ") else line

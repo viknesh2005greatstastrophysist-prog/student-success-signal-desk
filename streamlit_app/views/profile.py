@@ -96,6 +96,19 @@ def render_signals(row: dict[str, Any] | None) -> None:
     )
 
 
+def current_plan(support: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The student's approved current plan: the newest one shown to the family and on
+    the current figures (the one the student and parent see)."""
+    return next(
+        (
+            row
+            for row in support
+            if row.get("visible") and row.get("evidence_current", True) is not False
+        ),
+        None,
+    )
+
+
 def plan_rows(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
@@ -104,6 +117,9 @@ def plan_rows(plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
             ),
             "Status": labels.status_label(p.get("status")),
             "Outcome": p.get("outcome") or "Not recorded",
+            "Meeting": labels.meeting_cell(p)
+            if p.get("visible_to_student")
+            else "Not needed, plan withdrawn",
             "Figures": figures_label(p),
             "Decided by": p.get("decided_by"),
             "Decision time": labels.nice_time(p.get("decided_at")),
@@ -134,6 +150,16 @@ def render_profile(student_id: str, role: str) -> None:
             if part
         )
     )
+    # The meeting after the approved current plan: held (with the reasons the student
+    # gave) or not recorded yet, with its due date.
+    plan = current_plan(detail.get("support") or [])
+    if plan:
+        overdue = (plan.get("checkin_days_overdue") or 0) > 0 and not plan.get("meeting")
+        st.caption(
+            (":material/event_busy: " if overdue else ":material/handshake: ")
+            + labels.meeting_line(plan)
+            + (f" ({labels.days_word(int(plan['checkin_days_overdue']))} overdue)" if overdue else "")
+        )
     section = sections(
         MENTOR_SECTIONS if is_mentor else HOD_SECTIONS, key=f"profile_section_{role}"
     )

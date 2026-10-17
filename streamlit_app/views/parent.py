@@ -347,7 +347,7 @@ def support_page() -> None:
         return
     if not support:
         render_plan_notice(detail)
-    render_support_cards(support, audience="family")
+    render_support_cards(support, audience="family", child=ui.first_name(child_name, "") or None)
     render_mentor_updates(followups)
 
 

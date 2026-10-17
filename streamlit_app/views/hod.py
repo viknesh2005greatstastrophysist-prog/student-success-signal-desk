@@ -13,6 +13,7 @@ import streamlit as st
 import labels
 import ui
 from common import dataframe, load, load_many, paged, sections, value
+from views.meetings import render_meetings_pending_head
 from views.metrics import render_review_trends
 from views.profile import pick_student, render_profile
 from views.reviews import (
@@ -239,6 +240,7 @@ def overview_page() -> None:
         ]
     )
     render_flagged_students(review, queue)
+    render_meetings_pending_head(overview)
     render_review_trends(review)
     ui.section("Mentor workload", "Mentees per mentor. Details are under Mentors.")
     dataframe(

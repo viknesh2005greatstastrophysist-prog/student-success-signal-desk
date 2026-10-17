@@ -26,6 +26,7 @@ from common import (
     select_id,
     today_local,
 )
+from views.meetings import render_meetings_to_record
 from views.metrics import render_review_trends
 from views.operations import latest_per_student
 from views.profile import pick_student, render_profile
@@ -526,7 +527,8 @@ def _risk_status(risk: dict[str, Any] | None) -> tuple[str, str] | None:
 
 
 def today_page() -> None:
-    """What needs the mentor today: the next decision, the rest, then check-ins."""
+    """What needs the mentor today: the next decision, the rest, stopped reviews,
+    meetings to record after approved plans, then check-ins."""
     actor = st.session_state.get("actor") or {}
     overview, queue, review = load_many(
         [("overview", None), ("review_queue", None), ("review_overview", None)]
@@ -574,6 +576,7 @@ def today_page() -> None:
             "Nothing waiting", "No support drafts need your decision right now."
         )
     render_needs_decision(review)
+    render_meetings_to_record(overview, "faculty")
     today_followups(overview)
 
 
