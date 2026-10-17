@@ -1,8 +1,8 @@
 """AI activity pages: runs, agent graph, evaluation, audit and replay.
 
 This workspace observes the agents; it never decides. Individual source rows and
-risk scores are not shown here. Mentors decide for their mentees; the department head
-can see and act on everything in the department.
+risk scores are not shown here. Mentors run the reviews and decide for their mentees;
+the department head can see everything in the department and decide drafts too.
 """
 
 from __future__ import annotations
@@ -163,8 +163,7 @@ def runs_body(actor: dict[str, Any]) -> None:
     )
     with st.expander("How each student is assessed", icon=":material/help:"):
         st.markdown(
-            "1. A mentor starts a review for their students, or the department head starts one for a mentor's "
-            "students; the planner agent sets it up.\n"
+            "1. A mentor starts a review for their students; the planner agent sets it up.\n"
             "2. Collector agents gather the student's attendance (college records), marks, LMS activity, "
             "internship and placement records, and an evidence check confirms they are complete and current.\n"
             "3. The risk agent scores the student against the department's support policy.\n"

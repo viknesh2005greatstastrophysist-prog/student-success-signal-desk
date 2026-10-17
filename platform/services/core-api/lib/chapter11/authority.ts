@@ -2,15 +2,16 @@ import type { ActorContext } from "@aura/contracts";
 import { requireRole } from "../security";
 
 /**
- * Who may act on a student's support review (owner decision, 17 Oct; reverses
- * E2E #12 and the department-head parts of review R-12).
+ * Who may decide on a student's support draft (owner decisions of 17 Oct).
  *
  * The assigned mentor (role faculty) acts for their own mentees. The department
- * head (role hod) can do everything a mentor can for every student in their
- * department: start, lock, run and pause reviews, edit, approve and decline
- * drafts, record outcomes, restore versions, schedule follow-ups and approve
- * scoring policies for a mentor in the department. Every command already records
- * the actor, so a department-head action is traceable as theirs. The AI activity
+ * head (role hod) sees everything in the department and can decide drafts for any
+ * student in it if needed: approve, edit and decline drafts, record outcomes,
+ * restore versions, schedule follow-ups and record meetings. Planning stays with
+ * the mentor: only a mentor creates, locks, runs or pauses a review and approves a
+ * scoring policy (the department head reads them). The department head's main job
+ * is to check that mentors met their students (meetings.ts). Every command records
+ * the actor, so a department-head decision is traceable as theirs. The AI activity
  * workspace (role governance) never acts, and frozen records (frozen.ts) refuse
  * every change from everyone.
  */

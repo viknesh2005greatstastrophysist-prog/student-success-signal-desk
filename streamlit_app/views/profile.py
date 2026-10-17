@@ -1,6 +1,6 @@
 """One student's profile for staff: a mentor (own mentees) or the department head (any
 student in the department). Mentors decide for their mentees; the department head can
-see and act on everything in the department."""
+see everything in the department and decide drafts too."""
 
 from __future__ import annotations
 

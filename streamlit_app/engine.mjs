@@ -33845,7 +33845,7 @@ var approvePolicySchema = external_exports.object({
   rationale: external_exports.string().trim().min(12).max(600)
 }).strict();
 async function approvePolicy(actor, raw, commandId = randomUUID7()) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   external_exports.string().uuid().parse(commandId);
   const input2 = approvePolicySchema.parse(raw);
   const owner = input2.facultyId ?? actor.personId;
@@ -33911,18 +33911,11 @@ async function approvePolicy(actor, raw, commandId = randomUUID7()) {
       ]
     );
     await client.query(
-      "INSERT INTO ch11_policy_attestations(policy_id,generation_id,approved_by,approved_role,policy_version,provenance) VALUES($1,$2,$3,'faculty',$4,$5)",
-      [
-        id,
-        generation,
-        actor.personId,
-        input2.policy.version,
-        actor.role === "hod" ? "department head approval for the mentor" : "direct faculty approval"
-      ]
+      "INSERT INTO ch11_policy_attestations(policy_id,generation_id,approved_by,approved_role,policy_version) VALUES($1,$2,$3,'faculty',$4)",
+      [id, generation, actor.personId, input2.policy.version]
     );
     await audit(client, generation, actor, id, "policy.approved", input2, {
       id,
-      approvedByRole: actor.role,
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional"
     });
     return {
@@ -33936,7 +33929,7 @@ async function savePlannedPlan(actor, input2, id, expectedRevision, commandId = 
   return persistPlan(actor, planInputSchema.parse(input2), id, expectedRevision, commandId);
 }
 async function persistPlan(actor, parsed, id, expectedRevision, commandId) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   external_exports.string().uuid().parse(commandId);
   const input2 = { ...parsed, mode: "model" };
   delete input2.scopeChoice;
@@ -34063,7 +34056,7 @@ async function persistPlan(actor, parsed, id, expectedRevision, commandId) {
   });
 }
 async function lockPlan(actor, id, expectedRevision) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
     const plan = await getPlan(client, actor, id, true);
     if (plan.status === "locked") return plan;
@@ -34089,13 +34082,6 @@ async function lockPlan(actor, id, expectedRevision) {
     const frozen = await frozenStudentIds(client, plan.body.studentIds ?? []);
     const students = (plan.body.studentIds ?? []).filter((student) => !frozen.has(student));
     if (frozen.size && !students.length) throw frozenRecordError();
-    if (students.length)
-      await requireAssignedStudents(
-        client,
-        plan.generation_id,
-        policy.rows[0].faculty_person_id,
-        students
-      );
     const body = frozen.size ? { ...plan.body, studentIds: students, frozenNote: frozenLeftOutNote(frozen.size) } : plan.body;
     await client.query(
       "UPDATE ch11_plans SET status='locked',body=$3::jsonb,plan_hash=$2,locked_at=now(),revision=revision+1 WHERE id=$1",
@@ -34631,7 +34617,7 @@ async function publishDraft(actor, job, plan) {
   });
 }
 async function executePlan(actor, planId, options = {}) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   const start = performance.now();
   const batchSize = options.concurrency === void 0 && executionConcurrency(4) === 1 ? 1 : 4;
   const initial = await withCoreTransaction(async (client) => {
@@ -35221,7 +35207,7 @@ async function ensureReviewRunning(actor, id) {
   });
 }
 async function setReviewPaused(actor, id, raw) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   const input2 = external_exports.object({
     paused: external_exports.boolean(),
     expectedRevision: external_exports.number().int().nonnegative(),
@@ -35655,7 +35641,7 @@ ${input2.feedback}`,
 
 // services/core-api/lib/chapter11/planning.ts
 async function loadPlanningScope(actor) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     const department = actor.role === "governance" ? null : actor.departmentId ?? null;
@@ -35708,16 +35694,7 @@ async function loadPlanningScope(actor) {
         return parsed.success ? [{ id: r.id, facultyId: r.faculty_person_id, policy: parsed.data }] : [];
       })
     };
-    const own2 = await loadGuardRoster(client, generation, everyone, actor.personId, department);
-    const mentors = actor.role === "hod" ? (await client.query(
-      "SELECT DISTINCT p.display_name AS name,p.email FROM people p JOIN ch11_policies cp ON cp.faculty_person_id=p.id WHERE cp.generation_id=$1 AND cp.department_id=$2",
-      [generation, department]
-    )).rows : [];
-    const roster = {
-      ...own2,
-      names: [...own2.names, ...mentors.flatMap((m) => m.name ? [m.name] : [])],
-      emails: [...own2.emails ?? [], ...mentors.flatMap((m) => m.email ? [m.email] : [])]
-    };
+    const roster = await loadGuardRoster(client, generation, everyone, actor.personId, department);
     return {
       scope,
       roster,
@@ -35748,7 +35725,7 @@ ${b}`.split("\n");
 var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 var unique = (texts) => [...new Set(texts)];
 async function planWithAgent(actor, raw, options = {}) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   const commandId = options.commandId ?? randomUUID8();
   external_exports.string().uuid().parse(commandId);
   const input2 = withoutAgentFields(planInputSchema.parse(raw));

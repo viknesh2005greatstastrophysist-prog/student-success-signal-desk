@@ -1,6 +1,8 @@
 """Department head pages: department trends, any student's profile, reviews, mentors and
-policies. Mentors decide for their mentees; the department head can see and act on
-everything in the department (owner decision, 17 Oct)."""
+policies. The department head's main job is to check that mentors have met their
+students and to message a mentor when they have not; they can also see everything in
+the department and decide drafts if needed (owner decisions, 17 Oct). Mentors run the
+reviews and approve their own scoring policies."""
 
 from __future__ import annotations
 
@@ -21,7 +23,6 @@ from views.reviews import (
     render_draft_reviews,
     render_legacy_drafts,
     render_outcomes,
-    render_plan_workbench,
     render_policies,
     risk_cell,
 )
@@ -291,17 +292,18 @@ def mentors_page() -> None:
 
 
 def policies_page() -> None:
+    """The approved mentor policies and their scoring detail, read-only."""
     actor = st.session_state.get("actor") or {}
     ui.page_header(
         "Policies",
-        "The thresholds and rules the review agents apply. You can approve one for any mentor in the department.",
+        "The thresholds and rules the review agents apply, as each mentor approved them.",
     )
     render_policies(load("review_overview"), actor)
 
 
 def reviews_page() -> None:
-    """Drafts across the department, starting a review for a mentor's students,
-    outcomes and policies: the mentor's Reviews, department-wide."""
+    """Drafts at the gate across the department, with decisions, and Outcomes. Reviews
+    are started, run and paused by the mentors (owner decision, 17 Oct)."""
     actor = st.session_state.get("actor") or {}
     ui.page_header(
         "Reviews",
@@ -341,25 +343,9 @@ def reviews_body(actor: dict[str, Any]) -> None:
         )
         if match:
             st.session_state["support_draft"] = match
-    # "Review again with the latest figures" lands on Start a review with the
-    # student's mentor and the student chosen.
-    again = st.session_state.pop("rereview_student", None)
-    if again:
-        st.session_state["head_reviews_section"] = "Start a review"
-        mentor_id = (people.get(str(again)) or {}).get("mentor_id")
-        if mentor_id:
-            st.session_state["plan_mentor"] = str(mentor_id)
-        st.session_state["plan_students"] = [str(again)]
-    section = sections(
-        [drafts_label, "Start a review", "Outcomes", "Policies"],
-        key="head_reviews_section",
-    )
+    section = sections([drafts_label, "Outcomes"], key="head_reviews_section")
     if section.startswith("Drafts"):
         render_draft_reviews(queue, actor, risk_by_student, mentor_by_student)
         render_legacy_drafts(queue, actor)
-    elif section == "Start a review":
-        render_plan_workbench(review, actor)
-    elif section == "Outcomes":
-        render_outcomes(queue, actor)
     else:
-        render_policies(review, actor)
+        render_outcomes(queue, actor)

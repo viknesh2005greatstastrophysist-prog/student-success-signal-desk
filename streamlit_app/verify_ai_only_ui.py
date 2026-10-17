@@ -4,11 +4,11 @@ database, no model, no network.
 Covers: no execution-mode choice anywhere; the plan card lists who is in scope and
 names the policy instead of showing its UUID; a scope conflict is shown with a
 keep/switch choice that sends the mentor's answer; the revise form opens empty after
-a save and keeps earlier notes read-only; the AI-activity role sees no plan controls and
-no draft content, while the department head (owner decision, 17 Oct) plans for a chosen
-mentor's students with that mentor's policy and reads and decides drafts with a Mentor
-column and filter; reviews that no model answered show the audited reasons and a retry;
-retired rule-based drafts sit in a collapsed read-only section."""
+a save and keeps earlier notes read-only; the AI-activity role and the department head
+see no plan controls (owner decisions, 17 Oct: mentors run the reviews), the AI-activity
+role sees no draft content, while the department head reads and decides drafts with a
+Mentor column and filter; reviews that no model answered show the audited reasons and a
+retry; retired rule-based drafts sit in a collapsed read-only section."""
 
 import html
 import json
@@ -191,8 +191,9 @@ assert "Your selection and your request describe different students" not in text
     at
 ), "a kept choice is not asked again"
 
-# 3. the read-only role: no plan controls, the conflict is shown without buttons
-for actor in (GOVERNANCE,):
+# 3. roles that do not plan (AI activity and the department head): no plan controls,
+# the conflict is shown without buttons
+for actor in (HOD, GOVERNANCE):
     at = workbench(REVIEW, actor)
     seen = labels_of(at)
     for control in (
@@ -207,53 +208,7 @@ for actor in (GOVERNANCE,):
         assert control not in seen, (actor["role"], control, seen)
     assert "Students in scope (1)" in seen, "they can still see who is in scope"
     assert "can observe review plans but not create or change them" in text_of(at)
-    assert "Only the mentor or the department head can answer this" in text_of(at)
-
-# 3b. the department head plans like a mentor: a mentor picker first, then only that
-# mentor's students and approved policies (a policy belongs to one mentor).
-M1, M2 = "aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000002"
-OTHER_POLICY = "8ba9aaf6-9a6e-40eb-bc11-600257503a32"
-HEAD_REVIEW = {
-    **REVIEW,
-    "students": [
-        {**REVIEW["students"][0], "mentor_id": M1, "mentor_name": "DR MIRA SEN"},
-        {**REVIEW["students"][1], "mentor_id": M1, "mentor_name": "DR MIRA SEN"},
-        {**REVIEW["students"][2], "mentor_id": M2, "mentor_name": "DR ARUN DESAI"},
-    ],
-    "policies": [
-        {**REVIEW["policies"][0], "faculty_person_id": M1},
-        {
-            "id": OTHER_POLICY,
-            "policy": {"version": "DESAI-REVIEW-V1"},
-            "rationale": "Approved for Dr Desai's mentees.",
-            "faculty_person_id": M2,
-        },
-    ],
-}
-at = workbench(HEAD_REVIEW, HOD)
-seen = labels_of(at)
-for control in ("Create a review plan", "Answer questions or revise this plan", "Keep my 1", "Use the 2 from my request"):
-    assert control in seen, (control, seen)
-mentor_box = at.segmented_control(key="plan_mentor")
-assert list(mentor_box.options) == ["Dr Arun Desai", "Dr Mira Sen"], mentor_box.options  # sorted by name
-assert mentor_box.value == M2
-students_box = next(m for m in at.multiselect if m.label == "Students in scope")
-policy_box = next(s for s in at.selectbox if s.label == "Approved mentor policy")
-assert len(students_box.options) == 1, students_box.options
-assert len(policy_box.options) == 2, "the chosen mentor's one policy and the empty choice"
-mentor_box.set_value(M1).run()
-students_box = next(m for m in at.multiselect if m.label == "Students in scope")
-policy_box = next(s for s in at.selectbox if s.label == "Approved mentor policy")
-assert len(students_box.options) == 2, students_box.options
-assert list(policy_box.options) == ["Choose an approved policy", "PROJECT-SUPPORT-V1"], policy_box.options
-assert "This plan uses a policy of Dr Mira Sen." in text_of(at)
-next(t for t in at.text_area if t.label == "Review request").set_value("Check Dr Sen's mentees for attendance.")
-next(s for s in at.selectbox if s.label == "Approved mentor policy").set_value(POLICY)
-next(b for b in at.button if b.label == "Save review plan").click().run()
-assert at.session_state["calls"][-1] == [
-    "plan_save",
-    {"request": "Check Dr Sen's mentees for attendance.", "feedback": "", "policyId": POLICY},
-], at.session_state["calls"]
+    assert "Only the assigned mentor can answer this" in text_of(at)
 
 # 4. reviews that no model answered: the reasons, the retry, and no draft
 locked = {
@@ -293,8 +248,8 @@ assert "No AI model answered; waiting for a retry" in text
 retry = next(b for b in at.button if b.label == "Retry AI review")
 retry.click().run()
 assert at.session_state["calls"][-1] == ["plan_execute", {"planId": PLAN}]
-assert "Retry AI review" not in labels_of(workbench(waiting, GOVERNANCE))
-assert "Retry AI review" in labels_of(workbench(waiting, HOD)), "the department head can retry"
+for actor in (GOVERNANCE, HOD):
+    assert "Retry AI review" not in labels_of(workbench(waiting, actor)), "only the mentor runs a review"
 assert "Rule template offered" not in text_of(workbench(waiting, FACULTY))
 
 # 5. the review queue: active drafts only; retired drafts collapsed and read-only; the
@@ -383,7 +338,10 @@ assert [b.label for b in at.button if b.label in DECISION_LABELS] == [
     "Save new draft version",
 ], "the department head has the mentor's decision form"
 assert "You decide as the department head for Dr Mira Sen's mentee" in text
-assert "Mentors decide for their mentees; the department head can see and act on everything in the department." in text
+assert (
+    "Mentors run the reviews and decide for their mentees; the department head can see everything "
+    "in the department and decide drafts too." in text
+)
 assert "Rule-based summary kept on record." in text, "and the retired drafts' content"
 # The AI activity workspace never receives drafts; if it did, it would see no content.
 at = queue(GOVERNANCE, QUEUE)
@@ -402,7 +360,7 @@ print(
                 "scope conflict keep and switch",
                 "revise form opens empty, notes kept",
                 "governance read-only",
-                "HoD plans for a chosen mentor with that mentor's policy",
+                "HoD sees no plan controls",
                 "AI unavailable reasons and retry",
                 "legacy drafts collapsed and read-only",
                 "HoD queue with content, Mentor column and decisions",

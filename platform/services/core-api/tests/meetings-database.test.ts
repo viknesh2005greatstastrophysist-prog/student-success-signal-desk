@@ -26,9 +26,9 @@ import {
 import { groundedComposer } from "./agent-fixtures";
 
 /** Meeting records after a support plan (owner request, 17 Oct) and the department
- * head's full access (owner decision, 17 Oct), against real Postgres in a disposable
- * schema: the department head approves a policy for a mentor, starts, locks and runs
- * a review with it, and approves the draft; the approval creates one check-in for the
+ * head's decisions (owner decisions, 17 Oct), against real Postgres in a disposable
+ * schema: the mentor approves a policy and runs a review (the department head cannot),
+ * the department head approves the draft; the approval creates one check-in for the
  * student's mentor; the backfill finds plans without one; record-meeting validates,
  * completes the check-in and is append-only; reads give staff the reasons and the
  * family only the day. */
@@ -99,19 +99,25 @@ test(
       });
       await seedChapterSources(governance);
 
-      // ---- The department head approves a policy for the mentor and runs a review with it ----
-      const policy = await approvePolicy(hod, {
+      // ---- The mentor approves a policy and runs a review; the department head cannot ----
+      await assert.rejects(
+        () => approvePolicy(hod, { policy: demoPolicy, facultyId: faculty.personId, rationale: "A department head cannot approve mentor thresholds" }),
+        /not permitted/,
+      );
+      const policy = await approvePolicy(faculty, {
         policy: demoPolicy,
-        facultyId: faculty.personId,
-        rationale: "Department head approves these thresholds for the mentor",
+        rationale: "Mentor approves these thresholds for the review",
       });
-      const saved = await savePlan(hod, { request: "Review this student", studentIds: [student], domain: "academic", policyId: policy.id });
-      assert.equal(saved.created_by, hod.personId, "the plan records that the department head started it");
-      assert.equal(saved.body.policyId, policy.id, "and which mentor policy it uses");
-      const locked = await lockPlan(hod, saved.id, saved.revision);
+      await assert.rejects(
+        () => savePlan(hod, { request: "Review this student", studentIds: [student], domain: "academic", policyId: policy.id }),
+        /not permitted/,
+      );
+      const saved = await savePlan(faculty, { request: "Review this student", studentIds: [student], domain: "academic", policyId: policy.id });
+      const locked = await lockPlan(faculty, saved.id, saved.revision);
       assert.equal(locked.status, "locked");
-      await assert.rejects(() => executePlan(otherHod, locked.id, { composer: groundedComposer() }), /outside your department/);
-      const ran = await executePlan(hod, locked.id, { composer: groundedComposer() });
+      for (const head of [hod, otherHod])
+        await assert.rejects(() => executePlan(head, locked.id, { composer: groundedComposer() }), /not permitted/);
+      const ran = await executePlan(faculty, locked.id, { composer: groundedComposer() });
       assert.equal(ran.results[0]!.completed, true);
       const queue = await reviewQueue(hod);
       const draft = queue.drafts.find((d: { student_id: string }) => d.student_id === student)!;

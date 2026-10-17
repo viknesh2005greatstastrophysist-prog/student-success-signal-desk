@@ -75,7 +75,6 @@ import {
 } from "../data-refresh/generation";
 import { persistThenAudit, startLeaseHeartbeat } from "./lease";
 import { frozenLeftOutNote, frozenRecordError, frozenStudentIds } from "./frozen";
-import { requireReviewActor } from "./authority";
 
 /** frozenNote: set when frozen students (frozen.ts) were left out of the plan. */
 type PlanBody = ReturnType<typeof planSkill> & { frozenNote?: string };
@@ -212,15 +211,14 @@ export const approvePolicySchema = z
     rationale: z.string().trim().min(12).max(600),
   })
   .strict();
-/** A mentor approves their own scoring policy; the department head approves one
- * for any active mentor in the department (`facultyId`; authority.ts). The policy
- * belongs to that mentor either way, and the attestation records who approved it. */
+/** A mentor approves their own scoring policy (owner decision, 17 Oct: the
+ * department head reads the policies and never approves one). */
 export async function approvePolicy(
   actor: ActorContext,
   raw: unknown,
   commandId: string = randomUUID(),
 ) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   z.string().uuid().parse(commandId);
   const input = approvePolicySchema.parse(raw);
   const owner = input.facultyId ?? actor.personId;
@@ -292,24 +290,12 @@ export async function approvePolicy(
         ),
       ],
     );
-    // approved_role names the authority the policy carries: a faculty mentor's
-    // scoring policy (migration 010 allows only that value). approved_by and the
-    // provenance say who approved it, so a department-head approval stays traceable.
     await client.query(
-      "INSERT INTO ch11_policy_attestations(policy_id,generation_id,approved_by,approved_role,policy_version,provenance) VALUES($1,$2,$3,'faculty',$4,$5)",
-      [
-        id,
-        generation,
-        actor.personId,
-        input.policy.version,
-        actor.role === "hod"
-          ? "department head approval for the mentor"
-          : "direct faculty approval",
-      ],
+      "INSERT INTO ch11_policy_attestations(policy_id,generation_id,approved_by,approved_role,policy_version) VALUES($1,$2,$3,'faculty',$4)",
+      [id, generation, actor.personId, input.policy.version],
     );
     await audit(client, generation, actor, id, "policy.approved", input, {
       id,
-      approvedByRole: actor.role,
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional",
     });
     return {
@@ -355,11 +341,11 @@ async function persistPlan(
   expectedRevision: number | undefined,
   commandId: string,
 ) {
-  // Plan commands belong to the assigned mentor and the department head
-  // (authority.ts). A department-head plan uses an approved policy of a mentor in
-  // the department and covers only that mentor's students; the plan records the
-  // policy. The AI-activity (governance) role observes and never plans.
-  requireReviewActor(actor);
+  // Plan commands belong to the assigned mentor. The department head and the
+  // AI-activity (governance) roles observe plans but never create or revise them
+  // (owner decision, 17 Oct: the department head checks that mentors met their
+  // students and decides drafts if needed; it does not run reviews).
+  requireRole(actor, "faculty");
   z.string().uuid().parse(commandId);
   // Every review runs on the AI model; the legacy value is only ever read.
   const input: PlanInput = { ...parsed, mode: "model" };
@@ -502,7 +488,7 @@ export async function lockPlan(
   id: string,
   expectedRevision: number,
 ) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
     const plan = await getPlan(client, actor, id, true);
     if (plan.status === "locked") return plan;
@@ -530,15 +516,6 @@ export async function lockPlan(
     const frozen = await frozenStudentIds(client, plan.body.studentIds ?? []);
     const students = (plan.body.studentIds ?? []).filter((student) => !frozen.has(student));
     if (frozen.size && !students.length) throw frozenRecordError();
-    // A policy belongs to one mentor: every student must be that mentor's, whoever
-    // locks the plan (a mentor's own plan is checked by getPlan already).
-    if (students.length)
-      await requireAssignedStudents(
-        client,
-        plan.generation_id,
-        policy.rows[0]!.faculty_person_id,
-        students,
-      );
     const body: PlanBody = frozen.size
       ? { ...plan.body, studentIds: students, frozenNote: frozenLeftOutNote(frozen.size) }
       : plan.body;
@@ -1270,7 +1247,7 @@ export async function executePlan(
     investigation?: { endpoints?: Endpoint[]; chain?: ChainOptions };
   } = {},
 ) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   const start = performance.now();
   // a budgeted remote model runs one review per request: its tokens-per-minute window cannot serve more (E2E log #33)
   const batchSize = options.concurrency === undefined && executionConcurrency(4) === 1 ? 1 : 4;
@@ -2017,7 +1994,7 @@ export async function setReviewPaused(
   id: string,
   raw: unknown,
 ) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   const input = z
     .object({
       paused: z.boolean(),

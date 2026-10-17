@@ -99,45 +99,18 @@ test(
           }),
         /not permitted/,
       );
-      // Owner decision (17 Oct): the department head approves a scoring policy for a
-      // mentor in the department; the policy is the mentor's and the attestation
-      // records the department head as the approver. Another department's head is refused.
-      await assert.rejects(
-        () =>
-          approvePolicy(hod, {
-            policy: demoPolicy,
-            rationale: "A department head names the mentor the policy is for",
-          }),
-        /active mentor in your department/,
-      );
-      await assert.rejects(
-        () =>
-          approvePolicy(otherHod, {
-            policy: demoPolicy,
-            facultyId: faculty.personId,
-            rationale: "Another department cannot approve this mentor's thresholds",
-          }),
-        /active mentor in your department/,
-      );
-      const hodPolicy = await approvePolicy(hod, {
-        policy: { ...demoPolicy, version: `${demoPolicy.version} (department head)` },
-        facultyId: faculty.personId,
-        rationale: "Department head approves these thresholds for the mentor",
-      });
-      await withCoreTransaction(async (client) => {
-        const row = (
-          await client.query(
-            "SELECT p.faculty_person_id,a.approved_by,a.approved_role,a.provenance FROM ch11_policies p JOIN ch11_policy_attestations a ON a.policy_id=p.id WHERE p.id=$1",
-            [hodPolicy.id],
-          )
-        ).rows[0]!;
-        assert.deepEqual(row, {
-          faculty_person_id: faculty.personId,
-          approved_by: hod.personId,
-          approved_role: "faculty",
-          provenance: "department head approval for the mentor",
-        });
-      });
+      // Owner decision (17 Oct): mentors approve their own scoring policies; the
+      // department head reads them and never approves one, in any department.
+      for (const head of [hod, otherHod])
+        await assert.rejects(
+          () =>
+            approvePolicy(head, {
+              policy: demoPolicy,
+              facultyId: faculty.personId,
+              rationale: "A department head cannot approve mentor thresholds",
+            }),
+          /not permitted/,
+        );
       const policy = await approvePolicy(faculty, {
         policy: demoPolicy,
         rationale:
@@ -207,28 +180,30 @@ test(
         reason: "Test pause before collection",
       });
       await assert.rejects(() => executePlan(faculty, locked.id), /paused/);
-      // The department head resumes a mentor's review (owner decision, 17 Oct);
-      // another department's head can neither resume it nor plan with its policy.
-      await assert.rejects(
-        () =>
-          setReviewPaused(otherHod, locked.id, {
-            expectedRevision: locked.revision + 1,
-            paused: false,
-            reason: "Another department resumes",
-          }),
-        /outside your department/,
-      );
-      await assert.rejects(
-        () =>
-          savePlan(otherHod, {
-            request: "Review this student",
-            studentIds: [student.studentId],
-            domain: "academic",
-            policyId: policy.id,
-          }),
-        /outside your department/,
-      );
-      await setReviewPaused(hod, locked.id, {
+      // Only the mentor resumes or plans a review (owner decision, 17 Oct): the
+      // department head of this or another department can do neither.
+      for (const head of [hod, otherHod]) {
+        await assert.rejects(
+          () =>
+            setReviewPaused(head, locked.id, {
+              expectedRevision: locked.revision + 1,
+              paused: false,
+              reason: "A department head resumes",
+            }),
+          /not permitted/,
+        );
+        await assert.rejects(
+          () =>
+            savePlan(head, {
+              request: "Review this student",
+              studentIds: [student.studentId],
+              domain: "academic",
+              policyId: policy.id,
+            }),
+          /not permitted/,
+        );
+      }
+      await setReviewPaused(faculty, locked.id, {
         expectedRevision: locked.revision + 1,
         paused: false,
         reason: "Resume the saved review",

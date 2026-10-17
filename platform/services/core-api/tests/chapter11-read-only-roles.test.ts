@@ -3,19 +3,20 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import type { ActorContext } from "@aura/contracts";
 import { AuthorizationError } from "../lib/security";
-import { executePlan, jobsForRole, lockPlan, safeJobRow, safeValidation, savePlan, savePlannedPlan, seesReviewContent, setReviewPaused } from "../lib/chapter11/service";
+import { approvePolicy, executePlan, jobsForRole, lockPlan, safeJobRow, safeValidation, savePlan, savePlannedPlan, seesReviewContent, setReviewPaused } from "../lib/chapter11/service";
 import { loadPlanningScope, planWithAgent } from "../lib/chapter11/planning";
 import { editDraft, recordOutcome, restoreVersion } from "../lib/chapter11/review";
 import { decideSupportCase } from "../lib/support-commands";
 import { REVIEW_ACTOR_ROLES, requireReviewActor } from "../lib/chapter11/authority";
 
-/** E2E log #12 as revised by the owner (17 Oct): the assigned mentor and the
- * department head create, revise, lock, run and pause review plans, edit and
- * decide drafts and record outcomes; the AI-activity (governance) workspace and
- * the student and parent roles never do. The Core rejects those commands from
- * every other role before any database access, so this needs no database. The
- * opt-in database suites assert the department scope against real data: the
- * department head acts in their own department and is refused in another. */
+/** E2E log #12 with the owner decisions of 17 Oct: only the assigned mentor
+ * creates, revises, locks, runs and pauses review plans and approves a scoring
+ * policy; the mentor and the department head edit and decide drafts, record
+ * outcomes and restore versions; the AI-activity (governance) workspace and the
+ * student and parent roles never do any of it. The Core rejects those commands
+ * before any database access, so this needs no database. The opt-in database
+ * suites assert the department scope against real data: the department head
+ * decides in their own department and is refused in another. */
 
 const actorAs = (role: ActorContext["role"]): ActorContext => ({
   subject: `${role}@aura.invalid`,
@@ -29,20 +30,32 @@ const notPermitted = (role: string) => (error: unknown) =>
 
 const input = { request: "Review my mentees' attendance", studentIds: [randomUUID()], domain: "attendance" as const, policyId: randomUUID() };
 
+const planCommands = (actor: ActorContext): Record<string, () => Promise<unknown>> => {
+  const planId = randomUUID();
+  return {
+    "create a plan with the planner": () => planWithAgent(actor, input, { commandId: randomUUID() }),
+    "revise a plan with the planner": () =>
+      planWithAgent(actor, input, { id: planId, expectedRevision: 1, commandId: randomUUID() }),
+    "save a typed plan": () => savePlan(actor, input),
+    "save a planned plan": () => savePlannedPlan(actor, { ...input, feedback: "", mode: "model" }),
+    "lock a plan": () => lockPlan(actor, planId, 1),
+    "run a plan": () => executePlan(actor, planId),
+    "pause a plan": () => setReviewPaused(actor, planId, { paused: true, expectedRevision: 1, reason: "Not allowed" }),
+    "read the planning scope": () => loadPlanningScope(actor),
+    "approve a scoring policy": () => approvePolicy(actor, { policy: {}, rationale: "Not allowed for this role" }),
+  };
+};
+
+test("owner decision (17 Oct): the department head never plans, locks, runs or pauses a review or approves a policy", async () => {
+  for (const [name, run] of Object.entries(planCommands(actorAs("hod"))))
+    await assert.rejects(run, notPermitted("hod"), `hod must not ${name}`);
+});
+
 for (const role of ["governance", "student", "parent"] as const) {
-  test(`${role} cannot create, revise, lock, run or pause a review plan, edit or decide a draft or record an outcome`, async () => {
+  test(`${role} cannot create, revise, lock, run or pause a review plan, approve a policy, edit or decide a draft or record an outcome`, async () => {
     const actor = actorAs(role);
-    const planId = randomUUID();
     const commands: Record<string, () => Promise<unknown>> = {
-      "create a plan with the planner": () => planWithAgent(actor, input, { commandId: randomUUID() }),
-      "revise a plan with the planner": () =>
-        planWithAgent(actor, input, { id: planId, expectedRevision: 1, commandId: randomUUID() }),
-      "save a typed plan": () => savePlan(actor, input),
-      "save a planned plan": () => savePlannedPlan(actor, { ...input, feedback: "", mode: "model" }),
-      "lock a plan": () => lockPlan(actor, planId, 1),
-      "run a plan": () => executePlan(actor, planId),
-      "pause a plan": () => setReviewPaused(actor, planId, { paused: true, expectedRevision: 1, reason: "Not allowed" }),
-      "read the planning scope": () => loadPlanningScope(actor),
+      ...planCommands(actor),
       // review R-12: editing a draft and recording an outcome belong to the mentor and the department head
       "edit a draft": () => editDraft(actor, randomUUID(), randomUUID(), {}),
       "record an outcome or withdraw a plan": () => recordOutcome(actor, randomUUID(), randomUUID(), {}),
@@ -69,20 +82,21 @@ test("the role gate sits in front of the plan commands, not only in the UI", asy
   await assert.rejects(() => recordOutcome(actorAs("governance"), randomUUID(), randomUUID(), {}), notPermitted("governance"));
 });
 
-test("owner decision (17 Oct): the mentor and the department head pass the review role gate, nobody else", () => {
+test("owner decision (17 Oct): the mentor and the department head pass the decision role gate, nobody else", () => {
   assert.deepEqual([...REVIEW_ACTOR_ROLES], ["faculty", "hod"]);
   for (const role of ["faculty", "hod"] as const) assert.doesNotThrow(() => requireReviewActor(actorAs(role)));
   for (const role of ["governance", "student", "parent"] as const)
     assert.throws(() => requireReviewActor(actorAs(role)), notPermitted(role));
 });
 
-test("the department head's commands pass the role gate and reach input validation", async () => {
+test("the department head's decision commands pass the role gate and reach input validation", async () => {
   // A body that fails validation shows the role gate let the department head through.
+  // Planning is refused for the role itself (above), whatever the body.
   const hod = actorAs("hod");
   await assert.rejects(() => editDraft(hod, randomUUID(), randomUUID(), {}), (e: unknown) => !(e instanceof AuthorizationError));
   await assert.rejects(() => recordOutcome(hod, randomUUID(), randomUUID(), {}), (e: unknown) => !(e instanceof AuthorizationError));
   await assert.rejects(() => restoreVersion(hod, randomUUID(), randomUUID(), {}), (e: unknown) => !(e instanceof AuthorizationError));
-  await assert.rejects(() => planWithAgent(hod, { not: "a plan" }), (e: unknown) => !(e instanceof AuthorizationError));
+  await assert.rejects(() => planWithAgent(hod, { not: "a plan" }), notPermitted("hod"));
 });
 
 test("owner decision (17 Oct): the mentor and the department head get full review rows; AI activity keeps the safe projection", () => {

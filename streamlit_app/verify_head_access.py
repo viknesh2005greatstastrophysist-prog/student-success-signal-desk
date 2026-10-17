@@ -1,12 +1,15 @@
-"""Offline check for the owner decision of 17 Oct: the department head can see and act on
-everything in the department. Fictional data; no server, database, model or network.
+"""Offline check for the owner decisions of 17 Oct: the department head sees everything in
+the department and can decide drafts if needed, but never plans or runs a review or
+approves a policy. Fictional data; no server, database, model or network.
 
 Covered: the department head's Reviews page (drafts across the department with a Mentor
-column and filter, Start a review, Outcomes with the update form, Policies with the
-approve control and a mentor picker); a student's profile, Support plans tab, shows the
-draft and the mentor's approve, edit and decline form; the Overview's flagged list shows
-the risk band and score; and none of the old "the department head only observes" wording
-is left in the screens."""
+column and filter and the decision form, and Outcomes with the update form; no Start a
+review); the Policies page lists the approved policies and the scoring detail read-only
+with the footnote "Mentors approve their own scoring policies; the department head can
+read them."; a student's profile, Support plans tab, shows the draft and the mentor's
+approve, edit and decline form; the Overview's flagged list shows the risk band and
+score; and none of the old "the department head only observes" or "acts on everything"
+wording is left in the screens."""
 
 import json
 import re
@@ -115,7 +118,7 @@ DECISIONS = ["Approve and publish", "Edit", "Decline"]
 # 1. Reviews > Drafts at the gate: every draft in the department, a Mentor column and filter.
 at = run("import views.hod as hod\nhod.reviews_page()")
 section = at.segmented_control(key="head_reviews_section")
-assert list(section.options) == ["Drafts at the gate (2)", "Start a review", "Outcomes", "Policies"], section.options
+assert list(section.options) == ["Drafts at the gate (2)", "Outcomes"], section.options
 table = next(df.value for df in at.dataframe if "Mentor" in df.value.columns)
 assert list(table["Mentor"]) == ["Dr Mira Sen", "Dr Arun Desai"], list(table["Mentor"])
 assert list(table["Risk"]) == ["High risk · 72", "—"], list(table["Risk"])
@@ -125,29 +128,20 @@ table = next(df.value for df in at.dataframe if "Mentor" in df.value.columns)
 assert list(table["Register number"]) == ["01FE23BCI031"], "the filter keeps that mentor's students"
 assert "You decide as the department head for Dr Arun Desai's mentee" in text_of(at)
 
-# 2. Start a review: a mentor picker, then that mentor's policy.
-at.segmented_control(key="head_reviews_section").set_value("Start a review").run()
-assert picker(at, "Mentor") is not None
-assert "A review uses one mentor's approved policy and covers that mentor's students." in text_of(at)
-
 # 3. Outcomes: the update form, the same one the mentor has.
 at.segmented_control(key="head_reviews_section").set_value("Outcomes").run()
 assert "Save outcome" in [b.label for b in at.button], [b.label for b in at.button]
 
-# 4. Policies: the approve control, for a chosen mentor.
-at.segmented_control(key="head_reviews_section").set_value("Policies").run()
-assert "Approve policy" in [b.label for b in at.button]
-assert "Choose the mentor the policy is for; it records you as the approver." in text_of(at)
-at.selectbox(key="policy_mentor").set_value(M1)
-at.text_input[0].set_value("Department review 1")
-values = [60.0, 50.0, 7, 30.0, 60.0, 14]
-for widget, number in zip(at.number_input[:6], values):
-    widget.set_value(number)
-next(t for t in at.text_area if t.label == "Reason for approving this policy").set_value("Agreed with the mentor for this cycle")
-next(b for b in at.button if b.label == "Approve policy").click().run()
-action, payload, success = at.session_state["calls"][-1]
-assert action == "policy_approve" and payload["facultyId"] == M1, (action, payload)
-assert success == "Policy approved for Dr Mira Sen.", success
+assert "Create a review plan" not in text_of(at), "no Start a review"
+
+# 4. Policies: the approved policies and the scoring detail, read-only.
+at = run("import views.hod as hod\nhod.policies_page()")
+shown = text_of(at)
+assert "SEN-REVIEW-V1" in shown, "the approved policy is listed"
+assert "Mentors approve their own scoring policies; the department head can read them." in shown
+assert "Approve policy" not in [b.label for b in at.button], "no approve control"
+assert not [w for w in at.text_input], "no policy form"
+assert any("Policy version" in df.value.columns for df in at.dataframe), "the scoring detail table"
 
 # 5. A student's profile, Support plans: the draft and the mentor's form.
 at = run(f"ns['render_profile']({S1!r}, 'hod')")
@@ -177,15 +171,18 @@ OLD = [
     "Only the assigned faculty mentor can approve a scoring policy",
     "visible only to the student's assigned mentor",
     "visible only to the student's mentor",
+    "can see and act on everything",
+    "You can approve one for any mentor",
+    "starts one for a mentor's",
 ]
 for path in sorted((APP / "views").glob("*.py")):
     source = path.read_text(encoding="utf-8")
     for phrase in OLD:
         assert phrase not in source, (path.name, phrase)
-assert re.search(r"department head can see and act on everything in the department", (APP / "views" / "reviews.py").read_text())
+assert re.search(r"the department head can see everything", (APP / "views" / "reviews.py").read_text())
 
 print(json.dumps({"status": "passed", "checks": [
-    "HoD Reviews drafts with Mentor column and filter", "HoD starts a review for a chosen mentor",
-    "HoD Outcomes update form", "HoD approves a policy for a mentor", "HoD profile draft and decision form",
+    "HoD Reviews drafts with Mentor column and filter, no Start a review",
+    "HoD Outcomes update form", "HoD Policies read-only with footnote", "HoD profile draft and decision form",
     "HoD flagged list band and score", "old observe-only wording removed",
 ]}))

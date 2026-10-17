@@ -352,9 +352,9 @@ test(
       const snapshotAt = await withCoreTransaction(async (c) => (await c.query<{ captured_at: Date }>("SELECT captured_at FROM evidence_snapshots WHERE support_case_id=$1", [caseId])).rows[0]!.captured_at);
       assert.equal(new Date(snapshotAt).toISOString(), new Date(drafted.checkpoint.capturedAt).toISOString());
 
-      // ---- #12 as revised by the owner (17 Oct): the mentor and the department head
-      // run plan commands; the AI activity workspace never does ----
-      for (const actor of [governance]) {
+      // ---- #12 (owner decisions of 17 Oct): only the mentor runs plan commands; the
+      // department head and the AI activity workspace never do ----
+      for (const actor of [hod, governance]) {
         await assert.rejects(() => savePlan(actor, { request: "Review this student", studentIds: [student], domain: "attendance", policyId: policy.id }), /not permitted/);
         await assert.rejects(() => planWithAgent(actor, { request: "Review this student" }, { commandId: randomUUID() }), /not permitted/);
         await assert.rejects(() => lockPlan(actor, locked.id, locked.revision), /not permitted/);
@@ -363,9 +363,6 @@ test(
       }
       await setReviewPaused(faculty, locked.id, { paused: true, expectedRevision: (await exportPlan(faculty, locked.id)).plan.revision, reason: "Mentor can pause" });
       await setReviewPaused(faculty, locked.id, { paused: false, expectedRevision: (await exportPlan(faculty, locked.id)).plan.revision, reason: "Mentor can resume" });
-      await setReviewPaused(hod, locked.id, { paused: true, expectedRevision: (await exportPlan(hod, locked.id)).plan.revision, reason: "Department head can pause" });
-      await setReviewPaused(hod, locked.id, { paused: false, expectedRevision: (await exportPlan(hod, locked.id)).plan.revision, reason: "Department head can resume" });
-      assert.equal((await lockPlan(hod, locked.id, locked.revision)).status, "locked", "locking a locked plan returns it");
 
       // ---- #8 as revised by the owner (17 Oct): risk figures and drafts belong to the
       // mentor and the department head; AI activity keeps the safe projection ----

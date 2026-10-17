@@ -23,13 +23,17 @@ from common import (
     value,
 )
 
-# Who decides (owner decision, 17 Oct): mentors for their mentees, and the
-# department head for every student in the department. The Core enforces the
-# same rule; the AI activity workspace only observes.
+# Who decides (owner decisions, 17 Oct): mentors run the reviews and decide for
+# their mentees; the department head sees everything in the department and can
+# decide drafts (approve, edit, decline, record outcomes) if needed, but never
+# plans, runs or pauses a review or approves a policy. The Core enforces the same
+# rule; the AI activity workspace only observes.
 DECIDER_ROLES = ("faculty", "hod")
 SHARED_AUTHORITY = (
-    "Mentors decide for their mentees; the department head can see and act on everything in the department."
+    "Mentors run the reviews and decide for their mentees; the department head can see everything "
+    "in the department and decide drafts too."
 )
+POLICY_FOOTNOTE = "Mentors approve their own scoring policies; the department head can read them."
 
 
 def decides(actor: dict[str, Any]) -> bool:
@@ -40,15 +44,6 @@ def mentor_names(review: dict[str, Any]) -> dict[str, str]:
     """Mentor id to name, for the mentors who have mentees in this review scope."""
     return {
         str(row.get("mentor_id")): labels.pretty_name(row.get("mentor_name") or "Mentor")
-        for row in review.get("students") or []
-        if row.get("mentor_id")
-    }
-
-
-def mentor_of_student(review: dict[str, Any]) -> dict[str, str]:
-    """Student id to their mentor's id."""
-    return {
-        str(value(row, "id", "student_id", default="")): str(row.get("mentor_id"))
         for row in review.get("students") or []
         if row.get("mentor_id")
     }
@@ -67,28 +62,13 @@ SCORING_FIELDS = {
 }
 
 
-def render_policy_form(mentors: dict[str, str] | None = None) -> None:
-    """The policy form. With `mentors` (the department head) it first asks which
-    mentor the policy is for; the policy then belongs to that mentor."""
+def render_policy_form() -> None:
     ui.section(
         "Approve a mentor policy",
-        "These thresholds and weights are exactly what reviews will apply. "
-        + (
-            "Choose the mentor the policy is for; it records you as the approver."
-            if mentors is not None
-            else "Mentors approve their own; the department head can approve one for any mentor in the department."
-        ),
+        "These thresholds and weights are exactly what reviews will apply. You approve your own; the department head can read them.",
         icon=":material/rule:",
     )
     with st.form("approve_policy"):
-        mentor_id = None
-        if mentors is not None:
-            mentor_id = pick(
-                "Mentor",
-                [None, *sorted(mentors, key=lambda m: mentors[m])],
-                format_func=lambda m: "Choose a mentor" if m is None else mentors[m],
-                key="policy_mentor",
-            )
         version = st.text_input(
             "Policy version", max_chars=80, placeholder="For example, Mentor review 1"
         )
@@ -144,9 +124,7 @@ def render_policy_form(mentors: dict[str, str] | None = None) -> None:
         submitted = st.form_submit_button("Approve policy", type="primary")
     if submitted:
         values = [attendance_min, mark_min, inactivity_max, medium, high, freshness]
-        if mentors is not None and not mentor_id:
-            st.error("Choose the mentor this policy is for.")
-        elif (
+        if (
             len(version.strip()) < 3
             or any(item is None for item in values)
             or len(rationale.strip()) < 12
@@ -167,13 +145,10 @@ def render_policy_form(mentors: dict[str, str] | None = None) -> None:
                 "freshnessDays": int(freshness),
                 **scoring,
             }
-            payload: dict[str, Any] = {"policy": policy, "rationale": rationale.strip()}
-            if mentor_id:
-                payload["facultyId"] = mentor_id
             save_action(
                 "policy_approve",
-                payload,
-                f"Policy approved for {mentors[mentor_id]}." if mentor_id and mentors else "Mentor policy approved.",
+                {"policy": policy, "rationale": rationale.strip()},
+                "Mentor policy approved.",
             )
 
 
@@ -265,11 +240,8 @@ def render_policies(review: dict[str, Any], actor: dict[str, Any]) -> None:
     if actor.get("role") == "faculty":
         with ui.card("policy_form"):
             render_policy_form()
-    elif actor.get("role") == "hod":
-        with ui.card("policy_form"):
-            render_policy_form(mentors)
     else:
-        st.caption(f":material/lock: {SHARED_AUTHORITY}")
+        st.caption(f":material/lock: {POLICY_FOOTNOTE}")
 
 
 def policy_text(text: Any, policy_by_id: dict[str, dict[str, Any]]) -> str:
@@ -397,7 +369,7 @@ def render_plan_scope(
                 f"The plan stays on your **{selected}** until you choose."
             )
             if not can_plan:
-                st.caption("Only the mentor or the department head can answer this.")
+                st.caption("Only the assigned mentor can answer this.")
             else:
                 keep_col, switch_col = st.columns(2)
                 with keep_col:
@@ -540,22 +512,9 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
     }
     policy_by_id = {row["id"]: row for row in policies if row["id"]}
     plans = review.get("plans") or []
-    # Plans are created, revised, locked, run and paused by the mentor or the
-    # department head; the AI-activity role observes (the Core enforces it).
-    can_plan = role in DECIDER_ROLES
-    head = role == "hod"
-    mentors = mentor_names(review)
-    mentor_of = mentor_of_student(review)
-
-    def for_mentor(mentor_id: str | None) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        """The students and policies a plan may use. A policy belongs to one mentor, so
-        the department head first chooses the mentor; a mentor has only their own."""
-        if not head or not mentor_id:
-            return student_options, policy_by_id
-        return (
-            [sid for sid in student_options if mentor_of.get(sid) == mentor_id],
-            {pid: row for pid, row in policy_by_id.items() if str(row.get("owner")) == mentor_id},
-        )
+    # Plans are created, revised, locked, run and paused by the assigned mentor
+    # only; the department head and AI-activity roles observe (the Core enforces it).
+    can_plan = role == "faculty"
     st.caption(
         ":material/route: **How a review runs:** describe it → answer the planner's questions → "
         "lock the plan → run the agents → decide each draft in the review queue."
@@ -576,39 +535,15 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     "Nothing is drafted by rules: saving will ask you to retry.",
                     icon=":material/cloud_off:",
                 )
-            chosen_mentor = None
-            if head:
-                st.caption(
-                    "A review uses one mentor's approved policy and covers that mentor's students. "
-                    "The plan records the policy and that you started it."
-                )
-                chosen_mentor = pick(
-                    "Mentor",
-                    sorted(mentors, key=lambda m: mentors[m]),
-                    format_func=lambda m: mentors.get(m, "Mentor"),
-                    key="plan_mentor",
-                )
-            create_students, create_policies = for_mentor(chosen_mentor)
-            if head and not create_policies:
-                st.caption(
-                    ":material/policy: This mentor has no approved policy yet. Approve one under Policies first."
-                )
-            if "plan_students" in st.session_state:
-                # A student of another mentor cannot stay selected after the mentor changes.
-                st.session_state["plan_students"] = [
-                    sid for sid in st.session_state["plan_students"] if sid in create_students
-                ]
             with st.form("create_plan", border=False):
                 request_text = st.text_area(
                     "Review request",
                     max_chars=2000,
-                    placeholder="For example: check the students whose attendance dropped this month."
-                    if head
-                    else "For example: check my mentees whose attendance dropped this month.",
+                    placeholder="For example: check my mentees whose attendance dropped this month.",
                 )
                 chosen_students = st.multiselect(
                     "Students in scope",
-                    create_students,
+                    student_options,
                     format_func=lambda item: student_labels.get(item, item),
                     max_selections=50,
                     filter_mode=None,
@@ -628,13 +563,12 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 with right:
                     policy_id = pick(
                         "Approved mentor policy",
-                        [None, *create_policies.keys()],
+                        [None, *policy_by_id.keys()],
                         format_func=lambda item: (
                             "Choose an approved policy"
                             if item is None
-                            else create_policies[item]["Policy version"]
+                            else policy_by_id[item]["Policy version"]
                         ),
-                        key=f"plan_policy_{chosen_mentor or 'own'}",
                     )
                 feedback = st.text_area("Planning notes", max_chars=1000)
                 submitted = st.form_submit_button(
@@ -653,8 +587,6 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                     payload["policyId"] = policy_id
                 if len(request_text.strip()) < 3:
                     st.error("Describe the review in at least three characters.")
-                elif head and not policy_id:
-                    st.error("Choose the mentor's approved policy for this review.")
                 else:
                     save_action("plan_save", payload, "Review plan saved.")
 
@@ -760,12 +692,6 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             # revision always opens a fresh form: the feedback box is empty and
             # every field shows the saved values again, never the old typed text.
             form_key = f"revise_plan_{selected_id}_{selected_plan['revision']}_{selector_revision}"
-            # The department head revises within the plan's mentor: that mentor's
-            # students and policies (a mentor's lists are their own already).
-            plan_owner = str((policy_by_id.get(body.get("policyId")) or {}).get("owner") or "") or None
-            revise_students, revise_policies = for_mentor(plan_owner)
-            if head and plan_owner:
-                st.caption(f"This plan uses a policy of {mentors.get(plan_owner, 'the mentor')}.")
             with st.form(form_key, border=False):
                 revised_request = st.text_area(
                     "Revised review request",
@@ -775,11 +701,11 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                 )
                 revised_students = st.multiselect(
                     "Revised students in scope",
-                    revise_students,
+                    student_options,
                     default=[
                         sid
                         for sid in body.get("studentIds", [])
-                        if sid in revise_students
+                        if sid in student_options
                     ],
                     format_func=lambda sid: student_labels.get(sid, sid),
                     max_selections=50,
@@ -798,7 +724,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                         ),
                         key=f"{form_key}_focus",
                     )
-                policy_ids = [None, *revise_policies]
+                policy_ids = [None, *policy_by_id]
                 with right:
                     revised_policy = pick(
                         "Revised policy",
@@ -807,7 +733,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
                         if body.get("policyId") in policy_ids
                         else 0,
                         format_func=lambda item: (
-                            revise_policies[item]["Policy version"]
+                            policy_by_id[item]["Policy version"]
                             if item
                             else "Choose a policy"
                         ),
@@ -856,7 +782,7 @@ def render_plan_workbench(review: dict[str, Any], actor: dict[str, Any]) -> None
             st.caption(
                 ":material/lock: This plan is locked"
                 + (" and paused" if selected_plan.get("paused") else "")
-                + ". Only the mentor or the department head can run or pause it."
+                + ". Only the assigned mentor can run or pause it."
             )
         elif selected_plan.get("status") == "locked":
             paused = bool(selected_plan.get("paused"))

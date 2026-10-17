@@ -4,7 +4,7 @@ import { z } from "zod";
 import { withCoreTransaction } from "../db";
 import { getCurrentGeneration } from "../command-ledger";
 import { ConflictError } from "../http";
-import { requireReviewActor } from "./authority";
+import { requireRole } from "../security";
 import {
   planInputSchema,
   policySchema,
@@ -32,14 +32,12 @@ import { frozenLeftOutNote, frozenStudentIds } from "./frozen";
 import { activeTermCode } from "../active-term";
 
 /** The actor's own students (same visibility as the review overview) with two
- * aggregate figures, and the actor's approved policies: a mentor's own, or for
- * the department head every student with a mentor and every mentor policy in the
- * department (a chosen policy then limits the plan to that mentor's students).
- * Nothing here leaves the server except as counts, aliases and threshold
- * numbers. Frozen students (frozen.ts) are left out, so no criteria-based plan
- * can pull them in; the response says how many. */
+ * aggregate figures, and the actor's approved policies. Nothing here leaves the
+ * server except as counts, aliases and threshold numbers. Frozen students
+ * (frozen.ts) are left out, so no criteria-based plan can pull them in; the
+ * response says how many. */
 export async function loadPlanningScope(actor: ActorContext) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     const department = actor.role === "governance" ? null : (actor.departmentId ?? null);
@@ -96,23 +94,8 @@ export async function loadPlanningScope(actor: ActorContext) {
           : [];
       }),
     };
-    // The privacy guard still knows every mentee's name, frozen or not, and for the
-    // department head every mentor whose policy a plan may use.
-    const own = await loadGuardRoster(client, generation, everyone, actor.personId, department);
-    const mentors =
-      actor.role === "hod"
-        ? (
-            await client.query<{ name: string | null; email: string | null }>(
-              "SELECT DISTINCT p.display_name AS name,p.email FROM people p JOIN ch11_policies cp ON cp.faculty_person_id=p.id WHERE cp.generation_id=$1 AND cp.department_id=$2",
-              [generation, department],
-            )
-          ).rows
-        : [];
-    const roster = {
-      ...own,
-      names: [...own.names, ...mentors.flatMap((m) => (m.name ? [m.name] : []))],
-      emails: [...(own.emails ?? []), ...mentors.flatMap((m) => (m.email ? [m.email] : []))],
-    };
+    // The privacy guard still knows every mentee's name, frozen or not.
+    const roster = await loadGuardRoster(client, generation, everyone, actor.personId, department);
     return {
       scope,
       roster,
@@ -158,7 +141,8 @@ const unique = (texts: string[]) => [...new Set(texts)];
  * and locked checks intact). Every plan is drafted by the AI planner: when no
  * model answers, nothing is saved and the mentor is asked to retry (there is
  * no rule-based parser to fall back to). The planner never locks or executes.
- * A mentor (faculty) or the department head (hod) may create or revise a plan.
+ * Only a mentor (faculty) may create or revise a plan; the department head reads
+ * plans and never runs reviews (owner decision, 17 Oct).
  *
  * Scope: the mentor's explicit "Students in scope" selection is authoritative
  * (see planner.ts). A conflict with the request text is stored on the plan and
@@ -175,7 +159,7 @@ export async function planWithAgent(
     chain?: ChainOptions;
   } = {},
 ) {
-  requireReviewActor(actor);
+  requireRole(actor, "faculty");
   const commandId = options.commandId ?? randomUUID();
   z.string().uuid().parse(commandId);
   const input = withoutAgentFields(planInputSchema.parse(raw));
