@@ -335,7 +335,7 @@ assert len(buttons) == 3 and "3 of these 5 can be reviewed again below. Start th
 shown, buttons = rereview([stale_plan("a"), stale_plan("a"), stale_plan("b")])
 assert "2 students with a plan" in shown and len(buttons) == 2 and "can be reviewed again below" not in shown, shown
 shown, buttons = rereview([stale_plan("a", frozen=True)])
-assert not buttons and "None of these can be reviewed again here. 1 is kept unchanged" in shown, shown
+assert not buttons and "No draft here can be reviewed again. 1 is kept unchanged" in shown, shown
 
 # P3-1: one click to withdraw a shown plan, with a short reason, through the same
 # outcome command as Status "Withdraw plan"; a withdrawn plan offers no button.

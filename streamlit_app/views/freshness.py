@@ -57,7 +57,7 @@ def render_rereview(rows: list[dict[str, Any]] | None, *, role: str, key: str, n
         notes = [
             f"{len(shown)} of these {count} can be reviewed again below."
             if shown
-            else "None of these can be reviewed again here."
+            else "No draft here can be reviewed again."
         ]
         if frozen:
             notes.append(

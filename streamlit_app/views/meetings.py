@@ -163,7 +163,7 @@ def render_meetings_pending_head(overview: dict[str, Any]) -> None:
         + (
             f"{week} {'is' if week == 1 else 'are'} overdue by more than a week."
             if week
-            else "None is overdue by more than a week."
+            else "No meeting is overdue by more than a week."
         ),
     )
     if not rows:
