@@ -11,6 +11,7 @@ import {
 import { ConflictError, NotFoundError } from "../http";
 import { requireRole } from "../security";
 import { awaitingCases } from "./awaiting";
+import { actorScopeParams, actsOnStudentSql, requireReviewActor } from "./authority";
 import {
   assertCaseNotFrozen,
   assertStudentNotFrozen,
@@ -43,8 +44,9 @@ export async function editDraft(
   commandId: string,
   raw: unknown,
 ) {
-  // Mentors alone decide and edit; the department head observes (review R-12).
-  requireRole(actor, "faculty");
+  // The assigned mentor, or the department head for any student in the
+  // department (owner decision, 17 Oct; authority.ts).
+  requireReviewActor(actor);
   assertCommandId(commandId);
   z.string().uuid().parse(caseId);
   const input = editSchema.parse(raw);
@@ -85,8 +87,8 @@ export async function editDraft(
       `SELECT c.revision,c.status,e.evidence,p.body->>'domain' AS domain,r.id AS run_id,r.mode AS run_mode,a.id AS artifact_id,a.artifact_version,c.student_id,p.department_id,jsonb_build_object('version',COALESCE(pa.policy_version,''),'facultyApproved',COALESCE(pa.approved_role='faculty',false)) AS policy_guard
        FROM support_cases c JOIN evidence_snapshots e ON e.support_case_id=c.id JOIN agent_runs r ON r.evidence_snapshot_id=e.id
        JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN ch11_jobs j ON j.support_case_id=c.id JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN ch11_policy_attestations pa ON pa.policy_id=(p.body->>'policyId')::uuid AND pa.generation_id=c.generation_id
-       WHERE c.id=$1 AND c.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=c.student_id AND m.faculty_person_id=$3) ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`,
-      [caseId, generation, actor.personId],
+       WHERE c.id=$1 AND c.generation_id=$2 AND ${actsOnStudentSql("c.student_id", "$4", "$3", "$5")} ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`,
+      [caseId, generation, actor.personId, actor.role, actor.departmentId ?? null],
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned Chapter 11 draft not found");
@@ -190,8 +192,9 @@ export async function recordOutcome(
   commandId: string,
   raw: unknown,
 ) {
-  // Only the assigned mentor records outcomes or withdraws a plan (review R-12).
-  requireRole(actor, "faculty");
+  // The assigned mentor, or the department head for any student in the
+  // department, records outcomes or withdraws a plan (authority.ts).
+  requireReviewActor(actor);
   assertCommandId(commandId);
   z.string().uuid().parse(planId);
   const input = outcomeSchema.parse(raw);
@@ -218,8 +221,8 @@ export async function recordOutcome(
       plan: unknown;
     }>(
       `SELECT p.id,p.student_id,s.department_id,p.plan FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id
-       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$3) FOR UPDATE OF p`,
-      [planId, generation, actor.personId],
+       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND ${actsOnStudentSql("p.student_id", "$3", "$4", "$5")} FOR UPDATE OF p`,
+      [planId, generation, ...actorScopeParams(actor)],
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned approved plan not found");
@@ -416,15 +419,16 @@ export async function reviewQueue(actor: ActorContext) {
   });
 }
 
-/** Restore is an assigned mentor's explicit publication action. It copies only
- * an earlier approved publication, never promotes an unapproved draft. */
+/** Restore is an explicit publication action of the assigned mentor or the
+ * department head (authority.ts). It copies only an earlier approved
+ * publication, never promotes an unapproved draft. */
 export async function restoreVersion(
   actor: ActorContext,
   planId: string,
   commandId: string,
   raw: unknown,
 ) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   assertCommandId(commandId);
   z.string().uuid().parse(planId);
   const input = z
@@ -452,8 +456,8 @@ export async function restoreVersion(
     }
     const plan = (
       await client.query(
-        `SELECT p.*,s.department_id FROM support_plans p JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$2 AND m.student_id=p.student_id AND m.faculty_person_id=$3) FOR UPDATE OF p`,
-        [planId, generation, actor.personId],
+        `SELECT p.*,s.department_id FROM support_plans p JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND ${actsOnStudentSql("p.student_id", "$3", "$4", "$5")} FOR UPDATE OF p`,
+        [planId, generation, ...actorScopeParams(actor)],
       )
     ).rows[0];
     if (!plan) throw new NotFoundError("Assigned approved plan not found");

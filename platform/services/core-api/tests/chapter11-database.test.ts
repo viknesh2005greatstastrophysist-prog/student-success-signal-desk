@@ -46,7 +46,7 @@ test(
         "AURA-SYNTHETIC-SEED-V1",
         "chapter11-isolated-test",
       );
-      const { faculty, governance, student, otherDepartment, hod, nextMentor } =
+      const { faculty, governance, student, otherDepartment, hod, otherHod, nextMentor } =
         await withCoreTransaction(async (client) => {
           const generation = await getCurrentGeneration(client);
           const people = await client.query<{
@@ -78,6 +78,8 @@ test(
           );
           return {
             hod: make("hod.cse@aura.invalid", "hod"),
+            // The department head of another department (ECE): refused everywhere here.
+            otherHod: make("hod.ece@aura.invalid", "hod"),
             nextMentor: make("faculty2@aura.invalid", "faculty"),
             faculty: make("faculty1@aura.invalid", "faculty"),
             governance: make("governance@aura.invalid", "governance"),
@@ -97,15 +99,45 @@ test(
           }),
         /not permitted/,
       );
+      // Owner decision (17 Oct): the department head approves a scoring policy for a
+      // mentor in the department; the policy is the mentor's and the attestation
+      // records the department head as the approver. Another department's head is refused.
       await assert.rejects(
         () =>
           approvePolicy(hod, {
             policy: demoPolicy,
-            facultyId: faculty.personId,
-            rationale: "An HoD cannot approve mentor thresholds",
+            rationale: "A department head names the mentor the policy is for",
           }),
-        /not permitted/,
+        /active mentor in your department/,
       );
+      await assert.rejects(
+        () =>
+          approvePolicy(otherHod, {
+            policy: demoPolicy,
+            facultyId: faculty.personId,
+            rationale: "Another department cannot approve this mentor's thresholds",
+          }),
+        /active mentor in your department/,
+      );
+      const hodPolicy = await approvePolicy(hod, {
+        policy: { ...demoPolicy, version: `${demoPolicy.version} (department head)` },
+        facultyId: faculty.personId,
+        rationale: "Department head approves these thresholds for the mentor",
+      });
+      await withCoreTransaction(async (client) => {
+        const row = (
+          await client.query(
+            "SELECT p.faculty_person_id,a.approved_by,a.approved_role,a.provenance FROM ch11_policies p JOIN ch11_policy_attestations a ON a.policy_id=p.id WHERE p.id=$1",
+            [hodPolicy.id],
+          )
+        ).rows[0]!;
+        assert.deepEqual(row, {
+          faculty_person_id: faculty.personId,
+          approved_by: hod.personId,
+          approved_role: "faculty",
+          provenance: "department head approval for the mentor",
+        });
+      });
       const policy = await approvePolicy(faculty, {
         policy: demoPolicy,
         rationale:
@@ -175,7 +207,28 @@ test(
         reason: "Test pause before collection",
       });
       await assert.rejects(() => executePlan(faculty, locked.id), /paused/);
-      await setReviewPaused(faculty, locked.id, {
+      // The department head resumes a mentor's review (owner decision, 17 Oct);
+      // another department's head can neither resume it nor plan with its policy.
+      await assert.rejects(
+        () =>
+          setReviewPaused(otherHod, locked.id, {
+            expectedRevision: locked.revision + 1,
+            paused: false,
+            reason: "Another department resumes",
+          }),
+        /outside your department/,
+      );
+      await assert.rejects(
+        () =>
+          savePlan(otherHod, {
+            request: "Review this student",
+            studentIds: [student.studentId],
+            domain: "academic",
+            policyId: policy.id,
+          }),
+        /outside your department/,
+      );
+      await setReviewPaused(hod, locked.id, {
         expectedRevision: locked.revision + 1,
         paused: false,
         reason: "Resume the saved review",
@@ -204,6 +257,32 @@ test(
         outcome: "",
         reason:
           "Test evidence capture revision through a domain change and restart",
+      });
+      // The department head schedules a follow-up for a student in the department (it
+      // stays assigned to the student's mentor); another department's head cannot.
+      const hodFollowup = {
+        action: "save-followup",
+        studentId: student.studentId,
+        dueOn: new Date().toISOString().slice(0, 10),
+        note: "Department head schedules a check-in for the mentor.",
+        shared: false,
+        status: "planned",
+        outcome: "",
+        reason: "Department head follow-up for a student in the department",
+      };
+      const scheduled = await experienceCommand(hod, randomUUID(), hodFollowup);
+      await assert.rejects(
+        () => experienceCommand(otherHod, randomUUID(), hodFollowup),
+        /outside your assigned access/,
+      );
+      await withCoreTransaction(async (client) => {
+        const row = (
+          await client.query(
+            "SELECT mentor_person_id FROM support_followups WHERE id=$1",
+            [scheduled.id],
+          )
+        ).rows[0]!;
+        assert.equal(row.mentor_person_id, faculty.personId);
       });
       await closePool(); // New connections simulate a process restarting after its checkpoint committed.
       // every review runs on AI: a stub model stands in for the provider chain
@@ -330,37 +409,45 @@ test(
           }),
         /UNSUPPORTED_AUTHORITY/,
       );
-      // Review R-12: the department head observes; only the assigned mentor edits.
+      // Owner decision (17 Oct): the department head edits a draft of any student in
+      // the department (the version records the editor's role); another
+      // department's head finds nothing to edit.
       await assert.rejects(
         () =>
-          editDraft(hod, current.id, randomUUID(), {
+          editDraft(otherHod, current.id, randomUUID(), {
             ...editInput,
             expectedRevision: edited.revision,
             artifactId: edited.artifactId,
-            rationale: "Confirm the support wording in a department review",
+            rationale: "Another department cannot edit this support wording",
           }),
-        /not permitted/,
+        { code: "NOT_FOUND" },
       );
+      const hodEdited = await editDraft(hod, current.id, randomUUID(), {
+        ...editInput,
+        expectedRevision: edited.revision,
+        artifactId: edited.artifactId,
+        rationale: "Confirm the support wording in a department review",
+      });
+      assert.equal(hodEdited.facultyPersonId, hod.personId);
       await withCoreTransaction(async (client) => {
         const artifacts = await client.query<{
           id: string;
           editor_role: string;
           mentor_edited: boolean;
         }>(
-          "SELECT id,validation->>'editorRole' AS editor_role,(validation->>'mentorEdited')::boolean AS mentor_edited FROM agent_artifacts WHERE id=ANY($1::uuid[])",
-          [[edited.artifactId]],
+          "SELECT id,validation->>'editorRole' AS editor_role,(validation->>'mentorEdited')::boolean AS mentor_edited FROM agent_artifacts WHERE id=ANY($1::uuid[]) ORDER BY artifact_version",
+          [[edited.artifactId, hodEdited.artifactId]],
         );
-        assert.equal(artifacts.rowCount, 1);
-        assert.deepEqual(artifacts.rows[0], {
-          id: edited.artifactId,
-          editor_role: "faculty",
-          mentor_edited: true,
-        });
+        assert.equal(artifacts.rowCount, 2);
+        assert.deepEqual(artifacts.rows, [
+          { id: edited.artifactId, editor_role: "faculty", mentor_edited: true },
+          { id: hodEdited.artifactId, editor_role: "hod", mentor_edited: false },
+        ]);
       });
       const decision = {
-        artifactId: edited.artifactId as string,
-        contentHash: edited.contentHash as string,
-        expectedRevision: edited.revision as number,
+        artifactId: hodEdited.artifactId as string,
+        contentHash: hodEdited.contentHash as string,
+        expectedRevision: hodEdited.revision as number,
         decision: "approved" as const,
         rationale:
           "Evidence checked and synthetic support plan approved by assigned mentor",
@@ -368,6 +455,10 @@ test(
       await assert.rejects(
         () => decideSupportCase(governance, current.id, randomUUID(), decision),
         /not permitted/,
+      );
+      await assert.rejects(
+        () => decideSupportCase(otherHod, current.id, randomUUID(), decision),
+        { code: "NOT_FOUND", message: /Assigned support case not found/ },
       );
       const setTestMentor = (personId: string) =>
         withCoreTransaction(async (client) => {
@@ -453,23 +544,25 @@ test(
       assert.equal(afterWithdraw.status, "approved");
       assert.equal(afterWithdraw.intervention_status, "withdrawn");
       assert.equal((await overview({ ...faculty, role: "hod" })).jobs[0]!.intervention_status, "withdrawn");
-      // Review R-12: the department head never withdraws or re-shows a plan, and a
-      // status other than withdrawn does not re-show it either (only a restore does).
+      // Owner decision (17 Oct): the department head records an outcome for any plan
+      // in the department; another department's head is refused. A status other than
+      // withdrawn does not re-show a withdrawn plan (only a restore does).
       await assert.rejects(
         () =>
-          recordOutcome(hod, approved.plan!.id, randomUUID(), {
+          recordOutcome(otherHod, approved.plan!.id, randomUUID(), {
             expectedRevision: 1,
             status: "planned",
-            outcome: "Attempted department-head outcome update",
+            outcome: "Attempted outcome update from another department",
           }),
-        /not permitted/,
+        { code: "NOT_FOUND" },
       );
-      const noted = await recordOutcome(faculty, approved.plan!.id, randomUUID(), {
+      const noted = await recordOutcome(hod, approved.plan!.id, randomUUID(), {
         expectedRevision: 1,
         status: "planned",
-        outcome: "The plan stays withdrawn while the mentor reviews it",
+        outcome: "The plan stays withdrawn while the department head reviews it",
       });
       assert.equal(noted.revision, 2);
+      assert.equal(noted.facultyPersonId, hod.personId);
       assert.equal(
         (await reviewQueue(faculty)).plans[0]!.visible_to_student,
         false,
@@ -511,6 +604,14 @@ test(
       await assert.rejects(
         () =>
           restoreVersion(nextMentor, approved.plan!.id, randomUUID(), {
+            version: 1,
+            expectedVersion: 2,
+          }),
+        /not found/,
+      );
+      await assert.rejects(
+        () =>
+          restoreVersion(otherHod, approved.plan!.id, randomUUID(), {
             version: 1,
             expectedVersion: 2,
           }),

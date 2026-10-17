@@ -8,6 +8,7 @@ import { ConflictError, NotFoundError } from "./http";
 import { requireRole, requireDemoInstitution } from "./security";
 import { validateAnyPacket, riskAnalysis, digest, type Evidence, type Risk, type Policy, type domainNames } from "./chapter11/engine";
 import { assertCaseNotFrozen, assertStudentNotFrozen } from "./chapter11/frozen";
+import { actorScopeParams, actsOnStudentSql, requireReviewActor } from "./chapter11/authority";
 import { caseEvidenceCapturedSql, isCurrentEvidence, loadGenerationClock } from "./data-refresh/generation";
 
 export const processAcademicEventInput = z.object({ eventId: z.string().uuid() });
@@ -253,7 +254,9 @@ export async function decideSupportCase(
 ): Promise<DecisionResult> {
   assertCommandId(commandId);
   z.string().uuid().parse(caseId);
-  requireRole(actor, "faculty");
+  // The assigned mentor, or the department head for any student in the
+  // department (chapter11/authority.ts). The decision records who made it.
+  requireReviewActor(actor);
   // A frozen record (chapter11/frozen.ts) stays pending and untouched.
   assertCaseNotFrozen(caseId);
   return withCoreTransaction(async (client) => {
@@ -284,10 +287,10 @@ export async function decideSupportCase(
        JOIN agent_runs run ON run.evidence_snapshot_id = evidence.id AND run.generation_id = support_case.generation_id
        JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id AND artifact.generation_id = support_case.generation_id
        WHERE support_case.generation_id = $1 AND support_case.id = $2
-         AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=support_case.student_id AND m.faculty_person_id=$3)
+         AND ${actsOnStudentSql("support_case.student_id", "$3", "$4", "$5")}
        ORDER BY artifact.artifact_version DESC LIMIT 1
        FOR UPDATE OF support_case`,
-      [generationId, caseId, actor.personId],
+      [generationId, caseId, ...actorScopeParams(actor)],
     );
     if (!result.rowCount) throw new NotFoundError("Assigned support case not found");
     const current = result.rows[0]!;
@@ -295,7 +298,9 @@ export async function decideSupportCase(
     if (current.status !== "awaiting_faculty") throw new ConflictError("CASE_NOT_AWAITING_DECISION", "This support case is no longer awaiting a decision");
     // Chapter 11 drafts from the retired rule-based path stay viewable but are never decided.
     if (current.source.startsWith("chapter11:") && current.run_mode !== "model") throw new ConflictError("LEGACY_DRAFT_READ_ONLY", "This draft was written by the retired rule-based path. It stays viewable, but only AI-written drafts can be decided.");
-    if (current.assigned_faculty_person_id !== actor.personId) {
+    // A mentor decides only drafts prepared for them; the department head decides
+    // for any mentor in the department, so the check applies to faculty only.
+    if (actor.role === "faculty" && current.assigned_faculty_person_id !== actor.personId) {
       throw new ConflictError("MENTOR_ASSIGNMENT_CHANGED", "This artifact was prepared for a different mentor; create a new review before deciding");
     }
     if (current.revision !== input.expectedRevision) throw new ConflictError("STALE_VERSION", "The support case changed after this page loaded");

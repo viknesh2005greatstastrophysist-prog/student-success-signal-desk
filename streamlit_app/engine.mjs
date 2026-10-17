@@ -30984,7 +30984,7 @@ async function experienceCommand(actor, commandId, raw) {
         scaleRevision: scale.revision
       };
     } else if (input2.action === "save-followup") {
-      requireRole(actor, "faculty");
+      requireRole(actor, "faculty", "hod");
       const { student } = await requireExperienceStudent(
         client,
         gen,
@@ -32099,6 +32099,21 @@ import { randomUUID as randomUUID6 } from "node:crypto";
 
 // services/core-api/lib/support-commands.ts
 import { createHash as createHash4, randomUUID as randomUUID5 } from "node:crypto";
+
+// services/core-api/lib/chapter11/authority.ts
+var REVIEW_ACTOR_ROLES = ["faculty", "hod"];
+function requireReviewActor(actor) {
+  requireRole(actor, ...REVIEW_ACTOR_ROLES);
+}
+function actsOnStudentSql(student, role, person, department) {
+  return `((${role}::text='hod' AND EXISTS(SELECT 1 FROM student_profiles scope_s WHERE scope_s.id=${student} AND scope_s.department_id=${department}::uuid))
+    OR (${role}::text='faculty' AND EXISTS(SELECT 1 FROM mentor_assignments scope_m WHERE scope_m.student_id=${student} AND scope_m.faculty_person_id=${person}::uuid)))`;
+}
+function actorScopeParams(actor) {
+  return [actor.role, actor.personId, actor.departmentId ?? null];
+}
+
+// services/core-api/lib/support-commands.ts
 var processAcademicEventInput = external_exports.object({ eventId: external_exports.string().uuid() });
 var supportDecisionInput = external_exports.object({
   artifactId: external_exports.string().uuid(),
@@ -32178,7 +32193,7 @@ function composeValidatedRecommendation(evidence, candidate) {
 async function decideSupportCase(actor, caseId, commandId, input2) {
   assertCommandId(commandId);
   external_exports.string().uuid().parse(caseId);
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   assertCaseNotFrozen(caseId);
   return withCoreTransaction(async (client) => {
     const generationId = await getCurrentGeneration(client);
@@ -32207,17 +32222,17 @@ async function decideSupportCase(actor, caseId, commandId, input2) {
        JOIN agent_runs run ON run.evidence_snapshot_id = evidence.id AND run.generation_id = support_case.generation_id
        JOIN agent_artifacts artifact ON artifact.agent_run_id = run.id AND artifact.generation_id = support_case.generation_id
        WHERE support_case.generation_id = $1 AND support_case.id = $2
-         AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=support_case.student_id AND m.faculty_person_id=$3)
+         AND ${actsOnStudentSql("support_case.student_id", "$3", "$4", "$5")}
        ORDER BY artifact.artifact_version DESC LIMIT 1
        FOR UPDATE OF support_case`,
-      [generationId, caseId, actor.personId]
+      [generationId, caseId, ...actorScopeParams(actor)]
     );
     if (!result.rowCount) throw new NotFoundError("Assigned support case not found");
     const current = result.rows[0];
     await assertStudentNotFrozen(client, current.student_id);
     if (current.status !== "awaiting_faculty") throw new ConflictError("CASE_NOT_AWAITING_DECISION", "This support case is no longer awaiting a decision");
     if (current.source.startsWith("chapter11:") && current.run_mode !== "model") throw new ConflictError("LEGACY_DRAFT_READ_ONLY", "This draft was written by the retired rule-based path. It stays viewable, but only AI-written drafts can be decided.");
-    if (current.assigned_faculty_person_id !== actor.personId) {
+    if (actor.role === "faculty" && current.assigned_faculty_person_id !== actor.personId) {
       throw new ConflictError("MENTOR_ASSIGNMENT_CHANGED", "This artifact was prepared for a different mentor; create a new review before deciding");
     }
     if (current.revision !== input2.expectedRevision) throw new ConflictError("STALE_VERSION", "The support case changed after this page loaded");
@@ -33536,7 +33551,7 @@ var approvePolicySchema = external_exports.object({
   rationale: external_exports.string().trim().min(12).max(600)
 }).strict();
 async function approvePolicy(actor, raw, commandId = randomUUID6()) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   external_exports.string().uuid().parse(commandId);
   const input2 = approvePolicySchema.parse(raw);
   const owner = input2.facultyId ?? actor.personId;
@@ -33602,11 +33617,18 @@ async function approvePolicy(actor, raw, commandId = randomUUID6()) {
       ]
     );
     await client.query(
-      "INSERT INTO ch11_policy_attestations(policy_id,generation_id,approved_by,approved_role,policy_version) VALUES($1,$2,$3,'faculty',$4)",
-      [id, generation, actor.personId, input2.policy.version]
+      "INSERT INTO ch11_policy_attestations(policy_id,generation_id,approved_by,approved_role,policy_version,provenance) VALUES($1,$2,$3,'faculty',$4,$5)",
+      [
+        id,
+        generation,
+        actor.personId,
+        input2.policy.version,
+        actor.role === "hod" ? "department head approval for the mentor" : "direct faculty approval"
+      ]
     );
     await audit(client, generation, actor, id, "policy.approved", input2, {
       id,
+      approvedByRole: actor.role,
       synthetic: process.env.CORE_IDENTITY_REALM !== "institutional"
     });
     return {
@@ -33620,7 +33642,7 @@ async function savePlannedPlan(actor, input2, id, expectedRevision, commandId = 
   return persistPlan(actor, planInputSchema.parse(input2), id, expectedRevision, commandId);
 }
 async function persistPlan(actor, parsed, id, expectedRevision, commandId) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   external_exports.string().uuid().parse(commandId);
   const input2 = { ...parsed, mode: "model" };
   delete input2.scopeChoice;
@@ -33747,7 +33769,7 @@ async function persistPlan(actor, parsed, id, expectedRevision, commandId) {
   });
 }
 async function lockPlan(actor, id, expectedRevision) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   return withCoreTransaction(async (client) => {
     const plan = await getPlan(client, actor, id, true);
     if (plan.status === "locked") return plan;
@@ -33773,6 +33795,13 @@ async function lockPlan(actor, id, expectedRevision) {
     const frozen = await frozenStudentIds(client, plan.body.studentIds ?? []);
     const students = (plan.body.studentIds ?? []).filter((student) => !frozen.has(student));
     if (frozen.size && !students.length) throw frozenRecordError();
+    if (students.length)
+      await requireAssignedStudents(
+        client,
+        plan.generation_id,
+        policy.rows[0].faculty_person_id,
+        students
+      );
     const body = frozen.size ? { ...plan.body, studentIds: students, frozenNote: frozenLeftOutNote(frozen.size) } : plan.body;
     await client.query(
       "UPDATE ch11_plans SET status='locked',body=$3::jsonb,plan_hash=$2,locked_at=now(),revision=revision+1 WHERE id=$1",
@@ -34308,7 +34337,7 @@ async function publishDraft(actor, job, plan) {
   });
 }
 async function executePlan(actor, planId, options = {}) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   const start = performance.now();
   const batchSize = options.concurrency === void 0 && executionConcurrency(4) === 1 ? 1 : 4;
   const initial = await withCoreTransaction(async (client) => {
@@ -34892,7 +34921,7 @@ async function ensureReviewRunning(actor, id) {
   });
 }
 async function setReviewPaused(actor, id, raw) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   const input2 = external_exports.object({
     paused: external_exports.boolean(),
     expectedRevision: external_exports.number().int().nonnegative(),
@@ -35326,7 +35355,7 @@ ${input2.feedback}`,
 
 // services/core-api/lib/chapter11/planning.ts
 async function loadPlanningScope(actor) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   return withCoreTransaction(async (client) => {
     const generation = await getCurrentGeneration(client);
     const department = actor.role === "governance" ? null : actor.departmentId ?? null;
@@ -35379,7 +35408,16 @@ async function loadPlanningScope(actor) {
         return parsed.success ? [{ id: r.id, facultyId: r.faculty_person_id, policy: parsed.data }] : [];
       })
     };
-    const roster = await loadGuardRoster(client, generation, everyone, actor.personId, department);
+    const own2 = await loadGuardRoster(client, generation, everyone, actor.personId, department);
+    const mentors = actor.role === "hod" ? (await client.query(
+      "SELECT DISTINCT p.display_name AS name,p.email FROM people p JOIN ch11_policies cp ON cp.faculty_person_id=p.id WHERE cp.generation_id=$1 AND cp.department_id=$2",
+      [generation, department]
+    )).rows : [];
+    const roster = {
+      ...own2,
+      names: [...own2.names, ...mentors.flatMap((m) => m.name ? [m.name] : [])],
+      emails: [...own2.emails ?? [], ...mentors.flatMap((m) => m.email ? [m.email] : [])]
+    };
     return {
       scope,
       roster,
@@ -35410,7 +35448,7 @@ ${b}`.split("\n");
 var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 var unique = (texts) => [...new Set(texts)];
 async function planWithAgent(actor, raw, options = {}) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   const commandId = options.commandId ?? randomUUID7();
   external_exports.string().uuid().parse(commandId);
   const input2 = withoutAgentFields(planInputSchema.parse(raw));
@@ -35564,7 +35602,7 @@ var editSchema = external_exports.object({
   rationale: external_exports.string().trim().min(12).max(600)
 }).strict();
 async function editDraft(actor, caseId, commandId, raw) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   assertCommandId(commandId);
   external_exports.string().uuid().parse(caseId);
   const input2 = editSchema.parse(raw);
@@ -35589,8 +35627,8 @@ async function editDraft(actor, caseId, commandId, raw) {
       `SELECT c.revision,c.status,e.evidence,p.body->>'domain' AS domain,r.id AS run_id,r.mode AS run_mode,a.id AS artifact_id,a.artifact_version,c.student_id,p.department_id,jsonb_build_object('version',COALESCE(pa.policy_version,''),'facultyApproved',COALESCE(pa.approved_role='faculty',false)) AS policy_guard
        FROM support_cases c JOIN evidence_snapshots e ON e.support_case_id=c.id JOIN agent_runs r ON r.evidence_snapshot_id=e.id
        JOIN agent_artifacts a ON a.agent_run_id=r.id JOIN ch11_jobs j ON j.support_case_id=c.id JOIN ch11_plans p ON p.id=j.plan_id LEFT JOIN ch11_policy_attestations pa ON pa.policy_id=(p.body->>'policyId')::uuid AND pa.generation_id=c.generation_id
-       WHERE c.id=$1 AND c.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=c.student_id AND m.faculty_person_id=$3) ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`,
-      [caseId, generation, actor.personId]
+       WHERE c.id=$1 AND c.generation_id=$2 AND ${actsOnStudentSql("c.student_id", "$4", "$3", "$5")} ORDER BY a.artifact_version DESC LIMIT 1 FOR UPDATE OF c`,
+      [caseId, generation, actor.personId, actor.role, actor.departmentId ?? null]
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned Chapter 11 draft not found");
@@ -35679,7 +35717,7 @@ var outcomeSchema = external_exports.object({
   outcome: external_exports.string().trim().min(12).max(1200)
 }).strict();
 async function recordOutcome(actor, planId, commandId, raw) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   assertCommandId(commandId);
   external_exports.string().uuid().parse(planId);
   const input2 = outcomeSchema.parse(raw);
@@ -35701,8 +35739,8 @@ async function recordOutcome(actor, planId, commandId, raw) {
     }
     const result = await client.query(
       `SELECT p.id,p.student_id,s.department_id,p.plan FROM support_plans p JOIN faculty_decisions d ON d.id=p.faculty_decision_id
-       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.student_id=p.student_id AND m.faculty_person_id=$3) FOR UPDATE OF p`,
-      [planId, generation, actor.personId]
+       JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND ${actsOnStudentSql("p.student_id", "$3", "$4", "$5")} FOR UPDATE OF p`,
+      [planId, generation, ...actorScopeParams(actor)]
     );
     if (!result.rowCount)
       throw new NotFoundError("Assigned approved plan not found");
@@ -35862,7 +35900,7 @@ async function reviewQueue(actor) {
   });
 }
 async function restoreVersion(actor, planId, commandId, raw) {
-  requireRole(actor, "faculty");
+  requireReviewActor(actor);
   assertCommandId(commandId);
   external_exports.string().uuid().parse(planId);
   const input2 = external_exports.object({
@@ -35886,8 +35924,8 @@ async function restoreVersion(actor, planId, commandId, raw) {
       return duplicate.payload;
     }
     const plan = (await client.query(
-      `SELECT p.*,s.department_id FROM support_plans p JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND EXISTS(SELECT 1 FROM mentor_assignments m WHERE m.generation_id=$2 AND m.student_id=p.student_id AND m.faculty_person_id=$3) FOR UPDATE OF p`,
-      [planId, generation, actor.personId]
+      `SELECT p.*,s.department_id FROM support_plans p JOIN student_profiles s ON s.id=p.student_id WHERE p.id=$1 AND p.generation_id=$2 AND ${actsOnStudentSql("p.student_id", "$3", "$4", "$5")} FOR UPDATE OF p`,
+      [planId, generation, ...actorScopeParams(actor)]
     )).rows[0];
     if (!plan) throw new NotFoundError("Assigned approved plan not found");
     await assertStudentNotFrozen(client, plan.student_id);

@@ -52,43 +52,45 @@ test("the note on a plan says how many students were left out, without naming th
   assert.match(frozenLeftOutNote(2), /^2 students were left out: their records are kept unchanged/);
 });
 
-test("a decision or an edit on a frozen case is refused before any database access", async () => {
-  const mentor: ActorContext = {
-    subject: "mentor@aura.invalid",
-    role: "faculty",
-    personId: randomUUID(),
-    departmentId: randomUUID(),
-  };
+test("a decision or an edit on a frozen case is refused before any database access, for the mentor and the department head alike", async () => {
   const previous = process.env.CORE_FROZEN_CASE_IDS;
   delete process.env.CORE_FROZEN_CASE_IDS;
   try {
-    for (const decision of ["approved", "rejected"] as const)
+    for (const role of ["faculty", "hod"] as const) {
+      const mentor: ActorContext = {
+        subject: `${role}@aura.invalid`,
+        role,
+        personId: randomUUID(),
+        departmentId: randomUUID(),
+      };
+      for (const decision of ["approved", "rejected"] as const)
+        await assert.rejects(
+          () =>
+            decideSupportCase(mentor, frozenCase, randomUUID(), {
+              artifactId: randomUUID(),
+              contentHash: "a".repeat(64),
+              expectedRevision: 0,
+              decision,
+              rationale: "Looks right for this student",
+            }),
+          isFrozenError,
+        );
       await assert.rejects(
         () =>
-          decideSupportCase(mentor, frozenCase, randomUUID(), {
-            artifactId: randomUUID(),
-            contentHash: "a".repeat(64),
+          editDraft(mentor, frozenCase, randomUUID(), {
             expectedRevision: 0,
-            decision,
-            rationale: "Looks right for this student",
+            artifactId: randomUUID(),
+            packet: {
+              summary: "Mentor review requested: attendance low.",
+              actions: [{ code: "faculty-check-in", label: "Schedule a 20-minute check-in", owner: "assigned_faculty", dueInDays: 7 }],
+              citations: [{ evidencePath: "evidence.academic.values.attendancePct", statement: "attendancePct is 61; threshold 75." }],
+              prohibited: [],
+            },
+            rationale: "Shorter deadline for this week",
           }),
         isFrozenError,
       );
-    await assert.rejects(
-      () =>
-        editDraft(mentor, frozenCase, randomUUID(), {
-          expectedRevision: 0,
-          artifactId: randomUUID(),
-          packet: {
-            summary: "Mentor review requested: attendance low.",
-            actions: [{ code: "faculty-check-in", label: "Schedule a 20-minute check-in", owner: "assigned_faculty", dueInDays: 7 }],
-            citations: [{ evidencePath: "evidence.academic.values.attendancePct", statement: "attendancePct is 61; threshold 75." }],
-            prohibited: [],
-          },
-          rationale: "Shorter deadline for this week",
-        }),
-      isFrozenError,
-    );
+    }
   } finally {
     if (previous === undefined) delete process.env.CORE_FROZEN_CASE_IDS;
     else process.env.CORE_FROZEN_CASE_IDS = previous;

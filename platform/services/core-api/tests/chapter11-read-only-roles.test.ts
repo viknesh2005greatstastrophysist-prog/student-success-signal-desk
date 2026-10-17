@@ -5,13 +5,17 @@ import type { ActorContext } from "@aura/contracts";
 import { AuthorizationError } from "../lib/security";
 import { executePlan, lockPlan, safeJobRow, safeValidation, savePlan, savePlannedPlan, setReviewPaused } from "../lib/chapter11/service";
 import { loadPlanningScope, planWithAgent } from "../lib/chapter11/planning";
-import { editDraft, recordOutcome } from "../lib/chapter11/review";
+import { editDraft, recordOutcome, restoreVersion } from "../lib/chapter11/review";
+import { decideSupportCase } from "../lib/support-commands";
+import { REVIEW_ACTOR_ROLES, requireReviewActor } from "../lib/chapter11/authority";
 
-/** E2E log #12: the department head and the AI-activity (governance) workspace
- * observe plans and never create, revise, lock, run or pause them. The Core
- * rejects those commands from every role but the assigned mentor, before any
- * database access, so this needs no database. The opt-in database suites assert
- * the same against real data, plus that the mentor's own commands still work. */
+/** E2E log #12 as revised by the owner (17 Oct): the assigned mentor and the
+ * department head create, revise, lock, run and pause review plans, edit and
+ * decide drafts and record outcomes; the AI-activity (governance) workspace and
+ * the student and parent roles never do. The Core rejects those commands from
+ * every other role before any database access, so this needs no database. The
+ * opt-in database suites assert the department scope against real data: the
+ * department head acts in their own department and is refused in another. */
 
 const actorAs = (role: ActorContext["role"]): ActorContext => ({
   subject: `${role}@aura.invalid`,
@@ -25,8 +29,8 @@ const notPermitted = (role: string) => (error: unknown) =>
 
 const input = { request: "Review my mentees' attendance", studentIds: [randomUUID()], domain: "attendance" as const, policyId: randomUUID() };
 
-for (const role of ["hod", "governance", "student", "parent"] as const) {
-  test(`${role} cannot create, revise, lock, run or pause a review plan, edit a draft or record an outcome`, async () => {
+for (const role of ["governance", "student", "parent"] as const) {
+  test(`${role} cannot create, revise, lock, run or pause a review plan, edit or decide a draft or record an outcome`, async () => {
     const actor = actorAs(role);
     const planId = randomUUID();
     const commands: Record<string, () => Promise<unknown>> = {
@@ -39,9 +43,18 @@ for (const role of ["hod", "governance", "student", "parent"] as const) {
       "run a plan": () => executePlan(actor, planId),
       "pause a plan": () => setReviewPaused(actor, planId, { paused: true, expectedRevision: 1, reason: "Not allowed" }),
       "read the planning scope": () => loadPlanningScope(actor),
-      // review R-12: editing a draft and recording an outcome belong to the mentor too
+      // review R-12: editing a draft and recording an outcome belong to the mentor and the department head
       "edit a draft": () => editDraft(actor, randomUUID(), randomUUID(), {}),
       "record an outcome or withdraw a plan": () => recordOutcome(actor, randomUUID(), randomUUID(), {}),
+      "restore an approved version": () => restoreVersion(actor, randomUUID(), randomUUID(), {}),
+      "decide a draft": () =>
+        decideSupportCase(actor, randomUUID(), randomUUID(), {
+          artifactId: randomUUID(),
+          contentHash: "a".repeat(64),
+          expectedRevision: 0,
+          decision: "approved",
+          rationale: "Not allowed for this role",
+        }),
     };
     for (const [name, run] of Object.entries(commands))
       await assert.rejects(run, notPermitted(role), `${role} must not ${name}`);
@@ -50,11 +63,26 @@ for (const role of ["hod", "governance", "student", "parent"] as const) {
 
 test("the role gate sits in front of the plan commands, not only in the UI", async () => {
   // a malformed body from a read-only role is refused for its role first
-  await assert.rejects(() => planWithAgent(actorAs("hod"), { not: "a plan" }), notPermitted("hod"));
+  await assert.rejects(() => planWithAgent(actorAs("governance"), { not: "a plan" }), notPermitted("governance"));
   await assert.rejects(() => executePlan(actorAs("governance"), "not-a-uuid"), notPermitted("governance"));
-  // the department head observes drafts and plans; it no longer edits or withdraws them
-  await assert.rejects(() => editDraft(actorAs("hod"), randomUUID(), randomUUID(), {}), notPermitted("hod"));
-  await assert.rejects(() => recordOutcome(actorAs("hod"), randomUUID(), randomUUID(), {}), notPermitted("hod"));
+  await assert.rejects(() => editDraft(actorAs("governance"), randomUUID(), randomUUID(), {}), notPermitted("governance"));
+  await assert.rejects(() => recordOutcome(actorAs("governance"), randomUUID(), randomUUID(), {}), notPermitted("governance"));
+});
+
+test("owner decision (17 Oct): the mentor and the department head pass the review role gate, nobody else", () => {
+  assert.deepEqual([...REVIEW_ACTOR_ROLES], ["faculty", "hod"]);
+  for (const role of ["faculty", "hod"] as const) assert.doesNotThrow(() => requireReviewActor(actorAs(role)));
+  for (const role of ["governance", "student", "parent"] as const)
+    assert.throws(() => requireReviewActor(actorAs(role)), notPermitted(role));
+});
+
+test("the department head's commands pass the role gate and reach input validation", async () => {
+  // A body that fails validation shows the role gate let the department head through.
+  const hod = actorAs("hod");
+  await assert.rejects(() => editDraft(hod, randomUUID(), randomUUID(), {}), (e: unknown) => !(e instanceof AuthorizationError));
+  await assert.rejects(() => recordOutcome(hod, randomUUID(), randomUUID(), {}), (e: unknown) => !(e instanceof AuthorizationError));
+  await assert.rejects(() => restoreVersion(hod, randomUUID(), randomUUID(), {}), (e: unknown) => !(e instanceof AuthorizationError));
+  await assert.rejects(() => planWithAgent(hod, { not: "a plan" }), (e: unknown) => !(e instanceof AuthorizationError));
 });
 
 test("review R-01: the department head and AI activity get the review mechanics, never draft text", () => {
